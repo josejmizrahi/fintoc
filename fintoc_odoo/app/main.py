@@ -73,6 +73,7 @@ def health():
 
 
 # ── Registrar routers ──
+from app.api.auth import router as auth_router
 from app.api.webhooks import router as webhooks_router
 from app.api.payments import router as payments_router
 from app.api.collections import router as collections_router
@@ -90,6 +91,7 @@ from app.api.notifications import router as notifications_router
 from app.api.dashboard import router as dashboard_router
 from app.api.dashboard import vendor_portal, companies_router
 
+app.include_router(auth_router, prefix="/api")
 app.include_router(dashboard_router, prefix="/api")
 app.include_router(webhooks_router, prefix="/api")
 app.include_router(payments_router, prefix="/api")

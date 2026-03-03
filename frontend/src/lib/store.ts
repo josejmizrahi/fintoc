@@ -1,31 +1,72 @@
 import { create } from "zustand";
 
+interface UserData {
+  id: number;
+  email: string;
+  name: string;
+  role: string;
+}
+
+interface TenantData {
+  id: string;
+  name: string;
+  rfc: string;
+}
+
 interface AuthState {
   isAuthenticated: boolean;
-  user: { email: string; name: string; role: string } | null;
+  token: string;
+  user: UserData | null;
   tenantId: string;
   tenantName: string;
-  login: (email: string, tenantId: string, tenantName: string) => void;
+  loginWithToken: (token: string, user: UserData, tenant: TenantData) => void;
   logout: () => void;
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
-  isAuthenticated: typeof window !== "undefined" ? !!localStorage.getItem("tenantId") : false,
-  user: typeof window !== "undefined" ? JSON.parse(localStorage.getItem("user") || "null") : null,
-  tenantId: typeof window !== "undefined" ? localStorage.getItem("tenantId") || "" : "",
-  tenantName: typeof window !== "undefined" ? localStorage.getItem("tenantName") || "" : "",
-  login: (email, tenantId, tenantName) => {
-    const user = { email, name: email.split("@")[0], role: "admin" };
-    localStorage.setItem("tenantId", tenantId);
-    localStorage.setItem("tenantName", tenantName);
+  isAuthenticated:
+    typeof window !== "undefined" ? !!localStorage.getItem("token") : false,
+  token:
+    typeof window !== "undefined"
+      ? localStorage.getItem("token") || ""
+      : "",
+  user:
+    typeof window !== "undefined"
+      ? JSON.parse(localStorage.getItem("user") || "null")
+      : null,
+  tenantId:
+    typeof window !== "undefined"
+      ? localStorage.getItem("tenantId") || ""
+      : "",
+  tenantName:
+    typeof window !== "undefined"
+      ? localStorage.getItem("tenantName") || ""
+      : "",
+  loginWithToken: (token, user, tenant) => {
+    localStorage.setItem("token", token);
+    localStorage.setItem("tenantId", tenant.id);
+    localStorage.setItem("tenantName", tenant.name);
     localStorage.setItem("user", JSON.stringify(user));
-    set({ isAuthenticated: true, user, tenantId, tenantName });
+    set({
+      isAuthenticated: true,
+      token,
+      user,
+      tenantId: tenant.id,
+      tenantName: tenant.name,
+    });
   },
   logout: () => {
+    localStorage.removeItem("token");
     localStorage.removeItem("tenantId");
     localStorage.removeItem("tenantName");
     localStorage.removeItem("user");
-    set({ isAuthenticated: false, user: null, tenantId: "", tenantName: "" });
+    set({
+      isAuthenticated: false,
+      token: "",
+      user: null,
+      tenantId: "",
+      tenantName: "",
+    });
   },
 }));
 

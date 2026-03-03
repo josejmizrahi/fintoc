@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     webhook_path: str = Field(default="/fintoc/webhook", alias="WEBHOOK_PATH")
     base_url: str = Field(default="http://localhost:8001", alias="BASE_URL")
     secret_key: str = Field(default="change-me-in-production", alias="SECRET_KEY")
+    jwt_expire_minutes: int = Field(default=1440, alias="JWT_EXPIRE_MINUTES")  # 24h
     debug: bool = Field(default=False, alias="DEBUG")
 
     # ── Database ──

@@ -1,14 +1,51 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001";
 
+function getAuthHeaders(): Record<string, string> {
+  if (typeof window === "undefined") return {};
+  const token = localStorage.getItem("token");
+  const tenantId = localStorage.getItem("tenantId") || "";
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "X-Tenant-Id": tenantId,
+  };
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+  return headers;
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const tenantId = typeof window !== "undefined" ? localStorage.getItem("tenantId") || "" : "";
   const res = await fetch(`${API_BASE}${path}`, {
     ...options,
     headers: {
-      "Content-Type": "application/json",
-      "X-Tenant-Id": tenantId,
+      ...getAuthHeaders(),
       ...options?.headers,
     },
+  });
+  if (res.status === 401) {
+    // Token expired or invalid - clear auth state
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("token");
+      localStorage.removeItem("tenantId");
+      localStorage.removeItem("tenantName");
+      localStorage.removeItem("user");
+      window.location.href = "/login";
+    }
+    throw new Error("Sesión expirada. Inicia sesión nuevamente.");
+  }
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(error.detail || `Error ${res.status}`);
+  }
+  return res.json();
+}
+
+/** Unauthenticated request for auth endpoints */
+async function authRequest<T>(path: string, body: object): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
   });
   if (!res.ok) {
     const error = await res.json().catch(() => ({ detail: res.statusText }));
@@ -18,6 +55,20 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  // Auth
+  auth: {
+    register: (data: {
+      email: string;
+      password: string;
+      name: string;
+      company_name: string;
+      rfc: string;
+    }) => authRequest<any>("/api/auth/register", data),
+    login: (data: { email: string; password: string }) =>
+      authRequest<any>("/api/auth/login", data),
+    me: () => request<any>("/api/auth/me"),
+  },
+
   // Dashboard
   dashboard: () => request<any>("/api/dashboard"),
   health: () => request<any>("/health"),

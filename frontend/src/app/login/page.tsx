@@ -16,75 +16,124 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs";
 
 export default function LoginPage() {
   const router = useRouter();
-  const login = useAuthStore((s) => s.login);
+  const loginWithToken = useAuthStore((s) => s.loginWithToken);
 
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [companyName, setCompanyName] = useState("");
-  const [rfc, setRfc] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [quickStartLoading, setQuickStartLoading] = useState(false);
+  // Login state
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [loginLoading, setLoginLoading] = useState(false);
 
-  async function handleSubmit(e: React.FormEvent) {
+  // Register state
+  const [regEmail, setRegEmail] = useState("");
+  const [regPassword, setRegPassword] = useState("");
+  const [regName, setRegName] = useState("");
+  const [regCompanyName, setRegCompanyName] = useState("");
+  const [regRfc, setRegRfc] = useState("");
+  const [regLoading, setRegLoading] = useState(false);
+
+  // Demo
+  const [demoLoading, setDemoLoading] = useState(false);
+
+  async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
-
-    if (!companyName.trim() || !rfc.trim()) {
-      toast.error("Ingresa el nombre de la empresa y RFC");
+    if (!loginEmail.trim() || !loginPassword.trim()) {
+      toast.error("Ingresa tu correo y contraseña");
       return;
     }
-
-    if (!email.trim()) {
-      toast.error("Ingresa tu correo electrónico");
-      return;
-    }
-
-    setLoading(true);
+    setLoginLoading(true);
     try {
-      const company = await api.companies.create({
-        name: companyName.trim(),
-        rfc: rfc.trim().toUpperCase(),
+      const res = await api.auth.login({
+        email: loginEmail.trim(),
+        password: loginPassword,
       });
-
-      login(email, company.id?.toString() || company.tenant_id || rfc, companyName);
-      toast.success(`Empresa ${companyName} registrada correctamente`);
+      loginWithToken(res.access_token, res.user, res.tenant);
+      toast.success("Sesión iniciada correctamente");
       router.push("/");
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : "Error al registrar la empresa. Intenta de nuevo."
+        error instanceof Error ? error.message : "Error al iniciar sesión"
       );
     } finally {
-      setLoading(false);
+      setLoginLoading(false);
+    }
+  }
+
+  async function handleRegister(e: React.FormEvent) {
+    e.preventDefault();
+    if (
+      !regEmail.trim() ||
+      !regPassword.trim() ||
+      !regName.trim() ||
+      !regCompanyName.trim() ||
+      !regRfc.trim()
+    ) {
+      toast.error("Completa todos los campos");
+      return;
+    }
+    if (regPassword.length < 6) {
+      toast.error("La contraseña debe tener al menos 6 caracteres");
+      return;
+    }
+    setRegLoading(true);
+    try {
+      const res = await api.auth.register({
+        email: regEmail.trim(),
+        password: regPassword,
+        name: regName.trim(),
+        company_name: regCompanyName.trim(),
+        rfc: regRfc.trim().toUpperCase(),
+      });
+      loginWithToken(res.access_token, res.user, res.tenant);
+      toast.success(`Empresa ${regCompanyName} registrada correctamente`);
+      router.push("/");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Error al registrar"
+      );
+    } finally {
+      setRegLoading(false);
     }
   }
 
   async function handleQuickStart() {
-    setQuickStartLoading(true);
+    setDemoLoading(true);
     try {
-      const demoName = "Demo Corp SA de CV";
-      const demoRfc = "DCO230101AAA";
-      const demoEmail = "admin@demo.com";
-
-      const company = await api.companies.create({
-        name: demoName,
-        rfc: demoRfc,
+      const res = await api.auth.register({
+        email: "admin@demo.com",
+        password: "demo123456",
+        name: "Admin Demo",
+        company_name: "Demo Corp SA de CV",
+        rfc: "DCO230101AAA",
       });
-
-      login(demoEmail, company.id?.toString() || company.tenant_id || demoRfc, demoName);
+      loginWithToken(res.access_token, res.user, res.tenant);
       toast.success("Empresa demo creada. Bienvenido a Payana.");
       router.push("/");
-    } catch (error) {
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : "Error al crear empresa demo. Intenta de nuevo."
-      );
+    } catch {
+      // If demo already exists, try logging in
+      try {
+        const res = await api.auth.login({
+          email: "admin@demo.com",
+          password: "demo123456",
+        });
+        loginWithToken(res.access_token, res.user, res.tenant);
+        toast.success("Bienvenido de vuelta a la empresa demo.");
+        router.push("/");
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : "Error al crear empresa demo"
+        );
+      }
     } finally {
-      setQuickStartLoading(false);
+      setDemoLoading(false);
     }
   }
 
@@ -101,74 +150,116 @@ export default function LoginPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Iniciar sesión</CardTitle>
+            <CardTitle>Bienvenido</CardTitle>
             <CardDescription>
-              Ingresa tus datos para acceder a tu cuenta o registra una nueva
-              empresa.
+              Inicia sesión o crea una cuenta para comenzar.
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <form onSubmit={handleSubmit} className="space-y-4">
-              {/* User credentials */}
-              <div className="space-y-2">
-                <Label htmlFor="email">Correo electrónico</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  placeholder="tu@empresa.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  autoComplete="email"
-                />
-              </div>
+            <Tabs defaultValue="login" className="w-full">
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="login">Iniciar sesión</TabsTrigger>
+                <TabsTrigger value="register">Registrarse</TabsTrigger>
+              </TabsList>
 
-              <div className="space-y-2">
-                <Label htmlFor="password">Contraseña</Label>
-                <Input
-                  id="password"
-                  type="password"
-                  placeholder="••••••••"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  autoComplete="current-password"
-                />
-              </div>
+              {/* Login Tab */}
+              <TabsContent value="login">
+                <form onSubmit={handleLogin} className="space-y-4 pt-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="login-email">Correo electrónico</Label>
+                    <Input
+                      id="login-email"
+                      type="email"
+                      placeholder="tu@empresa.com"
+                      value={loginEmail}
+                      onChange={(e) => setLoginEmail(e.target.value)}
+                      autoComplete="email"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="login-password">Contraseña</Label>
+                    <Input
+                      id="login-password"
+                      type="password"
+                      placeholder="••••••••"
+                      value={loginPassword}
+                      onChange={(e) => setLoginPassword(e.target.value)}
+                      autoComplete="current-password"
+                    />
+                  </div>
+                  <Button type="submit" className="w-full" disabled={loginLoading}>
+                    {loginLoading ? "Iniciando sesión..." : "Iniciar sesión"}
+                  </Button>
+                </form>
+              </TabsContent>
 
-              <Separator />
+              {/* Register Tab */}
+              <TabsContent value="register">
+                <form onSubmit={handleRegister} className="space-y-4 pt-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="reg-name">Nombre completo</Label>
+                    <Input
+                      id="reg-name"
+                      placeholder="Juan Pérez"
+                      value={regName}
+                      onChange={(e) => setRegName(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="reg-email">Correo electrónico</Label>
+                    <Input
+                      id="reg-email"
+                      type="email"
+                      placeholder="tu@empresa.com"
+                      value={regEmail}
+                      onChange={(e) => setRegEmail(e.target.value)}
+                      autoComplete="email"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="reg-password">Contraseña</Label>
+                    <Input
+                      id="reg-password"
+                      type="password"
+                      placeholder="Mínimo 6 caracteres"
+                      value={regPassword}
+                      onChange={(e) => setRegPassword(e.target.value)}
+                      autoComplete="new-password"
+                    />
+                  </div>
 
-              {/* Company info */}
-              <div className="space-y-1">
-                <p className="text-sm font-medium">Datos de la empresa</p>
-                <p className="text-xs text-muted-foreground">
-                  Registra tu empresa para comenzar a usar Payana.
-                </p>
-              </div>
+                  <Separator />
 
-              <div className="space-y-2">
-                <Label htmlFor="companyName">Nombre de la empresa</Label>
-                <Input
-                  id="companyName"
-                  placeholder="Mi Empresa SA de CV"
-                  value={companyName}
-                  onChange={(e) => setCompanyName(e.target.value)}
-                />
-              </div>
+                  <div className="space-y-1">
+                    <p className="text-sm font-medium">Datos de la empresa</p>
+                  </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="rfc">RFC</Label>
-                <Input
-                  id="rfc"
-                  placeholder="XAXX010101000"
-                  value={rfc}
-                  onChange={(e) => setRfc(e.target.value.toUpperCase())}
-                  maxLength={13}
-                />
-              </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="reg-company">Nombre de la empresa</Label>
+                    <Input
+                      id="reg-company"
+                      placeholder="Mi Empresa SA de CV"
+                      value={regCompanyName}
+                      onChange={(e) => setRegCompanyName(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="reg-rfc">RFC</Label>
+                    <Input
+                      id="reg-rfc"
+                      placeholder="XAXX010101000"
+                      value={regRfc}
+                      onChange={(e) => setRegRfc(e.target.value.toUpperCase())}
+                      maxLength={13}
+                    />
+                  </div>
 
-              <Button type="submit" className="w-full" disabled={loading}>
-                {loading ? "Registrando..." : "Entrar"}
-              </Button>
-            </form>
+                  <Button type="submit" className="w-full" disabled={regLoading}>
+                    {regLoading ? "Registrando..." : "Crear cuenta"}
+                  </Button>
+                </form>
+              </TabsContent>
+            </Tabs>
 
             <div className="relative my-6">
               <div className="absolute inset-0 flex items-center">
@@ -185,9 +276,9 @@ export default function LoginPage() {
               variant="outline"
               className="w-full"
               onClick={handleQuickStart}
-              disabled={quickStartLoading}
+              disabled={demoLoading}
             >
-              {quickStartLoading
+              {demoLoading
                 ? "Creando demo..."
                 : "Inicio rápido con empresa demo"}
             </Button>

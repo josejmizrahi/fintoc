@@ -86,6 +86,22 @@ class NotificationType(str, enum.Enum):
 # ── Tables ──
 
 
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    email = Column(String(255), unique=True, nullable=False, index=True)
+    password_hash = Column(String(255), nullable=False)
+    name = Column(String(255), nullable=False)
+    role = Column(String(30), default="admin")  # admin, manager, accountant, viewer
+    company_id = Column(Integer, ForeignKey("companies.id"), nullable=True)
+    is_active = Column(Boolean, default=True)
+    last_login = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    company = relationship("Company", back_populates="users")
+
+
 class Company(Base):
     __tablename__ = "companies"
 
@@ -97,6 +113,7 @@ class Company(Base):
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
+    users = relationship("User", back_populates="company")
     payments = relationship("Payment", back_populates="company")
     budgets = relationship("Budget", back_populates="company")
 
