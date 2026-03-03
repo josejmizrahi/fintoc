@@ -17,3 +17,5 @@ pandas>=2.0.0
 
 # SAT / CFDI
 zeep>=4.2.1
+
+# Auth (uses stdlib hmac/hashlib for JWT + PBKDF2 - no external deps needed)
