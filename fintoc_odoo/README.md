@@ -1,10 +1,90 @@
-# Fintoc ↔ Odoo — Quimibond
+# Payana-Fintoc
 
-Integración para cobros y pagos SPEI automáticos entre Fintoc y Odoo 19.
+Plataforma fintech integral para gestión de pagos, cobros, tesorería y cumplimiento fiscal en México.
+Integración completa con **Fintoc** (SPEI), **Odoo** ERP y **SAT**.
+
+## Funcionalidades
+
+| Módulo | Descripción |
+|--------|-------------|
+| **Cuentas por Pagar (AP)** | Pago individual y masivo a proveedores, validación SAT previa, flujos de aprobación multinivel, programación de pagos |
+| **Cuentas por Cobrar (AR)** | CLABEs virtuales por cliente, links de pago Checkout, recordatorios, aging de cartera |
+| **Gestión de Gastos** | Registro con CFDI XML, validación SAT automática, aprobación, reembolso SPEI |
+| **Tesorería** | Dashboard en tiempo real, balance consolidado, proyección de flujo de efectivo |
+| **Presupuestos** | CRUD por categoría/período, alertas por exceso, presupuesto vs ejecución |
+| **Conciliación Bancaria** | Fintoc vs Odoo, SAT vs complementos de pago, matching automático |
+| **CFDI / SAT** | Parseo XML CFDI 3.3/4.0, validación individual y masiva, detección EFOS, almacenamiento |
+| **Portal de Proveedores** | Acceso con token, facturas pendientes, historial de pagos |
+| **Notificaciones** | Multi-canal: in-app, email (SMTP), Slack |
+| **Reportes** | Flujo de efectivo, aging, cumplimiento SAT, presupuesto vs actual, resumen proveedores |
+| **Multi-empresa** | Soporte para múltiples empresas con Odoo |
+| **Webhooks Fintoc** | Procesamiento en tiempo real de cobros, pagos, rechazos, verificaciones |
+| **Auditoría** | Log completo de acciones, pagos y aprobaciones |
+
+## Arquitectura
+
+```
+fintoc_odoo/
+├── app/                          # Aplicación principal
+│   ├── main.py                   # FastAPI entry point
+│   ├── config.py                 # Configuración centralizada
+│   ├── database.py               # SQLAlchemy models + DB setup
+│   ├── models/
+│   │   └── schemas.py            # Pydantic schemas (request/response)
+│   ├── services/                 # Lógica de negocio
+│   │   ├── fintoc_service.py     # CLABEs, SPEI, Checkout, movimientos
+│   │   ├── odoo_service.py       # Clientes, facturas, pagos, CFDI, aging
+│   │   ├── sat_service.py        # Validación CFDI, EFOS, bulk, XML
+│   │   ├── payment_service.py    # AP: pagos con aprobaciones y SAT
+│   │   ├── collection_service.py # AR: cobranza, links, CLABEs
+│   │   ├── expense_service.py    # Gastos con CFDI y reembolso
+│   │   ├── treasury_service.py   # Tesorería y cash flow
+│   │   ├── budget_service.py     # Presupuestos
+│   │   ├── reconciliation_service.py  # Conciliación bancaria y SAT
+│   │   ├── approval_service.py   # Flujos de aprobación
+│   │   ├── notification_service.py    # Notificaciones multi-canal
+│   │   └── reporting_service.py  # Reportes y analítica
+│   ├── api/                      # Endpoints REST
+│   │   ├── webhooks.py           # Fintoc webhooks
+│   │   ├── payments.py           # Pagos AP
+│   │   ├── collections.py        # Cobranza AR
+│   │   ├── invoices.py           # Facturas
+│   │   ├── vendors.py            # Proveedores
+│   │   ├── customers.py          # Clientes
+│   │   ├── expenses.py           # Gastos
+│   │   ├── approvals.py          # Aprobaciones
+│   │   ├── treasury.py           # Tesorería
+│   │   ├── budgets.py            # Presupuestos
+│   │   ├── reconciliation.py     # Conciliación
+│   │   ├── sat.py                # SAT / CFDI
+│   │   ├── reports.py            # Reportes
+│   │   ├── notifications.py      # Notificaciones
+│   │   └── dashboard.py          # Dashboard + Portal Proveedores + Multi-empresa
+│   └── utils/
+│       ├── validators.py         # Validación CLABE, RFC, formateo
+│       └── cfdi_parser.py        # Parser XML CFDI 3.3/4.0
+├── *.py                          # Scripts CLI legacy (compatibles)
+├── requirements.txt
+└── .env.example
+```
 
 ## Instalación
 
-### 1. Generar llaves JWS (una sola vez)
+### 1. Instalar dependencias
+
+```bash
+cd fintoc_odoo
+pip install -r requirements.txt
+```
+
+### 2. Configurar variables de entorno
+
+```bash
+cp .env.example .env
+# Editar .env con datos reales
+```
+
+### 3. Generar llaves JWS (una sola vez)
 
 ```bash
 openssl genrsa -out private_key.pem 2048
@@ -13,122 +93,128 @@ openssl rsa -in private_key.pem -pubout -out public_key.pem
 
 Subir `public_key.pem` en **app.fintoc.com → Settings → JWS Keys**.
 
-### 2. Instalar dependencias
+### 4. Iniciar la aplicación
 
 ```bash
-pip install -r requirements.txt
+python -m app.main
 ```
 
-### 3. Configurar variables de entorno
+La API estará en `http://localhost:8001`. Documentación interactiva en `/docs`.
 
-Copiar `.env` y llenar con datos reales de:
-- **app.fintoc.com**: API Keys + Webhook Secret + Account ID
-- **Odoo**: URL + DB + usuario + contraseña
+### 5. Configurar Webhooks en Fintoc
 
-### 4. Alta inicial de CLABEs (ejecutar UNA VEZ)
+Registrar en **app.fintoc.com → Webhooks → New Endpoint**:
+- **URL:** `https://tu-servidor/fintoc/webhook`
+- **Eventos:** `transfer.*`, `account_verification.*`, `checkout_session.*`, `payment_intent.*`
 
-```bash
-python setup_clabes.py
-```
+## API Endpoints
 
-Crea una CLABE virtual por cada cliente en Odoo y las guarda en `clabes_quimibond.csv`.
+### Dashboard
+| Método | Endpoint | Descripción |
+|--------|----------|-------------|
+| GET | `/api/dashboard` | Dashboard ejecutivo |
+| GET | `/health` | Health check |
 
-**Dar esta CLABE a cada cliente para que la use cuando pague por SPEI.**
+### Pagos (AP)
+| Método | Endpoint | Descripción |
+|--------|----------|-------------|
+| GET | `/api/payments/` | Lista pagos |
+| POST | `/api/payments/vendor` | Pago a proveedor con validación SAT |
+| POST | `/api/payments/batch` | Pagos masivos |
+| POST | `/api/payments/{id}/execute` | Ejecutar pago aprobado |
+| POST | `/api/payments/{id}/schedule` | Programar pago |
 
-### 5. Iniciar servidor de webhooks
+### Cobranza (AR)
+| Método | Endpoint | Descripción |
+|--------|----------|-------------|
+| GET | `/api/collections/pending` | Facturas pendientes de cobro |
+| GET | `/api/collections/overdue` | Facturas vencidas |
+| POST | `/api/collections/payment-link` | Generar link de pago |
+| POST | `/api/collections/clabes/setup-all` | Crear CLABEs masivamente |
 
-```bash
-python webhook_server.py
-```
+### Gastos
+| Método | Endpoint | Descripción |
+|--------|----------|-------------|
+| POST | `/api/expenses/` | Crear gasto (con CFDI) |
+| POST | `/api/expenses/{id}/action` | submit/approve/reject/pay |
 
-El servidor escucha en el puerto 8001. Debe estar accesible en HTTPS desde internet.
+### Aprobaciones
+| Método | Endpoint | Descripción |
+|--------|----------|-------------|
+| POST | `/api/approvals/rules` | Crear regla |
+| POST | `/api/approvals/{id}/approve` | Aprobar pago |
+| POST | `/api/approvals/{id}/reject` | Rechazar pago |
 
-Registrar la URL en **app.fintoc.com → Webhooks → New Endpoint**:
-- **URL:** `https://tu-servidor.quimibond.com/fintoc/webhook`
-- **Eventos:** `transfer.inbound.succeeded`, `transfer.outbound.succeeded`, `transfer.outbound.rejected`, `account_verification.succeeded`
+### Tesorería
+| Método | Endpoint | Descripción |
+|--------|----------|-------------|
+| GET | `/api/treasury/snapshot` | Snapshot en tiempo real |
+| GET | `/api/treasury/forecast` | Proyección de flujo |
 
-### 6. Pagar proveedor (pago individual)
+### Presupuestos
+| Método | Endpoint | Descripción |
+|--------|----------|-------------|
+| POST | `/api/budgets/` | Crear presupuesto |
+| GET | `/api/budgets/vs-actual` | Presupuesto vs ejecución |
 
-```bash
-python send_payout.py --clabe 012345678901234567 --amount 50000 --ref FAC-2026-0042
-```
+### Conciliación
+| Método | Endpoint | Descripción |
+|--------|----------|-------------|
+| POST | `/api/reconciliation/fintoc-odoo` | Conciliar Fintoc vs Odoo |
+| POST | `/api/reconciliation/sat` | Conciliar SAT |
 
-### 7. Dispersión masiva (con validación SAT opcional)
+### SAT / CFDI
+| Método | Endpoint | Descripción |
+|--------|----------|-------------|
+| POST | `/api/sat/validate` | Validar CFDI individual |
+| POST | `/api/sat/validate/bulk` | Validación masiva |
+| POST | `/api/sat/upload-xml` | Subir XML CFDI 3.3/4.0 |
 
-Llenar `pagos_batch.csv` (columnas: `clabe`, `amount_mxn`, `reference_id`, `comment`). Si `reference_id` coincide con una factura de proveedor en Odoo, se valida el CFDI ante el SAT antes de pagar:
+### Reportes
+| Método | Endpoint | Descripción |
+|--------|----------|-------------|
+| GET | `/api/reports/cash-flow` | Flujo de efectivo |
+| GET | `/api/reports/aging/{type}` | Aging (receivable/payable) |
+| GET | `/api/reports/sat-compliance` | Cumplimiento SAT |
+| GET | `/api/reports/budget-vs-actual` | Presupuesto vs actual |
+| GET | `/api/reports/vendor-summary` | Resumen proveedores |
 
-```bash
-python batch_payout.py                    # con validación SAT
-python batch_payout.py --no-validate-sat  # sin validación (comportamiento anterior)
-```
+### Portal Proveedores
+| Método | Endpoint | Descripción |
+|--------|----------|-------------|
+| POST | `/api/vendor-portal/token` | Generar token de acceso |
+| GET | `/api/vendor-portal/dashboard` | Dashboard del proveedor |
 
-### 8. Pago a proveedor con validación SAT
-
-Pago completo: validar CFDI en SAT → obtener CLABE del proveedor → enviar SPEI. El webhook registrará el pago en Odoo al confirmarse:
-
-```bash
-python pay_vendor.py --bill-id 12345
-python pay_vendor.py --bill-id 12345 --skip-sat   # omitir validación SAT
-```
-
-### 9. Conciliación SAT vs Fintoc
-
-Revisar que los pagos del diario Fintoc tengan Complemento de Pago timbrado y estado vigente en SAT:
-
-```bash
-python reconcile_sat.py --days 7 --output reporte_sat_reconcile.csv
-```
-
-### 10. Prueba E2E (modo test)
-
-Simular cobro entrante y verificar en Odoo que se generó el Complemento de Pago:
-
-```bash
-python test_e2e.py [--account-number-id acno_XXX] [--amount 100]
-python test_e2e.py --no-simulate   # solo listar pagos recientes y su estado CFDI
-```
-
-### 12. Verificar CLABE de proveedor
-
-```bash
-python verify_clabe.py --clabe 012345678901234567
-```
-
-### 13. Sincronizar clientes nuevos
-
-```bash
-python sync_customers.py
-```
+Documentación completa interactiva disponible en `/docs` (Swagger UI) y `/redoc`.
 
 ## Configuración en Odoo
 
-1. Crear un **Diario contable** llamado "Fintoc SPEI" (tipo: Banco)
-2. Asignar a ese diario la cuenta bancaria de Fintoc
-3. `odoo_client.py` busca automáticamente el diario por nombre "fintoc"
-4. **Facturación electrónica MX:** PAC (p. ej. Solución Factible) y certificados CSD en Contabilidad > Configuración > Facturación electrónica MX
-5. Facturas de clientes con política **PPD** para que se genere el Complemento de Pago al cobrar
+1. Crear **Diario contable** "Fintoc SPEI" (tipo: Banco)
+2. Configurar PAC en Contabilidad > Configuración > Facturación electrónica MX
+3. Facturas de clientes con política **PPD** para Complemento de Pago
+4. Registrar CLABEs de proveedores en sus contactos
 
-## Pruebas en modo test
+## Scripts Legacy
 
-Para probar sin mover dinero real, usar `sk_test_XXX` como `FINTOC_SECRET_KEY`.
-
-Simular un cobro entrante:
-
-```python
-from fintoc_client import FintocManager
-fintoc = FintocManager()
-fintoc.simulate_inbound(account_number_id="acno_XXX", amount_mxn=5000.00)
+```bash
+python setup_clabes.py            # Alta inicial de CLABEs
+python sync_customers.py          # Sincronizar clientes
+python send_payout.py             # Pago individual CLI
+python pay_vendor.py              # Pago proveedor con SAT
+python batch_payout.py            # Pagos masivos CLI
+python reconcile_sat.py           # Conciliación SAT CLI
+python test_e2e.py                # Prueba E2E
 ```
 
-## Notas importantes
+## Stack Tecnológico
 
-- **Montos:** Fintoc usa centavos (enteros). `$5,900.50 MXN = 590050`. Los scripts ya hacen la conversión.
-- **Idempotencia:** Siempre usar un UUID único como `idempotency_key` en pagos salientes. Si el request falla y se reintenta, Fintoc no duplica el pago.
-- **Webhooks:** Fintoc puede enviar el mismo evento más de una vez. El servidor tiene deduplicación por `event_id`. En producción reemplazar el `set` en memoria por una tabla en Odoo o Redis.
-- **HTTPS:** Fintoc NO envía webhooks a URLs HTTP. Usar nginx como reverse proxy con Let's Encrypt, o ngrok para pruebas locales.
-
-## Integración SAT (México)
-
-- **Complemento de Pago:** Al registrar un cobro (webhook) o un pago a proveedor, Odoo genera el CFDI de Complemento de Pago si la factura es PPD y el PAC está configurado.
-- **Validación:** `sat_client.py` valida CFDIs contra el servicio ConsultaCFDIService del SAT antes de pagar proveedores (`pay_vendor.py`, `batch_payout.py`).
-- **Conciliación:** `reconcile_sat.py` revisa que los pagos Fintoc tengan complemento timbrado y estado vigente.
+| Capa | Tecnología |
+|------|------------|
+| Framework | FastAPI + Uvicorn |
+| Base de datos | SQLAlchemy (SQLite / PostgreSQL) |
+| Pagos | Fintoc SDK (SPEI directo) |
+| ERP | Odoo 17/18/19 (XML-RPC) |
+| Fiscal | SAT ConsultaCFDIService (SOAP/zeep) |
+| XML | CFDI 3.3/4.0 parser nativo |
+| Validación | Pydantic v2 |
+| Notificaciones | SMTP + Slack webhooks |
