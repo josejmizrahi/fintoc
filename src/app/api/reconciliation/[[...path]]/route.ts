@@ -598,113 +598,56 @@ async function validateCfdiWithSat(
 }
 
 // ══════════════════════════════════════════════════════════
-// Odoo XML-RPC Helpers
+// Odoo JSON-RPC Helpers (modern standard)
 // ══════════════════════════════════════════════════════════
+
+interface OdooJsonRpcResult {
+  jsonrpc: string;
+  result?: unknown;
+  error?: { message: string; data?: { message?: string } };
+}
+
+async function odooJsonRpc(
+  url: string, service: string, method: string, args: unknown[], timeout = 15000,
+): Promise<OdooJsonRpcResult> {
+  const res = await fetch(`${url.replace(/\/$/, "")}/jsonrpc`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", method: "call", id: Date.now(), params: { service, method, args } }),
+    signal: AbortSignal.timeout(timeout),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
 
 async function fetchOdooPayments(
   config: Record<string, string>,
-  days: number
+  days: number,
 ): Promise<Record<string, unknown>[]> {
   const { url, database, user, password } = config;
   if (!url || !database || !user || !password) return [];
 
   try {
-    // Authenticate
-    const authPayload = `<?xml version="1.0"?>
-<methodCall>
-  <methodName>authenticate</methodName>
-  <params>
-    <param><value><string>${escapeXml(database)}</string></value></param>
-    <param><value><string>${escapeXml(user)}</string></value></param>
-    <param><value><string>${escapeXml(password)}</string></value></param>
-    <param><value><struct></struct></value></param>
-  </params>
-</methodCall>`;
+    // Authenticate via JSON-RPC
+    const authResult = await odooJsonRpc(url, "common", "authenticate", [database, user, password, {}]);
+    const uid = authResult.result as number | false;
+    if (!uid) return [];
 
-    const authRes = await fetch(`${url.replace(/\/$/, "")}/xmlrpc/2/common`, {
-      method: "POST",
-      headers: { "Content-Type": "text/xml" },
-      body: authPayload,
-      signal: AbortSignal.timeout(10000),
-    });
-    const authText = await authRes.text();
-    const uidMatch = authText.match(/<int>(\d+)<\/int>/);
-    if (!uidMatch) return [];
-
-    const uid = uidMatch[1];
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - days);
     const cutoffStr = cutoff.toISOString().slice(0, 10);
 
-    // Fetch payments
-    const searchPayload = `<?xml version="1.0"?>
-<methodCall>
-  <methodName>execute_kw</methodName>
-  <params>
-    <param><value><string>${escapeXml(database)}</string></value></param>
-    <param><value><int>${uid}</int></value></param>
-    <param><value><string>${escapeXml(password)}</string></value></param>
-    <param><value><string>account.payment</string></value></param>
-    <param><value><string>search_read</string></value></param>
-    <param><value><array><data>
-      <value><array><data>
-        <value><array><data>
-          <value><string>date</string></value>
-          <value><string>&gt;=</string></value>
-          <value><string>${cutoffStr}</string></value>
-        </data></array></value>
-      </data></array></value>
-    </data></array></value></param>
-    <param><value><struct>
-      <member><name>fields</name><value><array><data>
-        <value><string>name</string></value>
-        <value><string>amount</string></value>
-        <value><string>date</string></value>
-        <value><string>ref</string></value>
-        <value><string>state</string></value>
-      </data></array></value></member>
-      <member><name>limit</name><value><int>500</int></value></member>
-    </struct></value></param>
-  </params>
-</methodCall>`;
+    // Fetch payments via JSON-RPC
+    const result = await odooJsonRpc(url, "object", "execute_kw", [
+      database, uid, password,
+      "account.payment", "search_read",
+      [[["date", ">=", cutoffStr]]],
+      { fields: ["name", "amount", "date", "ref", "state", "payment_type", "partner_id"], limit: 2000 },
+    ], 30000);
 
-    const payRes = await fetch(`${url.replace(/\/$/, "")}/xmlrpc/2/object`, {
-      method: "POST",
-      headers: { "Content-Type": "text/xml" },
-      body: searchPayload,
-      signal: AbortSignal.timeout(30000),
-    });
-    const payText = await payRes.text();
-
-    return parseXmlRecords(payText);
+    if (result.error) return [];
+    return (result.result as Record<string, unknown>[]) || [];
   } catch {
     return [];
   }
-}
-
-function escapeXml(str: string): string {
-  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
-
-function parseXmlRecords(xml: string): Record<string, unknown>[] {
-  const records: Record<string, unknown>[] = [];
-  const structMatches = xml.match(/<struct>([\s\S]*?)<\/struct>/g) || [];
-  for (const struct of structMatches) {
-    const rec: Record<string, unknown> = {};
-    const memberMatches = struct.match(/<member>([\s\S]*?)<\/member>/g) || [];
-    for (const member of memberMatches) {
-      const nameMatch = member.match(/<name>(.*?)<\/name>/);
-      const valMatch = member.match(/<(?:string|int|double|boolean)>(.*?)<\/(?:string|int|double|boolean)>/);
-      if (nameMatch && valMatch) {
-        const tag = member.match(/<(string|int|double|boolean)>/);
-        const val = valMatch[1];
-        if (tag?.[1] === "int") rec[nameMatch[1]] = Number(val);
-        else if (tag?.[1] === "double") rec[nameMatch[1]] = parseFloat(val);
-        else if (tag?.[1] === "boolean") rec[nameMatch[1]] = val === "1";
-        else rec[nameMatch[1]] = val;
-      }
-    }
-    if (Object.keys(rec).length > 0) records.push(rec);
-  }
-  return records;
 }
