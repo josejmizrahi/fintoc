@@ -17,6 +17,7 @@ import {
   GitCompare,
   BarChart3,
   Settings,
+  Plug,
   ChevronsLeft,
   ChevronsRight,
 } from "lucide-react";
@@ -47,6 +48,7 @@ const navItems = [
   { label: "Conciliación", href: "/conciliacion", icon: GitCompare },
   { label: "Reportes", href: "/reportes", icon: BarChart3 },
   { label: "Configuración", href: "/configuracion", icon: Settings },
+  { label: "Integraciones", href: "/onboarding", icon: Plug },
 ];
 
 export function Sidebar() {

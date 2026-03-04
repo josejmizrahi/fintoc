@@ -201,6 +201,19 @@ export const api = {
     create: (data: any) => request<any>(`/api/companies/?name=${data.name}&rfc=${data.rfc}`, { method: "POST" }),
   },
 
+  // Onboarding
+  onboarding: {
+    status: () => request<any>("/api/onboarding"),
+    save: (provider: string, config: Record<string, string>) =>
+      request<any>("/api/onboarding", { method: "POST", body: JSON.stringify({ action: "save", provider, config }) }),
+    test: (provider: string, config: Record<string, string>) =>
+      request<any>("/api/onboarding", { method: "POST", body: JSON.stringify({ action: "test", provider, config }) }),
+    sync: (provider: string) =>
+      request<any>("/api/onboarding", { method: "POST", body: JSON.stringify({ action: "sync", provider }) }),
+    complete: () =>
+      request<any>("/api/onboarding", { method: "POST", body: JSON.stringify({ action: "complete" }) }),
+  },
+
   // Vendor Portal
   vendorPortal: {
     createToken: (partnerId: number) => request<any>(`/api/vendor-portal/token?partner_id=${partnerId}`, { method: "POST" }),
