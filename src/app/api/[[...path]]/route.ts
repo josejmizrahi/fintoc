@@ -1,64 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { verifyToken } from "@/lib/auth-server";
 import { hasDB, query, insert, update } from "@/lib/db";
+import { getCompanyId } from "@/lib/auth-helpers";
+import { validateCfdiAgainstSat, parseCfdiXml } from "@/lib/sat";
+import { fintocPost } from "@/lib/fintoc";
 
-// ── SAT CFDI validation helpers ──
-
-function escapeXml(str: string): string {
-  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
-}
-
-async function validateCfdiAgainstSat(uuid: string, rfcEmisor: string, rfcReceptor: string, total: string): Promise<string> {
-  const soapEnvelope = `<?xml version="1.0" encoding="utf-8"?>
-<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:tem="http://tempuri.org/">
-  <soap:Body>
-    <tem:Consulta>
-      <tem:expresionImpresa>?re=${escapeXml(rfcEmisor)}&amp;rr=${escapeXml(rfcReceptor)}&amp;tt=${escapeXml(total)}&amp;id=${escapeXml(uuid)}</tem:expresionImpresa>
-    </tem:Consulta>
-  </soap:Body>
-</soap:Envelope>`;
-
-  const res = await fetch("https://consultaqr.facturaelectronica.sat.gob.mx/ConsultaCFDIService.svc", {
-    method: "POST",
-    headers: { "Content-Type": "text/xml; charset=utf-8", SOAPAction: "http://tempuri.org/IConsultaCFDIService/Consulta" },
-    body: soapEnvelope,
-    signal: AbortSignal.timeout(10000),
-  });
-
-  const text = await res.text();
-  if (text.includes("Vigente")) return "Vigente";
-  if (text.includes("Cancelado")) return "Cancelado";
-  if (text.includes("No Encontrado")) return "No encontrado";
-  return "Sin verificar";
-}
-
-function parseCfdiXml(xml: string): { uuid: string; rfcEmisor: string; rfcReceptor: string; total: number; fecha: string; fechaTimbrado: string } {
-  // Extract UUID from TimbreFiscalDigital
-  const uuidMatch = xml.match(/UUID=["']([^"']+)["']/i) || xml.match(/uuid=["']([^"']+)["']/i);
-  // Extract RFC Emisor
-  const rfcEmisorMatch = xml.match(/Rfc=["']([A-Z&Ñ]{3,4}\d{6}[A-Z0-9]{3})["']/i);
-  // Extract RFC Receptor (second Rfc attribute, typically in cfdi:Receptor)
-  const rfcMatches = xml.match(/Rfc=["']([A-Z&Ñ]{3,4}\d{6}[A-Z0-9]{3})["']/gi) || [];
-  const allRfcs = rfcMatches.map(m => { const r = m.match(/["']([^"']+)["']/); return r ? r[1] : ""; }).filter(Boolean);
-  // Extract Total
-  const totalMatch = xml.match(/Total=["']([^"']+)["']/i);
-  // Extract Fecha
-  const fechaMatch = xml.match(/Fecha=["']([^"']+)["']/i);
-  // Extract FechaTimbrado
-  const fechaTimbradoMatch = xml.match(/FechaTimbrado=["']([^"']+)["']/i);
-
-  return {
-    uuid: uuidMatch?.[1] || "",
-    rfcEmisor: allRfcs[0] || rfcEmisorMatch?.[1] || "",
-    rfcReceptor: allRfcs[1] || allRfcs[0] || "",
-    total: parseFloat(totalMatch?.[1] || "0") || 0,
-    fecha: fechaMatch?.[1] || "",
-    fechaTimbrado: fechaTimbradoMatch?.[1] || "",
-  };
-}
-
-// ── Zod schemas for input validation ──
+// ── Zod schemas ──
 
 const paymentSchema = z.object({
   amount: z.number().positive("Monto debe ser positivo"),
@@ -79,15 +26,6 @@ const expenseSchema = z.object({
   currency: z.string().default("MXN"),
 });
 
-const budgetSchema = z.object({
-  name: z.string().min(1),
-  category: z.string().optional(),
-  period_start: z.string(),
-  period_end: z.string(),
-  amount_budgeted: z.number().positive(),
-  alert_threshold_pct: z.number().min(0).max(100).default(80),
-});
-
 const approvalRuleSchema = z.object({
   name: z.string().min(1),
   min_amount: z.number().min(0).default(0),
@@ -95,6 +33,15 @@ const approvalRuleSchema = z.object({
   required_approvers: z.number().min(1).default(1),
   approver_emails: z.array(z.string().email()).default([]),
   auto_approve_below: z.number().nullable().optional(),
+});
+
+const budgetSchema = z.object({
+  name: z.string().min(1),
+  category: z.string().optional(),
+  period_start: z.string(),
+  period_end: z.string(),
+  amount_budgeted: z.number().positive(),
+  alert_threshold_pct: z.number().min(0).max(100).default(80),
 });
 
 const clabeSchema = z.object({
@@ -106,20 +53,44 @@ function zodError(error: z.ZodError): Response {
   return NextResponse.json({ detail: msg }, { status: 400 });
 }
 
-/**
- * Catch-all API route — uses Supabase when configured, otherwise mock data.
- */
+// ── Constants ──
 
 const now = new Date().toISOString();
 const today = now.slice(0, 10);
 
-// ── Helper to get company_id from JWT ──
+// ── Path matching ──
 
-async function getCompanyId(req: NextRequest): Promise<number | null> {
-  const auth = req.headers.get("authorization");
-  if (!auth?.startsWith("Bearer ")) return null;
-  const payload = await verifyToken(auth.slice(7));
-  return payload ? Number(payload.company_id) : null;
+function matchPath(path: string, pattern: string): Record<string, string> | null {
+  const pp = path.split("/").filter(Boolean);
+  const pt = pattern.split("/").filter(Boolean);
+  if (pp.length !== pt.length) return null;
+  const params: Record<string, string> = {};
+  for (let i = 0; i < pt.length; i++) {
+    if (pt[i].startsWith(":")) params[pt[i].slice(1)] = pp[i];
+    else if (pt[i] !== pp[i]) return null;
+  }
+  return params;
+}
+
+// ── Payment aggregation helper (used by treasury, dashboard, reports) ──
+
+async function getPaymentAggregates(companyId: number) {
+  const { data: payments } = await query("payments", { match: { company_id: companyId } });
+  const all = payments || [];
+  const confirmed = all.filter((p: Record<string, unknown>) => p.status === "confirmed");
+  const inflows = confirmed
+    .filter((p: Record<string, unknown>) => p.direction === "inbound")
+    .reduce((s: number, p: Record<string, unknown>) => s + Number(p.amount), 0);
+  const outflows = confirmed
+    .filter((p: Record<string, unknown>) => p.direction === "outbound")
+    .reduce((s: number, p: Record<string, unknown>) => s + Number(p.amount), 0);
+  const pendingIn = all
+    .filter((p: Record<string, unknown>) => p.direction === "inbound" && ["draft", "pending_approval", "scheduled"].includes(p.status as string))
+    .reduce((s: number, p: Record<string, unknown>) => s + Number(p.amount), 0);
+  const pendingOut = all
+    .filter((p: Record<string, unknown>) => p.direction === "outbound" && ["draft", "pending_approval", "scheduled"].includes(p.status as string))
+    .reduce((s: number, p: Record<string, unknown>) => s + Number(p.amount), 0);
+  return { all, confirmed, inflows, outflows, balance: inflows - outflows, pendingIn, pendingOut };
 }
 
 // ── Mock Data (fallback when no DB) ──
@@ -154,7 +125,7 @@ const MOCK = {
     ],
   },
   payments: [
-    { id: 1, direction: "outbound", status: "confirmed", amount: 45000, currency: "MXN", partner_name: "Materiales MX SA", partner_rfc: "MMX010101AAA", reference_id: "PAY-001", created_at: now },
+    { id: 1, direction: "outbound", status: "confirmed", amount: 45000, currency: "MXN", partner_name: "Materiales MX SA de CV", partner_rfc: "MMX010101AAA", reference_id: "PAY-001", created_at: now },
     { id: 2, direction: "outbound", status: "pending_approval", amount: 125000, currency: "MXN", partner_name: "Logística Express", partner_rfc: "LEX020202BBB", reference_id: "PAY-002", created_at: now },
     { id: 3, direction: "inbound", status: "confirmed", amount: 89000, currency: "MXN", partner_name: "TechCorp SA de CV", partner_rfc: "TCS030303CCC", reference_id: "PAY-003", created_at: now },
     { id: 4, direction: "outbound", status: "draft", amount: 67000, currency: "MXN", partner_name: "Servicios Cloud MX", partner_rfc: "SCM040404DDD", reference_id: "PAY-004", created_at: now },
@@ -192,14 +163,6 @@ const MOCK = {
   pendingApprovals: [
     { id: 1, payment_id: 2, status: "pending", level: 1, approver_email: "director@empresa.com", amount: 125000, partner_name: "Logística Express", created_at: now },
   ],
-  treasurySnapshot: {
-    total_balance: 2_450_000, available_balance: 2_100_000, reserved_balance: 350_000,
-    accounts: [
-      { name: "Cuenta Principal SPEI", balance: 1_800_000, currency: "MXN", bank: "STP" },
-      { name: "Cuenta Operativa", balance: 650_000, currency: "MXN", bank: "BBVA" },
-    ],
-    pending_inflows: 554_000, pending_outflows: 467_000,
-  },
   budgets: [
     { id: 1, name: "Marketing Q1", category: "marketing", period_start: "2026-01-01", period_end: "2026-03-31", amount_budgeted: 500000, amount_spent: 320000, amount_committed: 80000, alert_threshold_pct: 80, is_active: true },
     { id: 2, name: "Operaciones Q1", category: "operaciones", period_start: "2026-01-01", period_end: "2026-03-31", amount_budgeted: 1200000, amount_spent: 890000, amount_committed: 150000, alert_threshold_pct: 90, is_active: true },
@@ -220,27 +183,13 @@ const MOCK = {
   ],
 };
 
-// ── Path matching ──
-
-function matchPath(path: string, pattern: string): Record<string, string> | null {
-  const pp = path.split("/").filter(Boolean);
-  const pt = pattern.split("/").filter(Boolean);
-  if (pp.length !== pt.length) return null;
-  const params: Record<string, string> = {};
-  for (let i = 0; i < pt.length; i++) {
-    if (pt[i].startsWith(":")) params[pt[i].slice(1)] = pp[i];
-    else if (pt[i] !== pp[i]) return null;
-  }
-  return params;
-}
-
-// ── DB query helpers using Supabase client ──
+// ── DB GET handler ──
 
 async function dbGet(path: string, companyId: number | null): Promise<unknown | null> {
   if (!hasDB() || !companyId) return null;
 
   try {
-    // Dashboard — aggregate from multiple tables
+    // Dashboard
     if (path === "dashboard") {
       const [payRes, recvRes, payableRes, approvalRes, overdueRes, movRes] = await Promise.all([
         query("payments", { match: { company_id: companyId } }),
@@ -258,17 +207,6 @@ async function dbGet(path: string, companyId: number | null): Promise<unknown | 
       const totalBalance = inflows - outflows;
       const ar = recv.reduce((s: number, i: Record<string, unknown>) => s + Number(i.amount_residual), 0);
       const ap = payable.reduce((s: number, i: Record<string, unknown>) => s + Number(i.amount_residual), 0);
-      const overdueList = (overdueRes.data || []).map((inv: Record<string, unknown>) => ({
-        id: inv.id, name: inv.cfdi_uuid || `INV-${inv.id}`, partner: inv.partner_name,
-        amount_total: inv.amount_total, amount_residual: inv.amount_residual,
-        invoice_date_due: inv.date_due,
-      }));
-      const recentPayments = (movRes.data || []).map((p: Record<string, unknown>) => ({
-        id: p.id, direction: p.direction, status: p.status, amount: p.amount,
-        currency: p.currency, reference_id: p.reference_id, partner_name: p.partner_name,
-        created_at: p.created_at,
-      }));
-
       return {
         total_balance: totalBalance,
         accounts_receivable: ar,
@@ -276,13 +214,19 @@ async function dbGet(path: string, companyId: number | null): Promise<unknown | 
         net_position: totalBalance + ar - ap,
         pending_invoices_count: recv.length + payable.length,
         pending_bills_count: payable.length,
-        overdue_invoices: overdueList.length,
+        overdue_invoices: (overdueRes.data || []).length,
         pending_approvals: (approvalRes.data || []).length,
         unread_notifications: 0,
         budget_alerts: 0,
         sat_issues: 0,
-        recent_payments: recentPayments,
-        overdue_invoice_list: overdueList,
+        recent_payments: (movRes.data || []).map((p: Record<string, unknown>) => ({
+          id: p.id, direction: p.direction, status: p.status, amount: p.amount,
+          currency: p.currency, reference_id: p.reference_id, partner_name: p.partner_name, created_at: p.created_at,
+        })),
+        overdue_invoice_list: (overdueRes.data || []).map((inv: Record<string, unknown>) => ({
+          id: inv.id, name: inv.cfdi_uuid || `INV-${inv.id}`, partner: inv.partner_name,
+          amount_total: inv.amount_total, amount_residual: inv.amount_residual, invoice_date_due: inv.date_due,
+        })),
         cash_flow_trend: MOCK.dashboard.cash_flow_trend,
       };
     }
@@ -319,15 +263,15 @@ async function dbGet(path: string, companyId: number | null): Promise<unknown | 
       const { data } = await query("invoices", { match: { company_id: companyId, type: "payable", status: "overdue" } });
       return data || [];
     }
+    m = matchPath(path, "invoices/:id/cfdi");
+    if (m) {
+      const { data } = await query("invoices", { select: "cfdi_uuid, status, sat_status", match: { id: Number(m.id), company_id: companyId }, single: true });
+      return data ? { uuid: data.cfdi_uuid, status: data.status, sat_status: data.sat_status } : { uuid: null, status: null };
+    }
     m = matchPath(path, "invoices/:id");
     if (m) {
       const { data } = await query("invoices", { match: { id: Number(m.id), company_id: companyId }, single: true });
       return data;
-    }
-    m = matchPath(path, "invoices/:id/cfdi");
-    if (m) {
-      const { data } = await query("invoices", { select: "cfdi_uuid, status", match: { id: Number(m.id), company_id: companyId }, single: true });
-      return data ? { uuid: data.cfdi_uuid, status: data.status } : { uuid: null, status: null };
     }
 
     // Vendors
@@ -413,43 +357,39 @@ async function dbGet(path: string, companyId: number | null): Promise<unknown | 
       return data || [];
     }
 
-    // Treasury
+    // Treasury (real DB aggregation)
     if (path === "treasury/snapshot") {
-      const { data: payments } = await query("payments", { match: { company_id: companyId } });
-      const all = payments || [];
-      const confirmed = all.filter((p: Record<string, unknown>) => p.status === "confirmed");
-      const inflows = confirmed.filter((p: Record<string, unknown>) => p.direction === "inbound").reduce((s: number, p: Record<string, unknown>) => s + Number(p.amount), 0);
-      const outflows = confirmed.filter((p: Record<string, unknown>) => p.direction === "outbound").reduce((s: number, p: Record<string, unknown>) => s + Number(p.amount), 0);
-      const balance = inflows - outflows;
-      const pendingIn = all.filter((p: Record<string, unknown>) => p.direction === "inbound" && ["draft", "pending_approval", "scheduled"].includes(p.status as string)).reduce((s: number, p: Record<string, unknown>) => s + Number(p.amount), 0);
-      const pendingOut = all.filter((p: Record<string, unknown>) => p.direction === "outbound" && ["draft", "pending_approval", "scheduled"].includes(p.status as string)).reduce((s: number, p: Record<string, unknown>) => s + Number(p.amount), 0);
+      const agg = await getPaymentAggregates(companyId);
       return {
-        total_balance: balance, available_balance: balance, reserved_balance: 0,
-        accounts: [{ name: "Cuenta Principal SPEI", balance, currency: "MXN", bank: "STP" }],
-        pending_inflows: pendingIn, pending_outflows: pendingOut,
+        total_balance: agg.balance, available_balance: agg.balance, reserved_balance: 0,
+        accounts: [{ name: "Cuenta Principal SPEI", balance: agg.balance, currency: "MXN", bank: "STP" }],
+        pending_inflows: agg.pendingIn, pending_outflows: agg.pendingOut,
       };
     }
-    if (path === "treasury/forecast") return null; // use mock
+    if (path === "treasury/forecast") {
+      const agg = await getPaymentAggregates(companyId);
+      return [
+        { date: today, projected_balance: agg.balance, inflows: 0, outflows: 0 },
+        { date: new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10), projected_balance: agg.balance + agg.pendingIn, inflows: agg.pendingIn, outflows: 0 },
+        { date: new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10), projected_balance: agg.balance + agg.pendingIn - agg.pendingOut, inflows: 0, outflows: agg.pendingOut },
+      ];
+    }
     if (path === "treasury/cash-flow") {
-      const { data: payments } = await query("payments", { match: { company_id: companyId, status: "confirmed" } });
-      const all = payments || [];
-      const inflows = all.filter((p: Record<string, unknown>) => p.direction === "inbound").reduce((s: number, p: Record<string, unknown>) => s + Number(p.amount), 0);
-      const outflows = all.filter((p: Record<string, unknown>) => p.direction === "outbound").reduce((s: number, p: Record<string, unknown>) => s + Number(p.amount), 0);
-      return { inflows, outflows, net: inflows - outflows };
+      const agg = await getPaymentAggregates(companyId);
+      return { inflows: agg.inflows, outflows: agg.outflows, net: agg.balance };
     }
     if (path === "treasury/balance") {
-      const { data: payments } = await query("payments", { match: { company_id: companyId, status: "confirmed" } });
-      const all = payments || [];
-      const inflows = all.filter((p: Record<string, unknown>) => p.direction === "inbound").reduce((s: number, p: Record<string, unknown>) => s + Number(p.amount), 0);
-      const outflows = all.filter((p: Record<string, unknown>) => p.direction === "outbound").reduce((s: number, p: Record<string, unknown>) => s + Number(p.amount), 0);
-      return { balance: inflows - outflows, currency: "MXN" };
+      const agg = await getPaymentAggregates(companyId);
+      return { balance: agg.balance, currency: "MXN" };
     }
     if (path === "treasury/movements") {
       const { data } = await query("payments", { match: { company_id: companyId, status: "confirmed" }, order: { column: "created_at" }, limit: 20 });
-      return (data || []).map((p: Record<string, unknown>) => ({ id: p.id, type: p.direction, amount: p.amount, description: p.partner_name, date: p.created_at, status: p.status }));
+      return (data || []).map((p: Record<string, unknown>) => ({
+        id: p.id, type: p.direction, amount: p.amount, description: p.partner_name, date: p.created_at, status: p.status,
+      }));
     }
 
-    // Budgets
+    // Budgets (real DB)
     if (path === "budgets" || path === "budgets/" || path === "budgets/vs-actual") {
       const { data } = await query("budgets", { match: { company_id: companyId }, order: { column: "period_start" } });
       return data || [];
@@ -466,19 +406,36 @@ async function dbGet(path: string, companyId: number | null): Promise<unknown | 
       return data || [];
     }
 
-    // SAT
+    // SAT Documents (real DB)
     if (path === "sat/documents") {
       const { data } = await query("cfdi_documents", { match: { company_id: companyId }, order: { column: "fecha_emision" } });
       return data || [];
     }
 
-    // Reports
+    // Reports (real DB aggregation)
     if (path === "reports/cash-flow") {
-      const { data: payments } = await query("payments", { match: { company_id: companyId, status: "confirmed" } });
-      const all = payments || [];
-      const inflows = all.filter((p: Record<string, unknown>) => p.direction === "inbound").reduce((s: number, p: Record<string, unknown>) => s + Number(p.amount), 0);
-      const outflows = all.filter((p: Record<string, unknown>) => p.direction === "outbound").reduce((s: number, p: Record<string, unknown>) => s + Number(p.amount), 0);
-      return { inflows, outflows, net: inflows - outflows, by_day: [] };
+      const agg = await getPaymentAggregates(companyId);
+      return { inflows: agg.inflows, outflows: agg.outflows, net: agg.balance, by_day: [] };
+    }
+    m = matchPath(path, "reports/aging/:type");
+    if (m) {
+      const type = m.type === "payable" ? "payable" : "receivable";
+      const { data } = await query("invoices", { match: { company_id: companyId, type } });
+      const nowDate = new Date();
+      const buckets: Record<string, number> = { "0-30": 0, "31-60": 0, "61-90": 0, "90+": 0 };
+      let total = 0;
+      for (const inv of data || []) {
+        if (inv.status === "paid") continue;
+        const due = new Date(inv.date_due as string);
+        const daysPast = Math.max(0, Math.floor((nowDate.getTime() - due.getTime()) / 86400000));
+        const amount = Number(inv.amount_residual) || 0;
+        total += amount;
+        if (daysPast <= 30) buckets["0-30"] += amount;
+        else if (daysPast <= 60) buckets["31-60"] += amount;
+        else if (daysPast <= 90) buckets["61-90"] += amount;
+        else buckets["90+"] += amount;
+      }
+      return { ...buckets, total };
     }
     if (path === "reports/sat-compliance") {
       const { data } = await query("cfdi_documents", { match: { company_id: companyId } });
@@ -532,12 +489,12 @@ async function dbGet(path: string, companyId: number | null): Promise<unknown | 
     }
     if (path === "collections/aging") {
       const { data } = await query("invoices", { match: { company_id: companyId, type: "receivable" } });
-      const now = new Date();
-      const buckets = { "0-30": 0, "31-60": 0, "61-90": 0, "90+": 0 };
+      const nowDate = new Date();
+      const buckets: Record<string, number> = { "0-30": 0, "31-60": 0, "61-90": 0, "90+": 0 };
       for (const inv of data || []) {
         if (inv.status === "paid") continue;
         const due = new Date(inv.date_due as string);
-        const daysPast = Math.max(0, Math.floor((now.getTime() - due.getTime()) / 86400000));
+        const daysPast = Math.max(0, Math.floor((nowDate.getTime() - due.getTime()) / 86400000));
         const amount = Number(inv.amount_residual) || 0;
         if (daysPast <= 30) buckets["0-30"] += amount;
         else if (daysPast <= 60) buckets["31-60"] += amount;
@@ -552,14 +509,13 @@ async function dbGet(path: string, companyId: number | null): Promise<unknown | 
       return data;
     }
 
-    // Integrations status (for settings page)
+    // Integrations status
     if (path === "integrations" || path === "integrations/") {
       try {
         const { data } = await query("integrations", { match: { company_id: companyId } });
         return data || [];
       } catch { return []; }
     }
-
   } catch (e) {
     console.error("DB query error:", e);
     return null;
@@ -568,14 +524,15 @@ async function dbGet(path: string, companyId: number | null): Promise<unknown | 
   return null;
 }
 
+// ── DB POST handler ──
+
 async function dbPost(path: string, body: unknown, companyId: number | null): Promise<Response | unknown | null> {
   if (!hasDB() || !companyId) return null;
   const b = body as Record<string, unknown>;
 
   try {
-    // Payments
+    // Payments — create vendor payment
     if (path === "payments/vendor") {
-      // Normalize frontend field names: vendor_name → partner_name, clabe_destination → clabe
       const normalized = {
         ...b,
         partner_name: (b.partner_name as string) || (b.vendor_name as string) || "",
@@ -594,61 +551,48 @@ async function dbPost(path: string, body: unknown, companyId: number | null): Pr
       });
       return data?.[0];
     }
+
+    // Payments — execute via Fintoc payment_intents
     let m = matchPath(path, "payments/:id/execute");
     if (m) {
-      // Fetch payment details
       const { data: payment } = await query("payments", { match: { id: Number(m.id), company_id: companyId }, single: true });
       if (!payment) return NextResponse.json({ detail: "Pago no encontrado" }, { status: 404 });
 
-      // Try Fintoc payment_intents API for real SPEI execution
       try {
         const { data: fintocInt } = await query("integrations", { match: { company_id: companyId, provider: "fintoc" }, single: true });
         const fintocKey = fintocInt?.config ? (fintocInt.config as Record<string, string>).secretKey : null;
 
         if (fintocKey && fintocKey !== "••••••••") {
-          const piRes = await fetch("https://api.fintoc.com/v1/payment_intents", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", Authorization: fintocKey },
-            body: JSON.stringify({
-              amount: Math.round(Number(payment.amount) * 100), // Fintoc uses cents
-              currency: (payment.currency as string || "MXN").toLowerCase(),
-              recipient_account: {
-                holder_id: (payment.partner_rfc as string) || undefined,
-                number: (payment.clabe_destination as string) || undefined,
-                type: "clabe",
-                institution_id: undefined,
-              },
-              metadata: {
-                payment_id: String(payment.id),
-                reference: (payment.reference_id as string) || "",
-                partner_name: (payment.partner_name as string) || "",
-              },
-            }),
-            signal: AbortSignal.timeout(15000),
+          const result = await fintocPost("/payment_intents", fintocKey, {
+            amount: Math.round(Number(payment.amount) * 100),
+            currency: "mxn",
+            recipient_account: {
+              holder_id: (payment.partner_rfc as string) || undefined,
+              number: (payment.clabe_destination as string) || undefined,
+              type: "clabe",
+            },
+            metadata: {
+              payment_id: String(payment.id),
+              reference: (payment.reference_id as string) || "",
+              partner_name: (payment.partner_name as string) || "",
+            },
           });
 
-          if (piRes.ok) {
-            const pi = await piRes.json();
+          if (result.ok && result.data) {
             await update("payments", {
-              status: "processing",
-              fintoc_payment_intent_id: pi.id,
+              status: "processing", fintoc_payment_intent_id: result.data.id,
               updated_at: new Date().toISOString(),
             }, { id: Number(m.id), company_id: companyId });
-            return { ...payment, status: "processing", fintoc_payment_intent_id: pi.id };
-          } else {
-            const err = await piRes.json().catch(() => ({ error: { message: piRes.statusText } }));
-            // Fall back to status update only
-            await update("payments", { status: "processing", updated_at: new Date().toISOString() }, { id: Number(m.id), company_id: companyId });
-            return { ...payment, status: "processing", fintoc_warning: err.error?.message || "Fintoc API error" };
+            return { ...payment, status: "processing", fintoc_payment_intent_id: result.data.id };
           }
         }
-      } catch {
-        // Fintoc not configured or network error — proceed with status update
-      }
+      } catch { /* Fintoc not configured — proceed with status update */ }
 
       const { data } = await update("payments", { status: "processing", updated_at: new Date().toISOString() }, { id: Number(m.id), company_id: companyId });
       return data?.[0];
     }
+
+    // Payments — schedule
     m = matchPath(path, "payments/:id/schedule");
     if (m) {
       const { data } = await update("payments", { status: "scheduled", updated_at: new Date().toISOString() }, { id: Number(m.id), company_id: companyId });
@@ -709,8 +653,17 @@ async function dbPost(path: string, body: unknown, companyId: number | null): Pr
       });
       return data?.[0];
     }
+    m = matchPath(path, "budgets/:id/spend");
+    if (m) {
+      const amount = Number(b.amount) || 0;
+      const { data: budget } = await query("budgets", { match: { id: Number(m.id), company_id: companyId }, single: true });
+      if (!budget) return NextResponse.json({ detail: "Presupuesto no encontrado" }, { status: 404 });
+      const newSpent = Number(budget.amount_spent || 0) + amount;
+      const { data } = await update("budgets", { amount_spent: newSpent, updated_at: new Date().toISOString() }, { id: Number(m.id), company_id: companyId });
+      return data?.[0];
+    }
 
-    // Vendor CLABE set
+    // Vendor/Customer CLABE
     m = matchPath(path, "vendors/:id/clabe");
     if (m) {
       const parsed = clabeSchema.safeParse(b);
@@ -718,19 +671,13 @@ async function dbPost(path: string, body: unknown, companyId: number | null): Pr
       const { data } = await update("vendors", { clabe: parsed.data.clabe }, { id: Number(m.id), company_id: companyId });
       return data?.[0] || { clabe: parsed.data.clabe };
     }
-
-    // Vendor CLABE verify
     m = matchPath(path, "vendors/:id/verify-clabe");
     if (m) {
       const { data: vendor } = await query("vendors", { select: "clabe", match: { id: Number(m.id), company_id: companyId }, single: true });
       if (!vendor?.clabe) return { valid: false, message: "Proveedor sin CLABE registrada" };
-      // Basic CLABE validation: 18 digits, valid check digit
-      const clabe = vendor.clabe as string;
-      const valid = /^\d{18}$/.test(clabe);
-      return { valid, clabe, message: valid ? "CLABE valida" : "CLABE con formato invalido" };
+      const valid = /^\d{18}$/.test(vendor.clabe as string);
+      return { valid, clabe: vendor.clabe, message: valid ? "CLABE valida" : "CLABE con formato invalido" };
     }
-
-    // Customer CLABE set
     m = matchPath(path, "customers/:id/clabe");
     if (m) {
       const parsed = clabeSchema.safeParse(b);
@@ -746,8 +693,6 @@ async function dbPost(path: string, body: unknown, companyId: number | null): Pr
       const { data } = await update("customers", { clabe }, { id: Number(m.id), company_id: companyId });
       return { clabe, partner_id: Number(m.id), ...(data?.[0] || {}) };
     }
-
-    // Collections — setup all CLABEs
     if (path === "collections/clabes/setup-all") {
       const { data: customers } = await query("customers", { match: { company_id: companyId } });
       let created = 0;
@@ -760,15 +705,13 @@ async function dbPost(path: string, body: unknown, companyId: number | null): Pr
       }
       return { created, total: (customers || []).length };
     }
-
-    // Collections — sync CLABEs
     if (path === "collections/clabes/sync") {
       const { data: customers } = await query("customers", { match: { company_id: companyId } });
       const synced = (customers || []).filter((c: Record<string, unknown>) => c.clabe).length;
       return { synced };
     }
 
-    // Collections — payment link (Fintoc checkout session or fallback)
+    // Collections — payment link via Fintoc checkout session
     if (path === "collections/payment-link") {
       const amount = Number(b.amount) || 0;
       const partnerId = Number(b.partner_id) || 0;
@@ -778,35 +721,25 @@ async function dbPost(path: string, body: unknown, companyId: number | null): Pr
         const fintocKey = fintocInt?.config ? (fintocInt.config as Record<string, string>).secretKey : null;
 
         if (fintocKey && fintocKey !== "••••••••") {
-          // Look up customer for metadata
           const { data: customer } = await query("customers", { match: { id: partnerId, company_id: companyId }, single: true });
+          const result = await fintocPost("/checkout_sessions", fintocKey, {
+            amount: Math.round(amount * 100),
+            currency: "mxn",
+            customer_email: (customer?.email as string) || undefined,
+            metadata: {
+              company_id: String(companyId),
+              partner_id: String(partnerId),
+              partner_name: (customer?.name as string) || "",
+            },
+            success_url: `${process.env.NEXT_PUBLIC_APP_URL || "https://app.payana.mx"}/cobranza?payment=success`,
+            cancel_url: `${process.env.NEXT_PUBLIC_APP_URL || "https://app.payana.mx"}/cobranza?payment=cancelled`,
+          }, "v2");
 
-          const csRes = await fetch("https://api.fintoc.com/v2/checkout_sessions", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", Authorization: fintocKey },
-            body: JSON.stringify({
-              amount: Math.round(amount * 100),
-              currency: "clp", // Fintoc v2 checkout — adjust if MXN supported
-              customer_email: (customer?.email as string) || undefined,
-              metadata: {
-                company_id: String(companyId),
-                partner_id: String(partnerId),
-                partner_name: (customer?.name as string) || "",
-              },
-              success_url: `${process.env.NEXT_PUBLIC_APP_URL || "https://app.payana.mx"}/cobranza?payment=success`,
-              cancel_url: `${process.env.NEXT_PUBLIC_APP_URL || "https://app.payana.mx"}/cobranza?payment=cancelled`,
-            }),
-            signal: AbortSignal.timeout(15000),
-          });
-
-          if (csRes.ok) {
-            const cs = await csRes.json();
-            return { payment_url: cs.url || cs.checkout_url, amount, partner_id: partnerId, fintoc_session_id: cs.id };
+          if (result.ok && result.data) {
+            return { payment_url: result.data.url || result.data.checkout_url, amount, partner_id: partnerId, fintoc_session_id: result.data.id };
           }
         }
-      } catch {
-        // Fintoc not configured — fallback
-      }
+      } catch { /* Fintoc not configured */ }
 
       return { payment_url: `https://pay.payana.mx/${companyId}/${partnerId}/${amount}`, amount, partner_id: partnerId, fallback: true };
     }
@@ -822,7 +755,7 @@ async function dbPost(path: string, body: unknown, companyId: number | null): Pr
       return { success: true };
     }
 
-    // SAT — real CFDI validation against SAT SOAP service
+    // SAT — CFDI validation
     if (path === "sat/validate") {
       const uuid = (b.uuid as string) || "";
       const rfcEmisor = (b.rfc_emisor as string) || "";
@@ -831,12 +764,8 @@ async function dbPost(path: string, body: unknown, companyId: number | null): Pr
       if (!uuid || !rfcEmisor || !rfcReceptor) {
         return NextResponse.json({ detail: "Faltan campos: uuid, rfc_emisor, rfc_receptor, total" }, { status: 400 });
       }
-      try {
-        const satResult = await validateCfdiAgainstSat(uuid, rfcEmisor, rfcReceptor, total);
-        return { uuid, estado: satResult, rfc_emisor: rfcEmisor, rfc_receptor: rfcReceptor, consulta_date: new Date().toISOString() };
-      } catch {
-        return { uuid, estado: "Error de conexion", rfc_emisor: rfcEmisor };
-      }
+      const estado = await validateCfdiAgainstSat(uuid, rfcEmisor, rfcReceptor, total);
+      return { uuid, estado, rfc_emisor: rfcEmisor, rfc_receptor: rfcReceptor, consulta_date: new Date().toISOString() };
     }
 
     if (path === "sat/validate/bulk") {
@@ -844,21 +773,16 @@ async function dbPost(path: string, body: unknown, companyId: number | null): Pr
       if (!Array.isArray(uuids) || uuids.length === 0) {
         return NextResponse.json({ detail: "Envía un arreglo de UUIDs" }, { status: 400 });
       }
-      // Get invoices from DB to find RFC/total for each UUID
+      const { data: satInt } = await query("integrations", { match: { company_id: companyId, provider: "sat" }, single: true });
+      const rfcEmisor = (satInt?.config as Record<string, string>)?.rfcEmisor || "";
       const results: Array<{ uuid: string; estado: string }> = [];
-      for (const uuid of uuids.slice(0, 100)) { // max 100
+      for (const uuid of uuids.slice(0, 100)) {
         try {
           const { data: inv } = await query("invoices", { match: { company_id: companyId, cfdi_uuid: uuid }, single: true });
-          // If we have the invoice, get RFC from integrations config
-          const { data: satInt } = await query("integrations", { match: { company_id: companyId, provider: "sat" }, single: true });
-          const rfcEmisor = (satInt?.config as Record<string, string>)?.rfcEmisor || "";
           const total = inv ? String(Number(inv.amount_total) || 0) : "0";
           const estado = await validateCfdiAgainstSat(uuid, rfcEmisor, rfcEmisor, total);
           results.push({ uuid, estado });
-          // Update invoice if found
-          if (inv) {
-            await update("invoices", { sat_status: estado }, { id: inv.id });
-          }
+          if (inv) await update("invoices", { sat_status: estado }, { id: inv.id });
         } catch {
           results.push({ uuid, estado: "Error" });
         }
@@ -871,39 +795,25 @@ async function dbPost(path: string, body: unknown, companyId: number | null): Pr
       if (!xmlContent.trim()) {
         return NextResponse.json({ detail: "Falta el contenido XML" }, { status: 400 });
       }
-      // Parse CFDI XML to extract key fields
       const parsed = parseCfdiXml(xmlContent);
       if (!parsed.uuid) {
         return NextResponse.json({ detail: "No se encontro UUID en el XML" }, { status: 400 });
       }
-      // Check if already exists
       const { data: existing } = await query("cfdi_documents", { match: { company_id: companyId, uuid: parsed.uuid }, single: true });
       if (existing) {
         return { id: existing.id, uuid: parsed.uuid, status: "already_exists", rfc_emisor: parsed.rfcEmisor, total: parsed.total };
       }
-      // Validate against SAT
-      let estado = "Sin verificar";
-      try {
-        estado = await validateCfdiAgainstSat(parsed.uuid, parsed.rfcEmisor, parsed.rfcReceptor, String(parsed.total));
-      } catch { /* keep as unverified */ }
-      // Insert into cfdi_documents
+      const estado = await validateCfdiAgainstSat(parsed.uuid, parsed.rfcEmisor, parsed.rfcReceptor, String(parsed.total));
       const { data: inserted } = await insert("cfdi_documents", {
-        company_id: companyId,
-        uuid: parsed.uuid,
-        rfc_emisor: parsed.rfcEmisor,
-        rfc_receptor: parsed.rfcReceptor,
-        total: parsed.total,
-        fecha_emision: parsed.fecha || null,
-        fecha_timbrado: parsed.fechaTimbrado || null,
-        sat_status: estado,
-        xml_content: xmlContent,
+        company_id: companyId, uuid: parsed.uuid, rfc_emisor: parsed.rfcEmisor, rfc_receptor: parsed.rfcReceptor,
+        total: parsed.total, fecha_emision: parsed.fecha || null, fecha_timbrado: parsed.fechaTimbrado || null,
+        sat_status: estado, xml_content: xmlContent,
       });
       const doc = inserted?.[0];
       return { id: doc?.id, uuid: parsed.uuid, rfc_emisor: parsed.rfcEmisor, total: parsed.total, estado, status: "processed" };
     }
 
     if (path === "sat/revalidate-all") {
-      // Revalidate all CFDI documents
       const { data: docs } = await query("cfdi_documents", { match: { company_id: companyId } });
       const { data: satInt } = await query("integrations", { match: { company_id: companyId, provider: "sat" }, single: true });
       const rfcEmisor = (satInt?.config as Record<string, string>)?.rfcEmisor || "";
@@ -912,23 +822,17 @@ async function dbPost(path: string, body: unknown, companyId: number | null): Pr
         try {
           const uuid = doc.uuid as string;
           if (!uuid) continue;
-          const total = String(Number(doc.total) || 0);
-          const rfc_e = (doc.rfc_emisor as string) || rfcEmisor;
-          const rfc_r = (doc.rfc_receptor as string) || rfcEmisor;
-          const estado = await validateCfdiAgainstSat(uuid, rfc_e, rfc_r, total);
+          const estado = await validateCfdiAgainstSat(uuid, (doc.rfc_emisor as string) || rfcEmisor, (doc.rfc_receptor as string) || rfcEmisor, String(Number(doc.total) || 0));
           await update("cfdi_documents", { sat_status: estado, updated_at: new Date().toISOString() }, { id: doc.id });
           revalidated++;
           if (estado === "Vigente") vigentes++;
           else if (estado === "Cancelado") cancelados++;
         } catch { errores++; }
       }
-      // Also revalidate invoices with CFDI UUIDs
       const { data: invoices } = await query("invoices", { match: { company_id: companyId } });
       for (const inv of (invoices || []).filter((i: Record<string, unknown>) => i.cfdi_uuid)) {
         try {
-          const uuid = inv.cfdi_uuid as string;
-          const total = String(Number(inv.amount_total) || 0);
-          const estado = await validateCfdiAgainstSat(uuid, rfcEmisor, rfcEmisor, total);
+          const estado = await validateCfdiAgainstSat(inv.cfdi_uuid as string, rfcEmisor, rfcEmisor, String(Number(inv.amount_total) || 0));
           await update("invoices", { sat_status: estado }, { id: inv.id });
           revalidated++;
           if (estado === "Vigente") vigentes++;
@@ -938,6 +842,14 @@ async function dbPost(path: string, body: unknown, companyId: number | null): Pr
       return { revalidated, vigentes, cancelados, errores };
     }
 
+    // Companies
+    if (path === "companies" || path === "companies/") {
+      const name = (b.name as string) || "";
+      const rfc = (b.rfc as string) || "";
+      if (!name) return NextResponse.json({ detail: "Nombre requerido" }, { status: 400 });
+      const { data } = await insert("companies", { name, rfc, is_active: true });
+      return data?.[0];
+    }
   } catch (e) {
     console.error("DB post error:", e);
     return null;
@@ -957,9 +869,8 @@ function mockGet(path: string): Response {
   if (path === "invoices/payable") return NextResponse.json(MOCK.invoicesPayable);
   if (path === "invoices/overdue/receivable") return NextResponse.json(MOCK.invoicesReceivable.filter((i) => i.status === "overdue"));
   if (path === "invoices/overdue/payable") return NextResponse.json([]);
-  if (path.startsWith("invoices/aging/")) return NextResponse.json({ "0-30": 125000, "31-60": 89000, "61-90": 0, "90+": 340000 });
-  if (matchPath(path, "invoices/:id")) return NextResponse.json(MOCK.invoicesReceivable[0]);
   if (matchPath(path, "invoices/:id/cfdi")) return NextResponse.json({ uuid: "ABC12345", status: "Vigente" });
+  if (matchPath(path, "invoices/:id")) return NextResponse.json(MOCK.invoicesReceivable[0]);
   if (path === "vendors" || path === "vendors/") return NextResponse.json(MOCK.vendors);
   if (matchPath(path, "vendors/:id/clabe")) return NextResponse.json({ clabe: "012180015678901234" });
   if (matchPath(path, "vendors/:id/bills")) return NextResponse.json(MOCK.invoicesPayable);
@@ -973,11 +884,11 @@ function mockGet(path: string): Response {
   if (path === "approvals/rules") return NextResponse.json(MOCK.approvalRules);
   if (path === "approvals/pending") return NextResponse.json(MOCK.pendingApprovals);
   if (matchPath(path, "approvals/:id/history")) return NextResponse.json([]);
-  if (path === "treasury/snapshot") return NextResponse.json(MOCK.treasurySnapshot);
+  if (path === "treasury/snapshot") return NextResponse.json({ total_balance: 2_450_000, available_balance: 2_100_000, reserved_balance: 350_000, accounts: [{ name: "Cuenta Principal SPEI", balance: 1_800_000, currency: "MXN", bank: "STP" }], pending_inflows: 554_000, pending_outflows: 467_000 });
   if (path === "treasury/forecast") return NextResponse.json([
     { date: today, projected_balance: 2_450_000, inflows: 0, outflows: 0 },
-    { date: "2026-03-05", projected_balance: 2_575_000, inflows: 125000, outflows: 0 },
-    { date: "2026-03-10", projected_balance: 2_405_000, inflows: 0, outflows: 125000 },
+    { date: "2026-03-11", projected_balance: 2_575_000, inflows: 125000, outflows: 0 },
+    { date: "2026-03-18", projected_balance: 2_405_000, inflows: 0, outflows: 170000 },
   ]);
   if (path === "treasury/cash-flow") return NextResponse.json({ inflows: 554000, outflows: 467000, net: 87000 });
   if (path === "treasury/balance") return NextResponse.json({ balance: 2_450_000, currency: "MXN" });
@@ -1000,6 +911,7 @@ function mockGet(path: string): Response {
   if (path === "collections/overdue") return NextResponse.json(MOCK.invoicesReceivable.filter(i => i.status === "overdue"));
   if (path === "collections/aging") return NextResponse.json({ "0-30": 125000, "31-60": 89000, "61-90": 0, "90+": 340000 });
   if (matchPath(path, "collections/customer/:id")) return NextResponse.json(MOCK.customers[0]);
+  if (path === "integrations" || path === "integrations/") return NextResponse.json([]);
   return NextResponse.json({ detail: "Not found" }, { status: 404 });
 }
 
@@ -1011,7 +923,7 @@ function mockPost(path: string): Response {
   if (matchPath(path, "collections/customer/:id/clabe")) return NextResponse.json({ clabe: "646180157800000001", partner_id: 1 });
   if (path === "collections/clabes/setup-all") return NextResponse.json({ created: 3, total: 3 });
   if (path === "collections/clabes/sync") return NextResponse.json({ synced: 3 });
-  if (path === "collections/payment-link") return NextResponse.json({ link: "https://pay.example.com/demo", amount: 125000 });
+  if (path === "collections/payment-link") return NextResponse.json({ payment_url: "https://pay.example.com/demo", amount: 125000, fallback: true });
   if (path === "expenses" || path === "expenses/") return NextResponse.json({ ...MOCK.expenses[0], id: 100 });
   if (matchPath(path, "expenses/:id/action")) return NextResponse.json({ ...MOCK.expenses[0], status: "approved" });
   if (path === "approvals/rules") return NextResponse.json({ ...MOCK.approvalRules[0], id: 100 });
@@ -1019,7 +931,6 @@ function mockPost(path: string): Response {
   if (matchPath(path, "approvals/:id/reject")) return NextResponse.json({ status: "rejected" });
   if (path === "budgets" || path === "budgets/") return NextResponse.json({ ...MOCK.budgets[0], id: 100 });
   if (matchPath(path, "budgets/:id/spend")) return NextResponse.json({ ...MOCK.budgets[0], amount_spent: MOCK.budgets[0].amount_spent + 10000 });
-  if (matchPath(path, "budgets/:id/commit")) return NextResponse.json({ ...MOCK.budgets[0], amount_committed: MOCK.budgets[0].amount_committed + 5000 });
   if (path === "reconciliation/fintoc-odoo") return NextResponse.json(MOCK.reconciliationHistory[0]);
   if (path === "reconciliation/sat") return NextResponse.json(MOCK.reconciliationHistory[1]);
   if (path === "sat/validate") return NextResponse.json({ uuid: "DEMO-UUID", estado: "Vigente", rfc_emisor: "XAXX010101000", consulta_date: new Date().toISOString() });
@@ -1029,7 +940,8 @@ function mockPost(path: string): Response {
   if (matchPath(path, "notifications/:id/read")) return NextResponse.json({ success: true });
   if (path === "notifications/mark-all-read") return NextResponse.json({ success: true });
   if (path === "companies" || path === "companies/") return NextResponse.json({ id: 2, name: "Nueva Empresa", rfc: "NEE010101AAA", is_active: true });
-  if (path === "vendor-portal/token") return NextResponse.json({ token: "demo-vendor-token", expires_at: now });
+  if (matchPath(path, "vendors/:id/clabe")) return NextResponse.json({ clabe: "012180015678901234" });
+  if (matchPath(path, "vendors/:id/verify-clabe")) return NextResponse.json({ valid: true, clabe: "012180015678901234", message: "CLABE valida" });
   return NextResponse.json({ detail: "Not found" }, { status: 404 });
 }
 
@@ -1054,7 +966,7 @@ export async function POST(req: NextRequest) {
   let body = {};
   try { body = await req.json(); } catch { /* no body */ }
   const dbResult = await dbPost(path, body, companyId);
-  if (dbResult instanceof Response) return dbResult; // Zod validation error
+  if (dbResult instanceof Response) return dbResult;
   if (dbResult !== null) return NextResponse.json(dbResult);
   return mockPost(path);
 }
@@ -1069,37 +981,16 @@ export async function PUT(req: NextRequest) {
   try { body = await req.json(); } catch { /* no body */ }
 
   try {
-    let m = matchPath(path, "vendors/:id");
-    if (m) {
-      const { data } = await update("vendors", body, { id: Number(m.id), company_id: companyId });
-      return NextResponse.json(data?.[0] || { success: true });
+    const tables = ["vendors", "customers", "payments", "invoices", "expenses", "budgets"];
+    for (const table of tables) {
+      const m = matchPath(path, `${table}/:id`);
+      if (m) {
+        const updateData = table === "payments" ? { ...body, updated_at: new Date().toISOString() } : body;
+        const { data } = await update(table, updateData, { id: Number(m.id), company_id: companyId });
+        return NextResponse.json(data?.[0] || { success: true });
+      }
     }
-    m = matchPath(path, "customers/:id");
-    if (m) {
-      const { data } = await update("customers", body, { id: Number(m.id), company_id: companyId });
-      return NextResponse.json(data?.[0] || { success: true });
-    }
-    m = matchPath(path, "payments/:id");
-    if (m) {
-      const { data } = await update("payments", { ...body, updated_at: new Date().toISOString() }, { id: Number(m.id), company_id: companyId });
-      return NextResponse.json(data?.[0] || { success: true });
-    }
-    m = matchPath(path, "invoices/:id");
-    if (m) {
-      const { data } = await update("invoices", body, { id: Number(m.id), company_id: companyId });
-      return NextResponse.json(data?.[0] || { success: true });
-    }
-    m = matchPath(path, "expenses/:id");
-    if (m) {
-      const { data } = await update("expenses", body, { id: Number(m.id), company_id: companyId });
-      return NextResponse.json(data?.[0] || { success: true });
-    }
-    m = matchPath(path, "budgets/:id");
-    if (m) {
-      const { data } = await update("budgets", body, { id: Number(m.id), company_id: companyId });
-      return NextResponse.json(data?.[0] || { success: true });
-    }
-    m = matchPath(path, "approval-rules/:id");
+    const m = matchPath(path, "approval-rules/:id");
     if (m) {
       const { data } = await update("approval_rules", body, { id: Number(m.id), company_id: companyId });
       return NextResponse.json(data?.[0] || { success: true });
@@ -1118,19 +1009,12 @@ export async function DELETE(req: NextRequest) {
   if (!companyId) return NextResponse.json({ detail: "No autorizado" }, { status: 401 });
   if (!hasDB()) return NextResponse.json({ detail: "DB no configurada" }, { status: 500 });
 
-  try {
-    // Generic delete for all tenant-scoped tables
-    const tables: Record<string, string> = {
-      payments: "payments",
-      invoices: "invoices",
-      vendors: "vendors",
-      customers: "customers",
-      expenses: "expenses",
-      budgets: "budgets",
-      "approval-rules": "approval_rules",
-      notifications: "notifications",
-    };
+  const tables: Record<string, string> = {
+    payments: "payments", invoices: "invoices", vendors: "vendors", customers: "customers",
+    expenses: "expenses", budgets: "budgets", "approval-rules": "approval_rules", notifications: "notifications",
+  };
 
+  try {
     for (const [prefix, table] of Object.entries(tables)) {
       const m = matchPath(path, `${prefix}/:id`);
       if (m) {

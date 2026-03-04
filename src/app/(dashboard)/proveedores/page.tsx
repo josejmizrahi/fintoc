@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { Vendor, Invoice } from "@/types";
 import { toast } from "sonner";
@@ -290,7 +289,6 @@ function VendorDetailDialog({
 /* ---------- Main Page ---------- */
 
 export default function ProveedoresPage() {
-  const router = useRouter();
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [loading, setLoading] = useState(true);
 
