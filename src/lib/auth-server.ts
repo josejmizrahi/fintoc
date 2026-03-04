@@ -192,8 +192,10 @@ export async function registerUser(
       throw new Error(`Error al crear usuario: ${userError.message}`);
     if (!users?.[0]) throw new Error("Error al crear usuario");
 
-    // 4. Seed demo data
-    await seedDB(companyId);
+    // 4. Seed demo data (only for demo accounts, not real registrations)
+    if (normalizedEmail.endsWith("@payana.demo")) {
+      await seedDB(companyId);
+    }
 
     // 5. Sign in to get session token
     const { data: signInData, error: signInError } =
