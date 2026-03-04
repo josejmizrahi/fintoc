@@ -3,6 +3,61 @@ import { z } from "zod";
 import { verifyToken } from "@/lib/auth-server";
 import { hasDB, query, insert, update } from "@/lib/db";
 
+// ── SAT CFDI validation helpers ──
+
+function escapeXml(str: string): string {
+  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+}
+
+async function validateCfdiAgainstSat(uuid: string, rfcEmisor: string, rfcReceptor: string, total: string): Promise<string> {
+  const soapEnvelope = `<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:tem="http://tempuri.org/">
+  <soap:Body>
+    <tem:Consulta>
+      <tem:expresionImpresa>?re=${escapeXml(rfcEmisor)}&amp;rr=${escapeXml(rfcReceptor)}&amp;tt=${escapeXml(total)}&amp;id=${escapeXml(uuid)}</tem:expresionImpresa>
+    </tem:Consulta>
+  </soap:Body>
+</soap:Envelope>`;
+
+  const res = await fetch("https://consultaqr.facturaelectronica.sat.gob.mx/ConsultaCFDIService.svc", {
+    method: "POST",
+    headers: { "Content-Type": "text/xml; charset=utf-8", SOAPAction: "http://tempuri.org/IConsultaCFDIService/Consulta" },
+    body: soapEnvelope,
+    signal: AbortSignal.timeout(10000),
+  });
+
+  const text = await res.text();
+  if (text.includes("Vigente")) return "Vigente";
+  if (text.includes("Cancelado")) return "Cancelado";
+  if (text.includes("No Encontrado")) return "No encontrado";
+  return "Sin verificar";
+}
+
+function parseCfdiXml(xml: string): { uuid: string; rfcEmisor: string; rfcReceptor: string; total: number; fecha: string; fechaTimbrado: string } {
+  // Extract UUID from TimbreFiscalDigital
+  const uuidMatch = xml.match(/UUID=["']([^"']+)["']/i) || xml.match(/uuid=["']([^"']+)["']/i);
+  // Extract RFC Emisor
+  const rfcEmisorMatch = xml.match(/Rfc=["']([A-Z&Ñ]{3,4}\d{6}[A-Z0-9]{3})["']/i);
+  // Extract RFC Receptor (second Rfc attribute, typically in cfdi:Receptor)
+  const rfcMatches = xml.match(/Rfc=["']([A-Z&Ñ]{3,4}\d{6}[A-Z0-9]{3})["']/gi) || [];
+  const allRfcs = rfcMatches.map(m => { const r = m.match(/["']([^"']+)["']/); return r ? r[1] : ""; }).filter(Boolean);
+  // Extract Total
+  const totalMatch = xml.match(/Total=["']([^"']+)["']/i);
+  // Extract Fecha
+  const fechaMatch = xml.match(/Fecha=["']([^"']+)["']/i);
+  // Extract FechaTimbrado
+  const fechaTimbradoMatch = xml.match(/FechaTimbrado=["']([^"']+)["']/i);
+
+  return {
+    uuid: uuidMatch?.[1] || "",
+    rfcEmisor: allRfcs[0] || rfcEmisorMatch?.[1] || "",
+    rfcReceptor: allRfcs[1] || allRfcs[0] || "",
+    total: parseFloat(totalMatch?.[1] || "0") || 0,
+    fecha: fechaMatch?.[1] || "",
+    fechaTimbrado: fechaTimbradoMatch?.[1] || "",
+  };
+}
+
 // ── Zod schemas for input validation ──
 
 const paymentSchema = z.object({
@@ -673,11 +728,121 @@ async function dbPost(path: string, body: unknown, companyId: number | null): Pr
       return { success: true };
     }
 
-    // SAT
-    if (path === "sat/validate") return { uuid: b.uuid || "ABC12345", status: "Vigente", efos: "No listado" };
-    if (path === "sat/validate/bulk") return { validated: 5, results: [{ uuid: "ABC12345", status: "Vigente" }] };
-    if (path === "sat/upload-xml") return { id: 1, uuid: "NEW-UUID", status: "processed" };
-    if (path === "sat/revalidate-all") return { revalidated: 30, vigentes: 28, cancelados: 2 };
+    // SAT — real CFDI validation against SAT SOAP service
+    if (path === "sat/validate") {
+      const uuid = (b.uuid as string) || "";
+      const rfcEmisor = (b.rfc_emisor as string) || "";
+      const rfcReceptor = (b.rfc_receptor as string) || "";
+      const total = String(Number(b.total) || 0);
+      if (!uuid || !rfcEmisor || !rfcReceptor) {
+        return NextResponse.json({ detail: "Faltan campos: uuid, rfc_emisor, rfc_receptor, total" }, { status: 400 });
+      }
+      try {
+        const satResult = await validateCfdiAgainstSat(uuid, rfcEmisor, rfcReceptor, total);
+        return { uuid, estado: satResult, rfc_emisor: rfcEmisor, rfc_receptor: rfcReceptor, consulta_date: new Date().toISOString() };
+      } catch {
+        return { uuid, estado: "Error de conexion", rfc_emisor: rfcEmisor };
+      }
+    }
+
+    if (path === "sat/validate/bulk") {
+      const uuids = (b.uuids as string[]) || [];
+      if (!Array.isArray(uuids) || uuids.length === 0) {
+        return NextResponse.json({ detail: "Envía un arreglo de UUIDs" }, { status: 400 });
+      }
+      // Get invoices from DB to find RFC/total for each UUID
+      const results: Array<{ uuid: string; estado: string }> = [];
+      for (const uuid of uuids.slice(0, 100)) { // max 100
+        try {
+          const { data: inv } = await query("invoices", { match: { company_id: companyId, cfdi_uuid: uuid }, single: true });
+          // If we have the invoice, get RFC from integrations config
+          const { data: satInt } = await query("integrations", { match: { company_id: companyId, provider: "sat" }, single: true });
+          const rfcEmisor = (satInt?.config as Record<string, string>)?.rfcEmisor || "";
+          const total = inv ? String(Number(inv.amount_total) || 0) : "0";
+          const estado = await validateCfdiAgainstSat(uuid, rfcEmisor, rfcEmisor, total);
+          results.push({ uuid, estado });
+          // Update invoice if found
+          if (inv) {
+            await update("invoices", { sat_status: estado }, { id: inv.id });
+          }
+        } catch {
+          results.push({ uuid, estado: "Error" });
+        }
+      }
+      return { validated: results.length, results };
+    }
+
+    if (path === "sat/upload-xml") {
+      const xmlContent = (b.xml_content as string) || "";
+      if (!xmlContent.trim()) {
+        return NextResponse.json({ detail: "Falta el contenido XML" }, { status: 400 });
+      }
+      // Parse CFDI XML to extract key fields
+      const parsed = parseCfdiXml(xmlContent);
+      if (!parsed.uuid) {
+        return NextResponse.json({ detail: "No se encontro UUID en el XML" }, { status: 400 });
+      }
+      // Check if already exists
+      const { data: existing } = await query("cfdi_documents", { match: { company_id: companyId, uuid: parsed.uuid }, single: true });
+      if (existing) {
+        return { id: existing.id, uuid: parsed.uuid, status: "already_exists", rfc_emisor: parsed.rfcEmisor, total: parsed.total };
+      }
+      // Validate against SAT
+      let estado = "Sin verificar";
+      try {
+        estado = await validateCfdiAgainstSat(parsed.uuid, parsed.rfcEmisor, parsed.rfcReceptor, String(parsed.total));
+      } catch { /* keep as unverified */ }
+      // Insert into cfdi_documents
+      const { data: inserted } = await insert("cfdi_documents", {
+        company_id: companyId,
+        uuid: parsed.uuid,
+        rfc_emisor: parsed.rfcEmisor,
+        rfc_receptor: parsed.rfcReceptor,
+        total: parsed.total,
+        fecha_emision: parsed.fecha || null,
+        fecha_timbrado: parsed.fechaTimbrado || null,
+        sat_status: estado,
+        xml_content: xmlContent,
+      });
+      const doc = inserted?.[0];
+      return { id: doc?.id, uuid: parsed.uuid, rfc_emisor: parsed.rfcEmisor, total: parsed.total, estado, status: "processed" };
+    }
+
+    if (path === "sat/revalidate-all") {
+      // Revalidate all CFDI documents
+      const { data: docs } = await query("cfdi_documents", { match: { company_id: companyId } });
+      const { data: satInt } = await query("integrations", { match: { company_id: companyId, provider: "sat" }, single: true });
+      const rfcEmisor = (satInt?.config as Record<string, string>)?.rfcEmisor || "";
+      let revalidated = 0, vigentes = 0, cancelados = 0, errores = 0;
+      for (const doc of (docs || []).slice(0, 500)) {
+        try {
+          const uuid = doc.uuid as string;
+          if (!uuid) continue;
+          const total = String(Number(doc.total) || 0);
+          const rfc_e = (doc.rfc_emisor as string) || rfcEmisor;
+          const rfc_r = (doc.rfc_receptor as string) || rfcEmisor;
+          const estado = await validateCfdiAgainstSat(uuid, rfc_e, rfc_r, total);
+          await update("cfdi_documents", { sat_status: estado, updated_at: new Date().toISOString() }, { id: doc.id });
+          revalidated++;
+          if (estado === "Vigente") vigentes++;
+          else if (estado === "Cancelado") cancelados++;
+        } catch { errores++; }
+      }
+      // Also revalidate invoices with CFDI UUIDs
+      const { data: invoices } = await query("invoices", { match: { company_id: companyId } });
+      for (const inv of (invoices || []).filter((i: Record<string, unknown>) => i.cfdi_uuid)) {
+        try {
+          const uuid = inv.cfdi_uuid as string;
+          const total = String(Number(inv.amount_total) || 0);
+          const estado = await validateCfdiAgainstSat(uuid, rfcEmisor, rfcEmisor, total);
+          await update("invoices", { sat_status: estado }, { id: inv.id });
+          revalidated++;
+          if (estado === "Vigente") vigentes++;
+          else if (estado === "Cancelado") cancelados++;
+        } catch { errores++; }
+      }
+      return { revalidated, vigentes, cancelados, errores };
+    }
 
   } catch (e) {
     console.error("DB post error:", e);
@@ -763,10 +928,10 @@ function mockPost(path: string): Response {
   if (matchPath(path, "budgets/:id/commit")) return NextResponse.json({ ...MOCK.budgets[0], amount_committed: MOCK.budgets[0].amount_committed + 5000 });
   if (path === "reconciliation/fintoc-odoo") return NextResponse.json(MOCK.reconciliationHistory[0]);
   if (path === "reconciliation/sat") return NextResponse.json(MOCK.reconciliationHistory[1]);
-  if (path === "sat/validate") return NextResponse.json({ uuid: "ABC12345", status: "Vigente", efos: "No listado" });
-  if (path === "sat/validate/bulk") return NextResponse.json({ validated: 5, results: [{ uuid: "ABC12345", status: "Vigente" }] });
-  if (path === "sat/upload-xml") return NextResponse.json({ id: 1, uuid: "NEW-UUID", status: "processed" });
-  if (path === "sat/revalidate-all") return NextResponse.json({ revalidated: 30, vigentes: 28, cancelados: 2 });
+  if (path === "sat/validate") return NextResponse.json({ uuid: "DEMO-UUID", estado: "Vigente", rfc_emisor: "XAXX010101000", consulta_date: new Date().toISOString() });
+  if (path === "sat/validate/bulk") return NextResponse.json({ validated: 0, results: [] });
+  if (path === "sat/upload-xml") return NextResponse.json({ detail: "Conecta la base de datos para procesar XML" }, { status: 400 });
+  if (path === "sat/revalidate-all") return NextResponse.json({ revalidated: 0, vigentes: 0, cancelados: 0, errores: 0 });
   if (matchPath(path, "notifications/:id/read")) return NextResponse.json({ success: true });
   if (path === "notifications/mark-all-read") return NextResponse.json({ success: true });
   if (path === "companies" || path === "companies/") return NextResponse.json({ id: 2, name: "Nueva Empresa", rfc: "NEE010101AAA", is_active: true });

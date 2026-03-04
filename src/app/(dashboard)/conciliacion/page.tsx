@@ -447,7 +447,7 @@ export default function ConciliacionPage() {
                       </Badge>
                     </TableCell>
                     <TableCell className="text-muted-foreground">
-                      {item.days ? `${item.days} dias` : item.period || "-"}
+                      {item.period_days ? `${item.period_days} dias` : item.days ? `${item.days} dias` : item.period || "-"}
                     </TableCell>
                     <TableCell>
                       <span className="font-mono text-green-600">
@@ -460,7 +460,9 @@ export default function ConciliacionPage() {
                       </span>
                     </TableCell>
                     <TableCell className="font-mono">
-                      {item.total_difference != null
+                      {item.total_discrepancy != null
+                        ? formatMXN(item.total_discrepancy)
+                        : item.total_difference != null
                         ? formatMXN(item.total_difference)
                         : "-"}
                     </TableCell>

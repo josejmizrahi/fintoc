@@ -35,7 +35,7 @@ import { Separator } from "@/components/ui/separator";
 
 interface Settings {
   odoo: { url: string; database: string; user: string; password: string };
-  fintoc: { secretKey: string; publicKey: string; webhookSecret: string; accountId: string; jwsKeyPath: string };
+  fintoc: { secretKey: string; publicKey: string; webhookSecret: string; accountId: string; linkToken: string; jwsKeyPath: string };
   sat: { rfcEmisor: string; certPath: string; keyPath: string; keyPassword: string; pac: string };
   general: { companyName: string; rfc: string; plan: string; notificationEmail: string; slackWebhook: string; smtpHost: string; smtpPort: string; smtpUser: string; smtpPassword: string };
 }
@@ -43,7 +43,7 @@ interface Settings {
 function defaultSettings(tenantName: string, tenantRfc: string): Settings {
   return {
     odoo: { url: "", database: "", user: "", password: "" },
-    fintoc: { secretKey: "", publicKey: "", webhookSecret: "", accountId: "", jwsKeyPath: "" },
+    fintoc: { secretKey: "", publicKey: "", webhookSecret: "", accountId: "", linkToken: "", jwsKeyPath: "" },
     sat: { rfcEmisor: "", certPath: "", keyPath: "", keyPassword: "", pac: "" },
     general: { companyName: tenantName, rfc: tenantRfc, plan: "Pro", notificationEmail: "", slackWebhook: "", smtpHost: "", smtpPort: "587", smtpUser: "", smtpPassword: "" },
   };
@@ -79,7 +79,16 @@ async function testIntegration(provider: string, config: Record<string, string>)
   return res.json();
 }
 
-async function loadIntegrations(): Promise<Record<string, { is_connected: boolean; config?: Record<string, string> } | null>> {
+async function syncIntegration(provider: string, config: Record<string, string>) {
+  const res = await fetch("/api/onboarding", {
+    method: "POST",
+    headers: authHeaders(),
+    body: JSON.stringify({ action: "sync", provider, config }),
+  });
+  return res.json();
+}
+
+async function loadIntegrations(): Promise<Record<string, { is_connected: boolean; last_sync_at?: string; last_sync_message?: string; config?: Record<string, string> } | null>> {
   try {
     const res = await fetch("/api/onboarding", { headers: authHeaders() });
     const data = await res.json();
@@ -98,17 +107,19 @@ export default function ConfiguracionPage() {
   const tenantId = useAuthStore((s) => s.tenantId);
 
   const [settings, setSettings] = useState<Settings>(() => defaultSettings("", ""));
-  const [odooStatus, setOdooStatus] = useState<"idle" | "testing" | "success" | "error">("idle");
-  const [fintocStatus, setFintocStatus] = useState<"idle" | "testing" | "success" | "error">("idle");
-  const [satStatus, setSatStatus] = useState<"idle" | "validating" | "success" | "error">("idle");
+  const [odooStatus, setOdooStatus] = useState<"idle" | "testing" | "syncing" | "success" | "error">("idle");
+  const [fintocStatus, setFintocStatus] = useState<"idle" | "testing" | "syncing" | "success" | "error">("idle");
+  const [satStatus, setSatStatus] = useState<"idle" | "validating" | "syncing" | "success" | "error">("idle");
+  const [lastSync, setLastSync] = useState<Record<string, string>>({});
 
   // Load from DB on mount
   useEffect(() => {
     const base = defaultSettings(tenantName, tenantId);
     loadIntegrations().then((integrations) => {
       // Hydrate from DB integrations if available
+      const syncInfo: Record<string, string> = {};
       for (const provider of ["odoo", "fintoc", "sat"] as const) {
-        const integration = integrations[provider] as { is_connected?: boolean; config?: Record<string, string> } | null;
+        const integration = integrations[provider] as { is_connected?: boolean; last_sync_at?: string; last_sync_message?: string; config?: Record<string, string> } | null;
         if (integration?.config) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           (base as any)[provider] = { ...base[provider], ...integration.config };
@@ -118,7 +129,13 @@ export default function ConfiguracionPage() {
           if (provider === "fintoc") setFintocStatus("success");
           if (provider === "sat") setSatStatus("success");
         }
+        if (integration?.last_sync_at) {
+          syncInfo[provider] = integration.last_sync_message
+            ? `${new Date(integration.last_sync_at).toLocaleString("es-MX")} — ${integration.last_sync_message}`
+            : new Date(integration.last_sync_at).toLocaleString("es-MX");
+        }
       }
+      setLastSync(syncInfo);
       setSettings(base);
     });
   }, [tenantName, tenantId]);
@@ -202,13 +219,73 @@ export default function ConfiguracionPage() {
     }
   }
 
+  // ------ Sync handlers ------
+
+  async function handleSyncOdoo() {
+    setOdooStatus("syncing");
+    try {
+      const res = await syncIntegration("odoo", settings.odoo);
+      if (res.success) {
+        setOdooStatus("success");
+        toast.success(res.message || "Sincronizacion de Odoo completada");
+        if (res.synced) {
+          setLastSync(prev => ({ ...prev, odoo: `${new Date().toLocaleString("es-MX")} — ${res.message}` }));
+        }
+      } else {
+        setOdooStatus("error");
+        toast.error(res.message || "Error en sincronizacion de Odoo");
+      }
+    } catch {
+      setOdooStatus("error");
+      toast.error("Error de conexion durante sincronizacion");
+    }
+  }
+
+  async function handleSyncFintoc() {
+    setFintocStatus("syncing");
+    try {
+      const res = await syncIntegration("fintoc", settings.fintoc);
+      if (res.success) {
+        setFintocStatus("success");
+        toast.success(res.message || "Sincronizacion de Fintoc completada");
+        setLastSync(prev => ({ ...prev, fintoc: `${new Date().toLocaleString("es-MX")} — ${res.message}` }));
+      } else {
+        setFintocStatus("error");
+        toast.error(res.message || "Error en sincronizacion de Fintoc");
+      }
+    } catch {
+      setFintocStatus("error");
+      toast.error("Error de conexion durante sincronizacion");
+    }
+  }
+
+  async function handleSyncSat() {
+    setSatStatus("syncing");
+    try {
+      const res = await syncIntegration("sat", settings.sat);
+      if (res.success) {
+        setSatStatus("success");
+        toast.success(res.message || "Validacion SAT completada");
+        setLastSync(prev => ({ ...prev, sat: `${new Date().toLocaleString("es-MX")} — ${res.message}` }));
+      } else {
+        setSatStatus("error");
+        toast.error(res.message || "Error en validacion SAT");
+      }
+    } catch {
+      setSatStatus("error");
+      toast.error("Error de conexion durante validacion");
+    }
+  }
+
   // ------ Status badge helper ------
 
-  function connectionBadge(status: "idle" | "testing" | "success" | "error" | "validating") {
+  function connectionBadge(status: "idle" | "testing" | "syncing" | "success" | "error" | "validating") {
     switch (status) {
       case "testing":
       case "validating":
         return <Badge variant="secondary">Probando...</Badge>;
+      case "syncing":
+        return <Badge variant="secondary">Sincronizando...</Badge>;
       case "success":
         return <Badge variant="default">Conectado</Badge>;
       case "error":
@@ -269,11 +346,17 @@ export default function ConfiguracionPage() {
               </div>
               <Separator />
               <div className="flex gap-3">
-                <Button variant="outline" onClick={handleTestOdoo} disabled={odooStatus === "testing"}>
+                <Button variant="outline" onClick={handleTestOdoo} disabled={odooStatus === "testing" || odooStatus === "syncing"}>
                   {odooStatus === "testing" ? "Probando..." : "Probar conexion"}
+                </Button>
+                <Button variant="outline" onClick={handleSyncOdoo} disabled={odooStatus === "syncing" || odooStatus === "testing"}>
+                  {odooStatus === "syncing" ? "Sincronizando..." : "Sincronizar"}
                 </Button>
                 <Button onClick={handleSaveOdoo}>Guardar</Button>
               </div>
+              {lastSync.odoo && (
+                <p className="text-xs text-muted-foreground mt-3">Ultima sincronizacion: {lastSync.odoo}</p>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -308,17 +391,30 @@ export default function ConfiguracionPage() {
                   <Input id="fintoc-account" placeholder="acc_..." value={settings.fintoc.accountId} onChange={(e) => update("fintoc", "accountId", e.target.value)} />
                 </div>
                 <div className="space-y-2 sm:col-span-2">
+                  <Label htmlFor="fintoc-link-token">Link Token (Fiscal Links)</Label>
+                  <Input id="fintoc-link-token" placeholder="link_token del widget Fintoc para facturas SAT" value={settings.fintoc.linkToken} onChange={(e) => update("fintoc", "linkToken", e.target.value)} />
+                  <p className="text-xs text-muted-foreground">
+                    Obten este token conectando tu cuenta fiscal via el widget de Fintoc. Permite sincronizar facturas electronicas del SAT.
+                  </p>
+                </div>
+                <div className="space-y-2 sm:col-span-2">
                   <Label htmlFor="fintoc-jws">Ruta llave JWS</Label>
                   <Input id="fintoc-jws" placeholder="/etc/fintoc/jws_private.pem" value={settings.fintoc.jwsKeyPath} onChange={(e) => update("fintoc", "jwsKeyPath", e.target.value)} />
                 </div>
               </div>
               <Separator />
               <div className="flex gap-3">
-                <Button variant="outline" onClick={handleTestFintoc} disabled={fintocStatus === "testing"}>
+                <Button variant="outline" onClick={handleTestFintoc} disabled={fintocStatus === "testing" || fintocStatus === "syncing"}>
                   {fintocStatus === "testing" ? "Probando..." : "Probar conexion"}
+                </Button>
+                <Button variant="outline" onClick={handleSyncFintoc} disabled={fintocStatus === "syncing" || fintocStatus === "testing"}>
+                  {fintocStatus === "syncing" ? "Sincronizando..." : "Sincronizar"}
                 </Button>
                 <Button onClick={handleSaveFintoc}>Guardar</Button>
               </div>
+              {lastSync.fintoc && (
+                <p className="text-xs text-muted-foreground mt-3">Ultima sincronizacion: {lastSync.fintoc}</p>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -368,11 +464,17 @@ export default function ConfiguracionPage() {
               </div>
               <Separator />
               <div className="flex gap-3">
-                <Button variant="outline" onClick={handleValidateSat} disabled={satStatus === "validating"}>
+                <Button variant="outline" onClick={handleValidateSat} disabled={satStatus === "validating" || satStatus === "syncing"}>
                   {satStatus === "validating" ? "Validando..." : "Validar certificado"}
+                </Button>
+                <Button variant="outline" onClick={handleSyncSat} disabled={satStatus === "syncing" || satStatus === "validating"}>
+                  {satStatus === "syncing" ? "Validando CFDIs..." : "Revalidar CFDIs"}
                 </Button>
                 <Button onClick={handleSaveSat}>Guardar</Button>
               </div>
+              {lastSync.sat && (
+                <p className="text-xs text-muted-foreground mt-3">Ultima validacion: {lastSync.sat}</p>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
