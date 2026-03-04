@@ -19,7 +19,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const user = registerUser(email, password, name, company_name, rfc.toUpperCase());
+    const user = await registerUser(email, password, name, company_name, rfc.toUpperCase());
 
     const token = await createToken({
       sub: String(user.id),
