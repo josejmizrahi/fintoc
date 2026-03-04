@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import {
   DollarSign,
   TrendingUp,
@@ -10,6 +11,7 @@ import {
   AlertTriangle,
   CheckCircle,
   Shield,
+  Plug,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -73,6 +75,7 @@ export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [showOnboarding, setShowOnboarding] = useState(false);
 
   useEffect(() => {
     api
@@ -86,6 +89,10 @@ export default function DashboardPage() {
       .finally(() => {
         setLoading(false);
       });
+    // Check onboarding status
+    api.onboarding.status().then((res) => {
+      if (!res.onboarding_completed) setShowOnboarding(true);
+    }).catch(() => {});
   }, []);
 
   if (error) {
@@ -184,6 +191,23 @@ export default function DashboardPage() {
   return (
     <div className="p-6 space-y-6">
       <h1 className="text-3xl font-bold">Dashboard</h1>
+
+      {showOnboarding && (
+        <Link href="/onboarding">
+          <Card className="border-primary/30 bg-primary/5 cursor-pointer hover:bg-primary/10 transition-colors">
+            <CardContent className="flex items-center gap-4 py-4">
+              <Plug className="size-5 text-primary" />
+              <div className="flex-1">
+                <p className="font-medium">Conecta tus servicios</p>
+                <p className="text-sm text-muted-foreground">
+                  Configura Odoo, Fintoc y SAT para sincronizar tus datos automaticamente.
+                </p>
+              </div>
+              <Badge variant="secondary">Configurar</Badge>
+            </CardContent>
+          </Card>
+        </Link>
+      )}
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
