@@ -28,6 +28,7 @@ import {
   SelectItem,
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
+import { FintocWidget } from "@/components/fintoc-widget";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -404,9 +405,15 @@ export default function ConfiguracionPage() {
                 </div>
                 <div className="space-y-2 sm:col-span-2">
                   <Label htmlFor="fintoc-link-token">Link Token (Fiscal Links)</Label>
-                  <Input id="fintoc-link-token" placeholder="link_token del widget Fintoc para facturas SAT" value={settings.fintoc.linkToken} onChange={(e) => update("fintoc", "linkToken", e.target.value)} />
+                  <div className="flex gap-2">
+                    <Input id="fintoc-link-token" placeholder="link_token del widget Fintoc para facturas SAT" value={settings.fintoc.linkToken} onChange={(e) => update("fintoc", "linkToken", e.target.value)} className="flex-1" />
+                    <FintocWidget
+                      publicKey={settings.fintoc.publicKey}
+                      onLinkToken={(token) => update("fintoc", "linkToken", token)}
+                    />
+                  </div>
                   <p className="text-xs text-muted-foreground">
-                    Obten este token conectando tu cuenta fiscal via el widget de Fintoc. Permite sincronizar facturas electronicas del SAT.
+                    Conecta tu cuenta fiscal via el widget o pega el token manualmente. Permite sincronizar facturas del SAT.
                   </p>
                 </div>
                 <div className="space-y-2 sm:col-span-2">
