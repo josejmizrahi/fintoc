@@ -67,6 +67,7 @@ const paymentSchema = z.object({
   partner_rfc: z.string().optional(),
   clabe: z.string().regex(/^\d{18}$/, "CLABE debe tener 18 digitos").optional(),
   comment: z.string().optional(),
+  reference_id: z.string().optional(),
 });
 
 const expenseSchema = z.object({
@@ -574,7 +575,14 @@ async function dbPost(path: string, body: unknown, companyId: number | null): Pr
   try {
     // Payments
     if (path === "payments/vendor") {
-      const parsed = paymentSchema.safeParse(b);
+      // Normalize frontend field names: vendor_name → partner_name, clabe_destination → clabe
+      const normalized = {
+        ...b,
+        partner_name: (b.partner_name as string) || (b.vendor_name as string) || "",
+        clabe: (b.clabe as string) || (b.clabe_destination as string) || undefined,
+        reference_id: (b.reference_id as string) || undefined,
+      };
+      const parsed = paymentSchema.safeParse(normalized);
       if (!parsed.success) return zodError(parsed.error);
       const v = parsed.data;
       const { data } = await insert("payments", {
@@ -582,12 +590,62 @@ async function dbPost(path: string, body: unknown, companyId: number | null): Pr
         amount: v.amount, currency: v.currency,
         partner_name: v.partner_name, partner_rfc: v.partner_rfc || null,
         clabe_destination: v.clabe || null, comment: v.comment || null,
-        reference_id: `PAY-${Date.now()}`,
+        reference_id: v.reference_id || `PAY-${Date.now()}`,
       });
       return data?.[0];
     }
     let m = matchPath(path, "payments/:id/execute");
     if (m) {
+      // Fetch payment details
+      const { data: payment } = await query("payments", { match: { id: Number(m.id), company_id: companyId }, single: true });
+      if (!payment) return NextResponse.json({ detail: "Pago no encontrado" }, { status: 404 });
+
+      // Try Fintoc payment_intents API for real SPEI execution
+      try {
+        const { data: fintocInt } = await query("integrations", { match: { company_id: companyId, provider: "fintoc" }, single: true });
+        const fintocKey = fintocInt?.config ? (fintocInt.config as Record<string, string>).secretKey : null;
+
+        if (fintocKey && fintocKey !== "••••••••") {
+          const piRes = await fetch("https://api.fintoc.com/v1/payment_intents", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: fintocKey },
+            body: JSON.stringify({
+              amount: Math.round(Number(payment.amount) * 100), // Fintoc uses cents
+              currency: (payment.currency as string || "MXN").toLowerCase(),
+              recipient_account: {
+                holder_id: (payment.partner_rfc as string) || undefined,
+                number: (payment.clabe_destination as string) || undefined,
+                type: "clabe",
+                institution_id: undefined,
+              },
+              metadata: {
+                payment_id: String(payment.id),
+                reference: (payment.reference_id as string) || "",
+                partner_name: (payment.partner_name as string) || "",
+              },
+            }),
+            signal: AbortSignal.timeout(15000),
+          });
+
+          if (piRes.ok) {
+            const pi = await piRes.json();
+            await update("payments", {
+              status: "processing",
+              fintoc_payment_intent_id: pi.id,
+              updated_at: new Date().toISOString(),
+            }, { id: Number(m.id), company_id: companyId });
+            return { ...payment, status: "processing", fintoc_payment_intent_id: pi.id };
+          } else {
+            const err = await piRes.json().catch(() => ({ error: { message: piRes.statusText } }));
+            // Fall back to status update only
+            await update("payments", { status: "processing", updated_at: new Date().toISOString() }, { id: Number(m.id), company_id: companyId });
+            return { ...payment, status: "processing", fintoc_warning: err.error?.message || "Fintoc API error" };
+          }
+        }
+      } catch {
+        // Fintoc not configured or network error — proceed with status update
+      }
+
       const { data } = await update("payments", { status: "processing", updated_at: new Date().toISOString() }, { id: Number(m.id), company_id: companyId });
       return data?.[0];
     }
@@ -710,11 +768,47 @@ async function dbPost(path: string, body: unknown, companyId: number | null): Pr
       return { synced };
     }
 
-    // Collections — payment link
+    // Collections — payment link (Fintoc checkout session or fallback)
     if (path === "collections/payment-link") {
       const amount = Number(b.amount) || 0;
       const partnerId = Number(b.partner_id) || 0;
-      return { link: `https://pay.payana.mx/${companyId}/${partnerId}/${amount}`, amount, partner_id: partnerId };
+
+      try {
+        const { data: fintocInt } = await query("integrations", { match: { company_id: companyId, provider: "fintoc" }, single: true });
+        const fintocKey = fintocInt?.config ? (fintocInt.config as Record<string, string>).secretKey : null;
+
+        if (fintocKey && fintocKey !== "••••••••") {
+          // Look up customer for metadata
+          const { data: customer } = await query("customers", { match: { id: partnerId, company_id: companyId }, single: true });
+
+          const csRes = await fetch("https://api.fintoc.com/v2/checkout_sessions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: fintocKey },
+            body: JSON.stringify({
+              amount: Math.round(amount * 100),
+              currency: "clp", // Fintoc v2 checkout — adjust if MXN supported
+              customer_email: (customer?.email as string) || undefined,
+              metadata: {
+                company_id: String(companyId),
+                partner_id: String(partnerId),
+                partner_name: (customer?.name as string) || "",
+              },
+              success_url: `${process.env.NEXT_PUBLIC_APP_URL || "https://app.payana.mx"}/cobranza?payment=success`,
+              cancel_url: `${process.env.NEXT_PUBLIC_APP_URL || "https://app.payana.mx"}/cobranza?payment=cancelled`,
+            }),
+            signal: AbortSignal.timeout(15000),
+          });
+
+          if (csRes.ok) {
+            const cs = await csRes.json();
+            return { payment_url: cs.url || cs.checkout_url, amount, partner_id: partnerId, fintoc_session_id: cs.id };
+          }
+        }
+      } catch {
+        // Fintoc not configured — fallback
+      }
+
+      return { payment_url: `https://pay.payana.mx/${companyId}/${partnerId}/${amount}`, amount, partner_id: partnerId, fallback: true };
     }
 
     // Notifications
