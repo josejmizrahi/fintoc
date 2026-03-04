@@ -163,8 +163,8 @@ export const api = {
 
   // Reconciliation
   reconciliation: {
-    fintocOdoo: (days?: number) => request<any>(`/api/reconciliation/fintoc-odoo?days=${days || 7}`, { method: "POST" }),
-    sat: (days?: number) => request<any>(`/api/reconciliation/sat?days=${days || 7}`, { method: "POST" }),
+    fintocOdoo: (days?: number) => request<any>(`/api/reconciliation/fintoc-odoo?days=${days || 7}`, { method: "POST", body: JSON.stringify({ days: days || 7 }) }),
+    sat: (days?: number) => request<any>(`/api/reconciliation/sat?days=${days || 7}`, { method: "POST", body: JSON.stringify({ days: days || 7 }) }),
     history: () => request<any[]>("/api/reconciliation/history"),
   },
 
