@@ -21,7 +21,7 @@ import { Separator } from "@/components/ui/separator";
 
 interface StepConfig {
   odoo: { url: string; database: string; user: string; password: string };
-  fintoc: { secretKey: string; publicKey: string; webhookSecret: string };
+  fintoc: { secretKey: string; publicKey: string; webhookSecret: string; linkToken: string; accountId: string };
   sat: { rfcEmisor: string };
 }
 
@@ -70,7 +70,7 @@ export default function OnboardingPage() {
 
   const [config, setConfig] = useState<StepConfig>({
     odoo: { url: "", database: "", user: "", password: "" },
-    fintoc: { secretKey: "", publicKey: "", webhookSecret: "" },
+    fintoc: { secretKey: "", publicKey: "", webhookSecret: "", linkToken: "", accountId: "" },
     sat: { rfcEmisor: "" },
   });
 
@@ -293,6 +293,28 @@ export default function OnboardingPage() {
                   value={config.fintoc.webhookSecret}
                   onChange={(e) => updateField("fintoc", "webhookSecret", e.target.value)}
                 />
+              </div>
+              <div className="space-y-2">
+                <Label>Link Token (Fiscal)</Label>
+                <Input
+                  placeholder="link_token del widget Fintoc"
+                  value={config.fintoc.linkToken}
+                  onChange={(e) => updateField("fintoc", "linkToken", e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Token para sincronizar facturas del SAT via Fintoc Fiscal Links.
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label>Account ID</Label>
+                <Input
+                  placeholder="acc_..."
+                  value={config.fintoc.accountId}
+                  onChange={(e) => updateField("fintoc", "accountId", e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  ID de la cuenta bancaria principal para movimientos.
+                </p>
               </div>
             </div>
           )}

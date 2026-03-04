@@ -161,9 +161,21 @@ export default function ConfiguracionPage() {
     toast.success("Configuracion de SAT guardada");
   }
 
-  function handleSaveGeneral() {
-    // General settings are stored locally for now (company info comes from DB)
-    toast.success("Configuracion general guardada");
+  async function handleSaveGeneral() {
+    try {
+      await saveIntegration("general", {
+        companyName: settings.general.companyName,
+        notificationEmail: settings.general.notificationEmail,
+        slackWebhook: settings.general.slackWebhook,
+        smtpHost: settings.general.smtpHost,
+        smtpPort: settings.general.smtpPort,
+        smtpUser: settings.general.smtpUser,
+        smtpPassword: settings.general.smtpPassword,
+      });
+      toast.success("Configuracion general guardada");
+    } catch {
+      toast.error("Error al guardar configuracion general");
+    }
   }
 
   // ------ Test handlers (real API calls) ------
