@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyToken } from "@/lib/auth-server";
-import { hasDB, query } from "@/lib/db";
+import { hasDB, query, insert, update } from "@/lib/db";
 
 /**
- * Catch-all API route — uses Vercel Postgres when configured, otherwise mock data.
+ * Catch-all API route — uses Supabase when configured, otherwise mock data.
  */
 
 const now = new Date().toISOString();
@@ -122,287 +122,277 @@ function matchPath(path: string, pattern: string): Record<string, string> | null
   return params;
 }
 
-// ── DB query helpers (return null when DB not available) ──
+// ── DB query helpers using Supabase client ──
 
 async function dbGet(path: string, companyId: number | null): Promise<unknown | null> {
   if (!hasDB() || !companyId) return null;
 
   try {
-    // Dashboard
+    // Dashboard — aggregate from multiple tables
     if (path === "dashboard") {
-      const [payRes, recvRes, payableRes, approvalRes] = await Promise.all([
-        query("SELECT COALESCE(SUM(CASE WHEN direction='inbound' AND status='confirmed' THEN amount ELSE 0 END) - SUM(CASE WHEN direction='outbound' AND status='confirmed' THEN amount ELSE 0 END), 0) as cash_balance, COUNT(*) FILTER (WHERE status IN ('draft','pending_approval')) as pending_payments FROM payments WHERE company_id=$1", [companyId]),
-        query("SELECT COALESCE(SUM(amount_residual),0) as total FROM invoices WHERE company_id=$1 AND type='receivable' AND status != 'paid'", [companyId]),
-        query("SELECT COALESCE(SUM(amount_residual),0) as total FROM invoices WHERE company_id=$1 AND type='payable' AND status != 'paid'", [companyId]),
-        query("SELECT COUNT(*) as c FROM approval_requests WHERE company_id=$1 AND status='pending'", [companyId]),
+      const [payRes, recvRes, payableRes, approvalRes, overdueRes, movRes] = await Promise.all([
+        query("payments", { match: { company_id: companyId } }),
+        query("invoices", { match: { company_id: companyId, type: "receivable" } }),
+        query("invoices", { match: { company_id: companyId, type: "payable" } }),
+        query("approval_requests", { match: { company_id: companyId, status: "pending" } }),
+        query("invoices", { match: { company_id: companyId, status: "overdue" } }),
+        query("payments", { match: { company_id: companyId, status: "confirmed" }, order: { column: "created_at" }, limit: 5 }),
       ]);
-      const overdueRes = await query("SELECT COUNT(*) as c FROM invoices WHERE company_id=$1 AND status='overdue'", [companyId]);
-      const movRes = await query("SELECT id, direction as type, amount, partner_name as description, created_at as date, status FROM payments WHERE company_id=$1 AND status='confirmed' ORDER BY created_at DESC LIMIT 5", [companyId]);
+      const payments = payRes.data || [];
+      const recv = (recvRes.data || []).filter((i: Record<string, unknown>) => i.status !== "paid");
+      const payable = (payableRes.data || []).filter((i: Record<string, unknown>) => i.status !== "paid");
+      const inflows = payments.filter((p: Record<string, unknown>) => p.direction === "inbound" && p.status === "confirmed").reduce((s: number, p: Record<string, unknown>) => s + Number(p.amount), 0);
+      const outflows = payments.filter((p: Record<string, unknown>) => p.direction === "outbound" && p.status === "confirmed").reduce((s: number, p: Record<string, unknown>) => s + Number(p.amount), 0);
+      const pending = payments.filter((p: Record<string, unknown>) => ["draft", "pending_approval"].includes(p.status as string)).length;
       return {
-        cash_balance: Number(payRes.rows[0].cash_balance),
-        accounts_receivable: Number(recvRes.rows[0].total),
-        accounts_payable: Number(payableRes.rows[0].total),
-        pending_payments: Number(payRes.rows[0].pending_payments),
-        overdue_invoices: Number(overdueRes.rows[0].c),
-        pending_approvals: Number(approvalRes.rows[0].c),
-        recent_movements: movRes.rows,
+        cash_balance: inflows - outflows,
+        accounts_receivable: recv.reduce((s: number, i: Record<string, unknown>) => s + Number(i.amount_residual), 0),
+        accounts_payable: payable.reduce((s: number, i: Record<string, unknown>) => s + Number(i.amount_residual), 0),
+        pending_payments: pending,
+        overdue_invoices: (overdueRes.data || []).length,
+        pending_approvals: (approvalRes.data || []).length,
+        recent_movements: (movRes.data || []).map((p: Record<string, unknown>) => ({ id: p.id, type: p.direction, amount: p.amount, description: p.partner_name, date: p.created_at, status: p.status })),
         cash_flow_trend: MOCK.dashboard.cash_flow_trend,
       };
     }
 
     // Payments
     if (path === "payments" || path === "payments/") {
-      const res = await query("SELECT * FROM payments WHERE company_id=$1 ORDER BY created_at DESC", [companyId]);
-      return res.rows;
+      const { data } = await query("payments", { match: { company_id: companyId }, order: { column: "created_at" } });
+      return data || [];
     }
     if (path === "payments/scheduled/list") {
-      const res = await query("SELECT * FROM payments WHERE company_id=$1 AND status='scheduled' ORDER BY scheduled_date", [companyId]);
-      return res.rows;
+      const { data } = await query("payments", { match: { company_id: companyId, status: "scheduled" }, order: { column: "scheduled_date", ascending: true } });
+      return data || [];
     }
     let m = matchPath(path, "payments/:id");
     if (m) {
-      const res = await query("SELECT * FROM payments WHERE id=$1 AND company_id=$2", [m.id, companyId]);
-      return res.rows[0] || null;
+      const { data } = await query("payments", { match: { id: Number(m.id), company_id: companyId }, single: true });
+      return data;
     }
 
     // Invoices
     if (path === "invoices/receivable") {
-      const res = await query("SELECT * FROM invoices WHERE company_id=$1 AND type='receivable' ORDER BY date_due", [companyId]);
-      return res.rows;
+      const { data } = await query("invoices", { match: { company_id: companyId, type: "receivable" }, order: { column: "date_due", ascending: true } });
+      return data || [];
     }
     if (path === "invoices/payable") {
-      const res = await query("SELECT * FROM invoices WHERE company_id=$1 AND type='payable' ORDER BY date_due", [companyId]);
-      return res.rows;
+      const { data } = await query("invoices", { match: { company_id: companyId, type: "payable" }, order: { column: "date_due", ascending: true } });
+      return data || [];
     }
     if (path === "invoices/overdue/receivable") {
-      const res = await query("SELECT * FROM invoices WHERE company_id=$1 AND type='receivable' AND status='overdue'", [companyId]);
-      return res.rows;
+      const { data } = await query("invoices", { match: { company_id: companyId, type: "receivable", status: "overdue" } });
+      return data || [];
     }
     if (path === "invoices/overdue/payable") {
-      const res = await query("SELECT * FROM invoices WHERE company_id=$1 AND type='payable' AND status='overdue'", [companyId]);
-      return res.rows;
+      const { data } = await query("invoices", { match: { company_id: companyId, type: "payable", status: "overdue" } });
+      return data || [];
     }
     m = matchPath(path, "invoices/:id");
     if (m) {
-      const res = await query("SELECT * FROM invoices WHERE id=$1 AND company_id=$2", [m.id, companyId]);
-      return res.rows[0] || null;
+      const { data } = await query("invoices", { match: { id: Number(m.id), company_id: companyId }, single: true });
+      return data;
     }
     m = matchPath(path, "invoices/:id/cfdi");
     if (m) {
-      const res = await query("SELECT cfdi_uuid as uuid, status FROM invoices WHERE id=$1 AND company_id=$2", [m.id, companyId]);
-      return res.rows[0] || { uuid: null, status: null };
+      const { data } = await query("invoices", { select: "cfdi_uuid, status", match: { id: Number(m.id), company_id: companyId }, single: true });
+      return data ? { uuid: data.cfdi_uuid, status: data.status } : { uuid: null, status: null };
     }
 
     // Vendors
     if (path === "vendors" || path === "vendors/") {
-      const res = await query(`
-        SELECT v.*, COALESCE(SUM(i.amount_residual),0) as total_payable, COUNT(i.id) as bills_count
-        FROM vendors v LEFT JOIN invoices i ON i.partner_rfc = v.rfc AND i.company_id = v.company_id AND i.type='payable' AND i.status != 'paid'
-        WHERE v.company_id=$1 GROUP BY v.id ORDER BY v.name
-      `, [companyId]);
-      return res.rows;
+      const { data } = await query("vendors", { match: { company_id: companyId }, order: { column: "name", ascending: true } });
+      return data || [];
     }
     m = matchPath(path, "vendors/:id/clabe");
     if (m) {
-      const res = await query("SELECT clabe FROM vendors WHERE id=$1 AND company_id=$2", [m.id, companyId]);
-      return res.rows[0] || { clabe: null };
+      const { data } = await query("vendors", { select: "clabe", match: { id: Number(m.id), company_id: companyId }, single: true });
+      return data || { clabe: null };
     }
     m = matchPath(path, "vendors/:id/bills");
     if (m) {
-      const vRes = await query("SELECT rfc FROM vendors WHERE id=$1 AND company_id=$2", [m.id, companyId]);
-      if (vRes.rows[0]) {
-        const res = await query("SELECT * FROM invoices WHERE company_id=$1 AND type='payable' AND partner_rfc=$2", [companyId, vRes.rows[0].rfc]);
-        return res.rows;
+      const { data: vendor } = await query("vendors", { select: "rfc", match: { id: Number(m.id), company_id: companyId }, single: true });
+      if (vendor?.rfc) {
+        const { data } = await query("invoices", { match: { company_id: companyId, type: "payable", partner_rfc: vendor.rfc } });
+        return data || [];
       }
       return [];
     }
     m = matchPath(path, "vendors/:id");
     if (m) {
-      const res = await query("SELECT * FROM vendors WHERE id=$1 AND company_id=$2", [m.id, companyId]);
-      return res.rows[0] || null;
+      const { data } = await query("vendors", { match: { id: Number(m.id), company_id: companyId }, single: true });
+      return data;
     }
 
     // Customers
-    if (path === "customers" || path === "customers/") {
-      const res = await query(`
-        SELECT c.*, COALESCE(SUM(i.amount_residual),0) as total_receivable, COUNT(i.id) as invoices_count
-        FROM customers c LEFT JOIN invoices i ON i.partner_rfc = c.rfc AND i.company_id = c.company_id AND i.type='receivable' AND i.status != 'paid'
-        WHERE c.company_id=$1 GROUP BY c.id ORDER BY c.name
-      `, [companyId]);
-      return res.rows;
+    if (path === "customers" || path === "customers/" || path === "customers/search") {
+      const { data } = await query("customers", { match: { company_id: companyId }, order: { column: "name", ascending: true } });
+      return data || [];
     }
-    if (path === "customers/search") return null; // handled in GET with query params
     m = matchPath(path, "customers/:id/clabe");
     if (m) {
-      const res = await query("SELECT clabe FROM customers WHERE id=$1 AND company_id=$2", [m.id, companyId]);
-      return res.rows[0] || { clabe: null };
+      const { data } = await query("customers", { select: "clabe", match: { id: Number(m.id), company_id: companyId }, single: true });
+      return data || { clabe: null };
     }
     m = matchPath(path, "customers/:id/invoices");
     if (m) {
-      const cRes = await query("SELECT rfc FROM customers WHERE id=$1 AND company_id=$2", [m.id, companyId]);
-      if (cRes.rows[0]) {
-        const res = await query("SELECT * FROM invoices WHERE company_id=$1 AND type='receivable' AND partner_rfc=$2", [companyId, cRes.rows[0].rfc]);
-        return res.rows;
+      const { data: cust } = await query("customers", { select: "rfc", match: { id: Number(m.id), company_id: companyId }, single: true });
+      if (cust?.rfc) {
+        const { data } = await query("invoices", { match: { company_id: companyId, type: "receivable", partner_rfc: cust.rfc } });
+        return data || [];
       }
       return [];
     }
     m = matchPath(path, "customers/:id");
     if (m) {
-      const res = await query("SELECT * FROM customers WHERE id=$1 AND company_id=$2", [m.id, companyId]);
-      return res.rows[0] || null;
+      const { data } = await query("customers", { match: { id: Number(m.id), company_id: companyId }, single: true });
+      return data;
     }
 
     // Expenses
     if (path === "expenses" || path === "expenses/") {
-      const res = await query("SELECT * FROM expenses WHERE company_id=$1 ORDER BY created_at DESC", [companyId]);
-      return res.rows;
+      const { data } = await query("expenses", { match: { company_id: companyId }, order: { column: "created_at" } });
+      return data || [];
     }
     if (path === "expenses/summary") {
-      const res = await query(`
-        SELECT COALESCE(SUM(amount),0) as total,
-               json_object_agg(COALESCE(category,'other'), cat_total) as by_category,
-               json_object_agg(COALESCE(status,'submitted'), status_count) as by_status
-        FROM (SELECT category, SUM(amount) as cat_total, status, COUNT(*) as status_count FROM expenses WHERE company_id=$1 GROUP BY category, status) sub
-      `, [companyId]);
-      return res.rows[0] || { total: 0, by_category: {}, by_status: {} };
+      const { data } = await query("expenses", { match: { company_id: companyId } });
+      const items = data || [];
+      const total = items.reduce((s: number, e: Record<string, unknown>) => s + Number(e.amount), 0);
+      const by_category: Record<string, number> = {};
+      const by_status: Record<string, number> = {};
+      for (const e of items) {
+        by_category[e.category as string] = (by_category[e.category as string] || 0) + Number(e.amount);
+        by_status[e.status as string] = (by_status[e.status as string] || 0) + 1;
+      }
+      return { total, by_category, by_status };
     }
 
     // Approvals
     if (path === "approvals/rules") {
-      const res = await query("SELECT * FROM approval_rules WHERE company_id=$1 ORDER BY min_amount", [companyId]);
-      return res.rows;
+      const { data } = await query("approval_rules", { match: { company_id: companyId }, order: { column: "min_amount", ascending: true } });
+      return data || [];
     }
     if (path === "approvals/pending") {
-      const res = await query("SELECT * FROM approval_requests WHERE company_id=$1 AND status='pending' ORDER BY created_at DESC", [companyId]);
-      return res.rows;
+      const { data } = await query("approval_requests", { match: { company_id: companyId, status: "pending" }, order: { column: "created_at" } });
+      return data || [];
     }
     m = matchPath(path, "approvals/:id/history");
     if (m) {
-      const res = await query("SELECT * FROM approval_requests WHERE payment_id=$1 AND company_id=$2 ORDER BY created_at", [m.id, companyId]);
-      return res.rows;
+      const { data } = await query("approval_requests", { match: { payment_id: Number(m.id), company_id: companyId }, order: { column: "created_at", ascending: true } });
+      return data || [];
     }
 
     // Treasury
     if (path === "treasury/snapshot") {
-      const balRes = await query(`
-        SELECT COALESCE(SUM(CASE WHEN direction='inbound' AND status='confirmed' THEN amount ELSE 0 END) -
-               SUM(CASE WHEN direction='outbound' AND status='confirmed' THEN amount ELSE 0 END), 0) as balance,
-               COALESCE(SUM(CASE WHEN direction='inbound' AND status IN ('draft','pending_approval','scheduled') THEN amount ELSE 0 END), 0) as pending_inflows,
-               COALESCE(SUM(CASE WHEN direction='outbound' AND status IN ('draft','pending_approval','scheduled') THEN amount ELSE 0 END), 0) as pending_outflows
-        FROM payments WHERE company_id=$1
-      `, [companyId]);
-      const b = balRes.rows[0];
+      const { data: payments } = await query("payments", { match: { company_id: companyId } });
+      const all = payments || [];
+      const confirmed = all.filter((p: Record<string, unknown>) => p.status === "confirmed");
+      const inflows = confirmed.filter((p: Record<string, unknown>) => p.direction === "inbound").reduce((s: number, p: Record<string, unknown>) => s + Number(p.amount), 0);
+      const outflows = confirmed.filter((p: Record<string, unknown>) => p.direction === "outbound").reduce((s: number, p: Record<string, unknown>) => s + Number(p.amount), 0);
+      const balance = inflows - outflows;
+      const pendingIn = all.filter((p: Record<string, unknown>) => p.direction === "inbound" && ["draft", "pending_approval", "scheduled"].includes(p.status as string)).reduce((s: number, p: Record<string, unknown>) => s + Number(p.amount), 0);
+      const pendingOut = all.filter((p: Record<string, unknown>) => p.direction === "outbound" && ["draft", "pending_approval", "scheduled"].includes(p.status as string)).reduce((s: number, p: Record<string, unknown>) => s + Number(p.amount), 0);
       return {
-        total_balance: Number(b.balance),
-        available_balance: Number(b.balance),
-        reserved_balance: 0,
-        accounts: [{ name: "Cuenta Principal SPEI", balance: Number(b.balance), currency: "MXN", bank: "STP" }],
-        pending_inflows: Number(b.pending_inflows),
-        pending_outflows: Number(b.pending_outflows),
+        total_balance: balance, available_balance: balance, reserved_balance: 0,
+        accounts: [{ name: "Cuenta Principal SPEI", balance, currency: "MXN", bank: "STP" }],
+        pending_inflows: pendingIn, pending_outflows: pendingOut,
       };
     }
-    if (path === "treasury/forecast") return null; // complex — use mock
+    if (path === "treasury/forecast") return null; // use mock
     if (path === "treasury/cash-flow") {
-      const res = await query(`
-        SELECT COALESCE(SUM(CASE WHEN direction='inbound' THEN amount ELSE 0 END), 0) as inflows,
-               COALESCE(SUM(CASE WHEN direction='outbound' THEN amount ELSE 0 END), 0) as outflows
-        FROM payments WHERE company_id=$1 AND status='confirmed'
-      `, [companyId]);
-      const r = res.rows[0];
-      return { inflows: Number(r.inflows), outflows: Number(r.outflows), net: Number(r.inflows) - Number(r.outflows) };
+      const { data: payments } = await query("payments", { match: { company_id: companyId, status: "confirmed" } });
+      const all = payments || [];
+      const inflows = all.filter((p: Record<string, unknown>) => p.direction === "inbound").reduce((s: number, p: Record<string, unknown>) => s + Number(p.amount), 0);
+      const outflows = all.filter((p: Record<string, unknown>) => p.direction === "outbound").reduce((s: number, p: Record<string, unknown>) => s + Number(p.amount), 0);
+      return { inflows, outflows, net: inflows - outflows };
     }
     if (path === "treasury/balance") {
-      const res = await query(`
-        SELECT COALESCE(SUM(CASE WHEN direction='inbound' AND status='confirmed' THEN amount ELSE 0 END) -
-               SUM(CASE WHEN direction='outbound' AND status='confirmed' THEN amount ELSE 0 END), 0) as balance
-        FROM payments WHERE company_id=$1
-      `, [companyId]);
-      return { balance: Number(res.rows[0].balance), currency: "MXN" };
+      const { data: payments } = await query("payments", { match: { company_id: companyId, status: "confirmed" } });
+      const all = payments || [];
+      const inflows = all.filter((p: Record<string, unknown>) => p.direction === "inbound").reduce((s: number, p: Record<string, unknown>) => s + Number(p.amount), 0);
+      const outflows = all.filter((p: Record<string, unknown>) => p.direction === "outbound").reduce((s: number, p: Record<string, unknown>) => s + Number(p.amount), 0);
+      return { balance: inflows - outflows, currency: "MXN" };
     }
     if (path === "treasury/movements") {
-      const res = await query("SELECT id, direction as type, amount, partner_name as description, created_at as date, status FROM payments WHERE company_id=$1 AND status='confirmed' ORDER BY created_at DESC LIMIT 20", [companyId]);
-      return res.rows;
+      const { data } = await query("payments", { match: { company_id: companyId, status: "confirmed" }, order: { column: "created_at" }, limit: 20 });
+      return (data || []).map((p: Record<string, unknown>) => ({ id: p.id, type: p.direction, amount: p.amount, description: p.partner_name, date: p.created_at, status: p.status }));
     }
 
     // Budgets
     if (path === "budgets" || path === "budgets/" || path === "budgets/vs-actual") {
-      const res = await query("SELECT * FROM budgets WHERE company_id=$1 ORDER BY period_start DESC", [companyId]);
-      return res.rows;
+      const { data } = await query("budgets", { match: { company_id: companyId }, order: { column: "period_start" } });
+      return data || [];
     }
     m = matchPath(path, "budgets/:id");
     if (m) {
-      const res = await query("SELECT * FROM budgets WHERE id=$1 AND company_id=$2", [m.id, companyId]);
-      return res.rows[0] || null;
+      const { data } = await query("budgets", { match: { id: Number(m.id), company_id: companyId }, single: true });
+      return data;
     }
 
     // Reconciliation
     if (path === "reconciliation/history") {
-      const res = await query("SELECT * FROM reconciliations WHERE company_id=$1 ORDER BY created_at DESC", [companyId]);
-      return res.rows;
+      const { data } = await query("reconciliations", { match: { company_id: companyId }, order: { column: "created_at" } });
+      return data || [];
     }
 
     // SAT
     if (path === "sat/documents") {
-      const res = await query("SELECT * FROM cfdi_documents WHERE company_id=$1 ORDER BY fecha_emision DESC", [companyId]);
-      return res.rows;
+      const { data } = await query("cfdi_documents", { match: { company_id: companyId }, order: { column: "fecha_emision" } });
+      return data || [];
     }
 
     // Reports
     if (path === "reports/cash-flow") {
-      const res = await query(`
-        SELECT COALESCE(SUM(CASE WHEN direction='inbound' THEN amount ELSE 0 END), 0) as inflows,
-               COALESCE(SUM(CASE WHEN direction='outbound' THEN amount ELSE 0 END), 0) as outflows
-        FROM payments WHERE company_id=$1 AND status='confirmed'
-      `, [companyId]);
-      const r = res.rows[0];
-      return { inflows: Number(r.inflows), outflows: Number(r.outflows), net: Number(r.inflows) - Number(r.outflows), by_day: [] };
+      const { data: payments } = await query("payments", { match: { company_id: companyId, status: "confirmed" } });
+      const all = payments || [];
+      const inflows = all.filter((p: Record<string, unknown>) => p.direction === "inbound").reduce((s: number, p: Record<string, unknown>) => s + Number(p.amount), 0);
+      const outflows = all.filter((p: Record<string, unknown>) => p.direction === "outbound").reduce((s: number, p: Record<string, unknown>) => s + Number(p.amount), 0);
+      return { inflows, outflows, net: inflows - outflows, by_day: [] };
     }
     if (path === "reports/sat-compliance") {
-      const res = await query(`
-        SELECT COUNT(*) as total_cfdis,
-               COUNT(*) FILTER (WHERE sat_status='Vigente') as vigentes,
-               COUNT(*) FILTER (WHERE sat_status='Cancelado') as cancelados
-        FROM cfdi_documents WHERE company_id=$1
-      `, [companyId]);
-      const r = res.rows[0];
-      const total = Number(r.total_cfdis) || 1;
-      return { ...r, total_cfdis: total, vigentes: Number(r.vigentes), cancelados: Number(r.cancelados), compliance_rate: Math.round(Number(r.vigentes) / total * 1000) / 10 };
+      const { data } = await query("cfdi_documents", { match: { company_id: companyId } });
+      const docs = data || [];
+      const total = docs.length || 1;
+      const vigentes = docs.filter((d: Record<string, unknown>) => d.sat_status === "Vigente").length;
+      const cancelados = docs.filter((d: Record<string, unknown>) => d.sat_status === "Cancelado").length;
+      return { total_cfdis: total, vigentes, cancelados, compliance_rate: Math.round(vigentes / total * 1000) / 10 };
     }
     if (path === "reports/budget-vs-actual") {
-      const res = await query("SELECT * FROM budgets WHERE company_id=$1", [companyId]);
-      return res.rows;
+      const { data } = await query("budgets", { match: { company_id: companyId } });
+      return data || [];
     }
     if (path === "reports/vendor-summary") {
-      const res = await query("SELECT * FROM vendors WHERE company_id=$1", [companyId]);
-      return res.rows;
+      const { data } = await query("vendors", { match: { company_id: companyId } });
+      return data || [];
     }
     if (path === "reports/expenses") {
-      const res = await query(`
-        SELECT COALESCE(SUM(amount),0) as total, COUNT(*) as count
-        FROM expenses WHERE company_id=$1
-      `, [companyId]);
-      return res.rows[0];
+      const { data } = await query("expenses", { match: { company_id: companyId } });
+      const items = data || [];
+      const total = items.reduce((s: number, e: Record<string, unknown>) => s + Number(e.amount), 0);
+      const by_category: Record<string, number> = {};
+      for (const e of items) { by_category[e.category as string] = (by_category[e.category as string] || 0) + Number(e.amount); }
+      return { total, count: items.length, by_category };
     }
 
     // Notifications
     if (path === "notifications" || path === "notifications/") {
-      const res = await query("SELECT * FROM notifications WHERE company_id=$1 ORDER BY created_at DESC", [companyId]);
-      return res.rows;
+      const { data } = await query("notifications", { match: { company_id: companyId }, order: { column: "created_at" } });
+      return data || [];
     }
     if (path === "notifications/unread-count") {
-      const res = await query("SELECT COUNT(*) as count FROM notifications WHERE company_id=$1 AND is_read=false", [companyId]);
-      return { count: Number(res.rows[0].count) };
+      const { data } = await query("notifications", { match: { company_id: companyId, is_read: false } });
+      return { count: (data || []).length };
     }
 
     // Companies
     if (path === "companies" || path === "companies/") {
-      const res = await query("SELECT * FROM companies WHERE id=$1", [companyId]);
-      return res.rows;
+      const { data } = await query("companies", { match: { id: companyId } });
+      return data || [];
     }
 
   } catch (e) {
     console.error("DB query error:", e);
-    return null; // fall through to mock
+    return null;
   }
 
   return null;
@@ -415,96 +405,97 @@ async function dbPost(path: string, body: unknown, companyId: number | null): Pr
   try {
     // Payments
     if (path === "payments/vendor") {
-      const res = await query(
-        `INSERT INTO payments (company_id, direction, status, amount, currency, partner_name, partner_rfc, clabe_destination, comment, reference_id)
-         VALUES ($1, 'outbound', 'pending_approval', $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-        [companyId, b.amount, b.currency || "MXN", b.partner_name, b.partner_rfc, b.clabe, b.comment, `PAY-${Date.now()}`]
-      );
-      return res.rows[0];
+      const { data } = await insert("payments", {
+        company_id: companyId, direction: "outbound", status: "pending_approval",
+        amount: b.amount, currency: (b.currency as string) || "MXN",
+        partner_name: b.partner_name, partner_rfc: b.partner_rfc,
+        clabe_destination: b.clabe, comment: b.comment, reference_id: `PAY-${Date.now()}`,
+      });
+      return data?.[0];
     }
     let m = matchPath(path, "payments/:id/execute");
     if (m) {
-      const res = await query("UPDATE payments SET status='processing', updated_at=NOW() WHERE id=$1 AND company_id=$2 RETURNING *", [m.id, companyId]);
-      return res.rows[0];
+      const { data } = await update("payments", { status: "processing", updated_at: new Date().toISOString() }, { id: Number(m.id), company_id: companyId });
+      return data?.[0];
     }
     m = matchPath(path, "payments/:id/schedule");
     if (m) {
-      const res = await query("UPDATE payments SET status='scheduled', updated_at=NOW() WHERE id=$1 AND company_id=$2 RETURNING *", [m.id, companyId]);
-      return res.rows[0];
+      const { data } = await update("payments", { status: "scheduled", updated_at: new Date().toISOString() }, { id: Number(m.id), company_id: companyId });
+      return data?.[0];
     }
 
     // Expenses
     if (path === "expenses" || path === "expenses/") {
-      const res = await query(
-        `INSERT INTO expenses (company_id, employee_name, employee_email, category, description, amount, currency)
-         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-        [companyId, b.employee_name, b.employee_email, b.category, b.description, b.amount, b.currency || "MXN"]
-      );
-      return res.rows[0];
+      const { data } = await insert("expenses", {
+        company_id: companyId, employee_name: b.employee_name, employee_email: b.employee_email,
+        category: b.category, description: b.description, amount: b.amount, currency: (b.currency as string) || "MXN",
+      });
+      return data?.[0];
     }
     m = matchPath(path, "expenses/:id/action");
     if (m) {
-      const newStatus = (b as Record<string, string>).action === "approve" ? "approved" : (b as Record<string, string>).action === "reject" ? "rejected" : "paid";
-      const res = await query("UPDATE expenses SET status=$1 WHERE id=$2 AND company_id=$3 RETURNING *", [newStatus, m.id, companyId]);
-      return res.rows[0];
+      const action = (b as Record<string, string>).action;
+      const newStatus = action === "approve" ? "approved" : action === "reject" ? "rejected" : "paid";
+      const { data } = await update("expenses", { status: newStatus }, { id: Number(m.id), company_id: companyId });
+      return data?.[0];
     }
 
     // Approvals
     if (path === "approvals/rules") {
-      const res = await query(
-        `INSERT INTO approval_rules (company_id, name, min_amount, max_amount, required_approvers, approver_emails, auto_approve_below)
-         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-        [companyId, b.name, b.min_amount || 0, b.max_amount || null, b.required_approvers || 1, b.approver_emails || [], b.auto_approve_below || null]
-      );
-      return res.rows[0];
+      const { data } = await insert("approval_rules", {
+        company_id: companyId, name: b.name, min_amount: b.min_amount || 0,
+        max_amount: b.max_amount || null, required_approvers: b.required_approvers || 1,
+        approver_emails: b.approver_emails || [], auto_approve_below: b.auto_approve_below || null,
+      });
+      return data?.[0];
     }
     m = matchPath(path, "approvals/:id/approve");
     if (m) {
-      await query("UPDATE approval_requests SET status='approved', comment=$1 WHERE id=$2 AND company_id=$3", [b.comment || "", m.id, companyId]);
+      await update("approval_requests", { status: "approved", comment: (b.comment as string) || "" }, { id: Number(m.id), company_id: companyId });
       return { status: "approved" };
     }
     m = matchPath(path, "approvals/:id/reject");
     if (m) {
-      await query("UPDATE approval_requests SET status='rejected', comment=$1 WHERE id=$2 AND company_id=$3", [b.comment || "", m.id, companyId]);
+      await update("approval_requests", { status: "rejected", comment: (b.comment as string) || "" }, { id: Number(m.id), company_id: companyId });
       return { status: "rejected" };
     }
 
     // Budgets
     if (path === "budgets" || path === "budgets/") {
-      const res = await query(
-        `INSERT INTO budgets (company_id, name, category, period_start, period_end, amount_budgeted, alert_threshold_pct)
-         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-        [companyId, b.name, b.category, b.period_start, b.period_end, b.amount_budgeted, b.alert_threshold_pct || 80]
-      );
-      return res.rows[0];
-    }
-    m = matchPath(path, "budgets/:id/spend");
-    if (m) {
-      const res = await query("UPDATE budgets SET amount_spent = amount_spent + $1 WHERE id=$2 AND company_id=$3 RETURNING *", [b.amount || 0, m.id, companyId]);
-      return res.rows[0];
+      const { data } = await insert("budgets", {
+        company_id: companyId, name: b.name, category: b.category,
+        period_start: b.period_start, period_end: b.period_end,
+        amount_budgeted: b.amount_budgeted, alert_threshold_pct: b.alert_threshold_pct || 80,
+      });
+      return data?.[0];
     }
 
     // Reconciliation
     if (path === "reconciliation/fintoc-odoo" || path === "reconciliation/sat") {
       const rType = path.includes("fintoc") ? "fintoc-odoo" : "sat";
-      const res = await query(
-        `INSERT INTO reconciliations (company_id, type, status, total_transactions, matched, unmatched, amount_matched)
-         VALUES ($1, $2, 'matched', 45, 42, 3, 1850000) RETURNING *`,
-        [companyId, rType]
-      );
-      return res.rows[0];
+      const { data } = await insert("reconciliations", {
+        company_id: companyId, type: rType, status: "matched",
+        total_transactions: 45, matched: 42, unmatched: 3, amount_matched: 1850000,
+      });
+      return data?.[0];
     }
 
     // Notifications
     m = matchPath(path, "notifications/:id/read");
     if (m) {
-      await query("UPDATE notifications SET is_read=true WHERE id=$1 AND company_id=$2", [m.id, companyId]);
+      await update("notifications", { is_read: true }, { id: Number(m.id), company_id: companyId });
       return { success: true };
     }
     if (path === "notifications/mark-all-read") {
-      await query("UPDATE notifications SET is_read=true WHERE company_id=$1", [companyId]);
+      await update("notifications", { is_read: true }, { company_id: companyId });
       return { success: true };
     }
+
+    // SAT
+    if (path === "sat/validate") return { uuid: b.uuid || "ABC12345", status: "Vigente", efos: "No listado" };
+    if (path === "sat/validate/bulk") return { validated: 5, results: [{ uuid: "ABC12345", status: "Vigente" }] };
+    if (path === "sat/upload-xml") return { id: 1, uuid: "NEW-UUID", status: "processed" };
+    if (path === "sat/revalidate-all") return { revalidated: 30, vigentes: 28, cancelados: 2 };
 
   } catch (e) {
     console.error("DB post error:", e);
@@ -564,7 +555,6 @@ function mockGet(path: string): Response {
   if (path === "notifications/unread-count") return NextResponse.json({ count: 2 });
   if (path === "companies" || path === "companies/") return NextResponse.json([{ id: 1, name: "Demo Corp SA de CV", rfc: "DCO230101AAA", is_active: true }]);
   if (path === "vendor-portal/dashboard") return NextResponse.json({ invoices: MOCK.invoicesPayable, payments: MOCK.payments.slice(0, 2) });
-  // Collections
   if (path === "collections/pending") return NextResponse.json(MOCK.invoicesReceivable.filter(i => i.status === "open"));
   if (path === "collections/overdue") return NextResponse.json(MOCK.invoicesReceivable.filter(i => i.status === "overdue"));
   if (path === "collections/aging") return NextResponse.json({ "0-30": 125000, "31-60": 89000, "61-90": 0, "90+": 340000 });
@@ -612,12 +602,8 @@ function cleanPath(req: NextRequest): string {
 export async function GET(req: NextRequest) {
   const path = cleanPath(req);
   const companyId = await getCompanyId(req);
-
-  // Try DB first
   const dbResult = await dbGet(path, companyId);
   if (dbResult !== null) return NextResponse.json(dbResult);
-
-  // Fallback to mock
   return mockGet(path);
 }
 
@@ -626,12 +612,8 @@ export async function POST(req: NextRequest) {
   const companyId = await getCompanyId(req);
   let body = {};
   try { body = await req.json(); } catch { /* no body */ }
-
-  // Try DB first
   const dbResult = await dbPost(path, body, companyId);
   if (dbResult !== null) return NextResponse.json(dbResult);
-
-  // Fallback to mock
   return mockPost(path);
 }
 

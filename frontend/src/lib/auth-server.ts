@@ -1,5 +1,5 @@
 import { SignJWT, jwtVerify } from "jose";
-import { hasDB, query, initDB, seedDB } from "./db";
+import { hasDB, query, insert, seedDB } from "./db";
 
 const SECRET = new TextEncoder().encode(
   process.env.JWT_SECRET || "payana-demo-secret-change-in-production"
@@ -53,14 +53,31 @@ let nextCompanyId = 1;
 export async function findUserByEmail(email: string): Promise<StoredUser | undefined> {
   if (hasDB()) {
     try {
-      const res = await query(
-        `SELECT u.id, u.email, u.password_hash as password, u.name, u.role,
-                u.company_id, c.name as company_name, c.rfc as company_rfc
-         FROM users u JOIN companies c ON u.company_id = c.id
-         WHERE u.email = $1`,
-        [email]
-      );
-      return res.rows[0] || undefined;
+      // Get user
+      const { data: user } = await query("users", {
+        select: "id, email, password_hash, name, role, company_id",
+        match: { email },
+        single: true,
+      });
+      if (!user) return undefined;
+
+      // Get company
+      const { data: company } = await query("companies", {
+        select: "name, rfc",
+        match: { id: user.company_id },
+        single: true,
+      });
+
+      return {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        password: user.password_hash,
+        company_id: user.company_id,
+        company_name: company?.name || "",
+        company_rfc: company?.rfc || "",
+      };
     } catch {
       // DB error — fall through to in-memory
     }
@@ -82,25 +99,26 @@ export async function registerUser(
 
   if (hasDB()) {
     try {
-      await initDB();
-      // Create company
-      const compRes = await query(
-        "INSERT INTO companies (name, rfc) VALUES ($1, $2) ON CONFLICT (rfc) DO UPDATE SET name=$1 RETURNING id",
-        [companyName, rfc]
-      );
-      const companyId = compRes.rows[0].id;
+      // Create or get company
+      const { data: companies } = await insert("companies", { name: companyName, rfc });
+      const companyId = companies?.[0]?.id;
+      if (!companyId) throw new Error("Error creating company");
 
       // Create user
-      const userRes = await query(
-        "INSERT INTO users (email, password_hash, name, role, company_id) VALUES ($1, $2, $3, 'admin', $4) RETURNING id",
-        [email, password, name, companyId]
-      );
+      const { data: users } = await insert("users", {
+        email,
+        password_hash: password,
+        name,
+        role: "admin",
+        company_id: companyId,
+      });
+      if (!users?.[0]) throw new Error("Error creating user");
 
       // Seed demo data for this company
       await seedDB(companyId);
 
       return {
-        id: userRes.rows[0].id,
+        id: users[0].id,
         email,
         name,
         role: "admin",
@@ -112,7 +130,6 @@ export async function registerUser(
     } catch (e) {
       const msg = e instanceof Error ? e.message : "DB error";
       if (msg.includes("ya está registrado")) throw e;
-      // If DB fails, fall through to in-memory
       console.error("DB register error, falling back to memory:", msg);
     }
   }

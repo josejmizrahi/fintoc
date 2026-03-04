@@ -1,8 +1,25 @@
-import { sql, db as pool } from "@vercel/postgres";
+import { createClient, SupabaseClient } from "@supabase/supabase-js";
 
-// ── Schema ──
+// ── Supabase Client (singleton) ──
 
-const SCHEMA_SQL = `
+let _supabase: SupabaseClient | null = null;
+
+function getSupabase(): SupabaseClient | null {
+  if (_supabase) return _supabase;
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url || !key) return null;
+  _supabase = createClient(url, key);
+  return _supabase;
+}
+
+export function hasDB(): boolean {
+  return !!(process.env.NEXT_PUBLIC_SUPABASE_URL && (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY));
+}
+
+// ── Schema (run in Supabase SQL Editor) ──
+
+export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS companies (
   id SERIAL PRIMARY KEY,
   name TEXT NOT NULL,
@@ -168,153 +185,138 @@ CREATE TABLE IF NOT EXISTS cfdi_documents (
 );
 `;
 
-// ── Init & Seed ──
+// ── Query helper using Supabase's from() ──
 
-export async function initDB() {
-  const client = await pool.connect();
-  try {
-    await client.query(SCHEMA_SQL);
-    return { success: true };
-  } finally {
-    client.release();
+/* eslint-disable @typescript-eslint/no-explicit-any */
+export async function query(table: string, options: {
+  select?: string;
+  match?: Record<string, unknown>;
+  order?: { column: string; ascending?: boolean };
+  limit?: number;
+  single?: boolean;
+} = {}): Promise<{ data: any; error: any }> {
+  const sb = getSupabase();
+  if (!sb) return { data: null, error: { message: "No Supabase configured" } };
+
+  let q = sb.from(table).select(options.select || "*");
+
+  if (options.match) {
+    for (const [key, val] of Object.entries(options.match)) {
+      q = q.eq(key, val);
+    }
   }
+  if (options.order) {
+    q = q.order(options.order.column, { ascending: options.order.ascending ?? false });
+  }
+  if (options.limit) {
+    q = q.limit(options.limit);
+  }
+  if (options.single) {
+    return q.single() as any;
+  }
+  return q as any;
 }
+/* eslint-enable @typescript-eslint/no-explicit-any */
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+export async function insert(table: string, data: Record<string, unknown> | Record<string, unknown>[]): Promise<{ data: any; error: any }> {
+  const sb = getSupabase();
+  if (!sb) return { data: null, error: { message: "No Supabase configured" } };
+  return sb.from(table).insert(data).select() as any;
+}
+
+export async function update(table: string, data: Record<string, unknown>, match: Record<string, unknown>): Promise<{ data: any; error: any }> {
+  const sb = getSupabase();
+  if (!sb) return { data: null, error: { message: "No Supabase configured" } };
+  let q = sb.from(table).update(data);
+  for (const [key, val] of Object.entries(match)) {
+    q = q.eq(key, val);
+  }
+  return q.select() as any;
+}
+/* eslint-enable @typescript-eslint/no-explicit-any */
+
+// ── Seed data ──
 
 export async function seedDB(companyId: number) {
-  const client = await pool.connect();
-  try {
-    // Check if already seeded
-    const { rows } = await client.query(
-      "SELECT COUNT(*) as c FROM payments WHERE company_id = $1",
-      [companyId]
-    );
-    if (parseInt(rows[0].c) > 0) return { seeded: false, message: "Already seeded" };
+  const sb = getSupabase();
+  if (!sb) return { seeded: false, message: "No Supabase configured" };
 
-    const now = new Date().toISOString();
+  // Check if already seeded
+  const { data: existing } = await sb.from("payments").select("id").eq("company_id", companyId).limit(1);
+  if (existing && existing.length > 0) return { seeded: false, message: "Already seeded" };
 
-    // Payments
-    await client.query(`
-      INSERT INTO payments (company_id, direction, status, amount, currency, partner_name, partner_rfc, reference_id) VALUES
-      ($1, 'outbound', 'confirmed', 45000, 'MXN', 'Materiales MX SA de CV', 'MMX010101AAA', 'PAY-001'),
-      ($1, 'outbound', 'pending_approval', 125000, 'MXN', 'Logística Express SA', 'LEX020202BBB', 'PAY-002'),
-      ($1, 'inbound', 'confirmed', 89000, 'MXN', 'TechCorp SA de CV', 'TCS030303CCC', 'PAY-003'),
-      ($1, 'outbound', 'draft', 67000, 'MXN', 'Servicios Cloud MX', 'SCM040404DDD', 'PAY-004'),
-      ($1, 'outbound', 'scheduled', 230000, 'MXN', 'Distribuidora Nacional SA', 'DNA050505EEE', 'PAY-005')
-    `, [companyId]);
+  // Payments
+  await sb.from("payments").insert([
+    { company_id: companyId, direction: "outbound", status: "confirmed", amount: 45000, currency: "MXN", partner_name: "Materiales MX SA de CV", partner_rfc: "MMX010101AAA", reference_id: "PAY-001" },
+    { company_id: companyId, direction: "outbound", status: "pending_approval", amount: 125000, currency: "MXN", partner_name: "Logística Express SA", partner_rfc: "LEX020202BBB", reference_id: "PAY-002" },
+    { company_id: companyId, direction: "inbound", status: "confirmed", amount: 89000, currency: "MXN", partner_name: "TechCorp SA de CV", partner_rfc: "TCS030303CCC", reference_id: "PAY-003" },
+    { company_id: companyId, direction: "outbound", status: "draft", amount: 67000, currency: "MXN", partner_name: "Servicios Cloud MX", partner_rfc: "SCM040404DDD", reference_id: "PAY-004" },
+    { company_id: companyId, direction: "outbound", status: "scheduled", amount: 230000, currency: "MXN", partner_name: "Distribuidora Nacional SA", partner_rfc: "DNA050505EEE", reference_id: "PAY-005" },
+  ]);
 
-    // Invoices receivable
-    await client.query(`
-      INSERT INTO invoices (company_id, type, partner_name, partner_rfc, amount_total, amount_residual, date_invoice, date_due, status, cfdi_uuid) VALUES
-      ($1, 'receivable', 'Acme SA de CV', 'ACM010101AAA', 125000, 125000, CURRENT_DATE, CURRENT_DATE + 15, 'open', 'ABC12345-0001'),
-      ($1, 'receivable', 'TechCorp SA', 'TCS020202BBB', 89000, 0, CURRENT_DATE, CURRENT_DATE + 20, 'paid', 'DEF67890-0002'),
-      ($1, 'receivable', 'Global Trade MX', 'GTM030303CCC', 340000, 340000, CURRENT_DATE - 35, CURRENT_DATE - 5, 'overdue', 'GHI11111-0003')
-    `, [companyId]);
+  // Invoices
+  await sb.from("invoices").insert([
+    { company_id: companyId, type: "receivable", partner_name: "Acme SA de CV", partner_rfc: "ACM010101AAA", amount_total: 125000, amount_residual: 125000, date_invoice: "2026-03-01", date_due: "2026-03-15", status: "open", cfdi_uuid: "ABC12345-0001" },
+    { company_id: companyId, type: "receivable", partner_name: "TechCorp SA", partner_rfc: "TCS020202BBB", amount_total: 89000, amount_residual: 0, date_invoice: "2026-03-01", date_due: "2026-03-20", status: "paid", cfdi_uuid: "DEF67890-0002" },
+    { company_id: companyId, type: "receivable", partner_name: "Global Trade MX", partner_rfc: "GTM030303CCC", amount_total: 340000, amount_residual: 340000, date_invoice: "2026-01-28", date_due: "2026-02-28", status: "overdue", cfdi_uuid: "GHI11111-0003" },
+    { company_id: companyId, type: "payable", partner_name: "Materiales MX SA", partner_rfc: "MMX010101AAA", amount_total: 45000, amount_residual: 45000, date_invoice: "2026-03-01", date_due: "2026-03-10", status: "open", cfdi_uuid: "JKL22222-0004" },
+    { company_id: companyId, type: "payable", partner_name: "Logística Express", partner_rfc: "LEX020202BBB", amount_total: 125000, amount_residual: 125000, date_invoice: "2026-03-01", date_due: "2026-03-18", status: "open", cfdi_uuid: "MNO33333-0005" },
+  ]);
 
-    // Invoices payable
-    await client.query(`
-      INSERT INTO invoices (company_id, type, partner_name, partner_rfc, amount_total, amount_residual, date_invoice, date_due, status, cfdi_uuid) VALUES
-      ($1, 'payable', 'Materiales MX SA', 'MMX010101AAA', 45000, 45000, CURRENT_DATE, CURRENT_DATE + 10, 'open', 'JKL22222-0004'),
-      ($1, 'payable', 'Logística Express', 'LEX020202BBB', 125000, 125000, CURRENT_DATE, CURRENT_DATE + 18, 'open', 'MNO33333-0005')
-    `, [companyId]);
+  // Vendors
+  await sb.from("vendors").insert([
+    { company_id: companyId, name: "Materiales MX SA de CV", rfc: "MMX010101AAA", email: "pagos@materiales.mx", clabe: "012180015678901234" },
+    { company_id: companyId, name: "Logística Express SA", rfc: "LEX020202BBB", email: "finanzas@logistica.mx", clabe: "014320012345678901" },
+    { company_id: companyId, name: "Servicios Cloud MX", rfc: "SCM040404DDD", email: "billing@cloud.mx", clabe: "021180098765432109" },
+    { company_id: companyId, name: "Distribuidora Nacional SA", rfc: "DNA050505EEE", email: "cxp@distribuidora.mx", clabe: "072180045678901234" },
+  ]);
 
-    // Vendors
-    await client.query(`
-      INSERT INTO vendors (company_id, name, rfc, email, clabe) VALUES
-      ($1, 'Materiales MX SA de CV', 'MMX010101AAA', 'pagos@materiales.mx', '012180015678901234'),
-      ($1, 'Logística Express SA', 'LEX020202BBB', 'finanzas@logistica.mx', '014320012345678901'),
-      ($1, 'Servicios Cloud MX', 'SCM040404DDD', 'billing@cloud.mx', '021180098765432109'),
-      ($1, 'Distribuidora Nacional SA', 'DNA050505EEE', 'cxp@distribuidora.mx', '072180045678901234')
-    `, [companyId]);
+  // Customers
+  await sb.from("customers").insert([
+    { company_id: companyId, name: "Acme SA de CV", rfc: "ACM010101AAA", email: "pagos@acme.mx", clabe: "646180157800000001" },
+    { company_id: companyId, name: "TechCorp SA de CV", rfc: "TCS020202BBB", email: "finanzas@techcorp.mx", clabe: "646180157800000002" },
+    { company_id: companyId, name: "Global Trade MX SA", rfc: "GTM030303CCC", email: "admin@globaltrade.mx", clabe: "646180157800000003" },
+  ]);
 
-    // Customers
-    await client.query(`
-      INSERT INTO customers (company_id, name, rfc, email, clabe) VALUES
-      ($1, 'Acme SA de CV', 'ACM010101AAA', 'pagos@acme.mx', '646180157800000001'),
-      ($1, 'TechCorp SA de CV', 'TCS020202BBB', 'finanzas@techcorp.mx', '646180157800000002'),
-      ($1, 'Global Trade MX SA', 'GTM030303CCC', 'admin@globaltrade.mx', '646180157800000003')
-    `, [companyId]);
+  // Expenses
+  await sb.from("expenses").insert([
+    { company_id: companyId, employee_name: "María García", employee_email: "maria@empresa.com", category: "viaje", description: "Viaje a Monterrey", amount: 8500, currency: "MXN", status: "submitted" },
+    { company_id: companyId, employee_name: "Carlos López", employee_email: "carlos@empresa.com", category: "oficina", description: "Material de oficina", amount: 3200, currency: "MXN", status: "approved" },
+    { company_id: companyId, employee_name: "Ana Rodríguez", employee_email: "ana@empresa.com", category: "comida", description: "Comida con cliente", amount: 1800, currency: "MXN", status: "paid" },
+  ]);
 
-    // Expenses
-    await client.query(`
-      INSERT INTO expenses (company_id, employee_name, employee_email, category, description, amount, currency, status) VALUES
-      ($1, 'María García', 'maria@empresa.com', 'viaje', 'Viaje a Monterrey', 8500, 'MXN', 'submitted'),
-      ($1, 'Carlos López', 'carlos@empresa.com', 'oficina', 'Material de oficina', 3200, 'MXN', 'approved'),
-      ($1, 'Ana Rodríguez', 'ana@empresa.com', 'comida', 'Comida con cliente', 1800, 'MXN', 'paid')
-    `, [companyId]);
+  // Approval rules
+  await sb.from("approval_rules").insert([
+    { company_id: companyId, name: "Pagos mayores a $50,000", min_amount: 50000, required_approvers: 1, approver_emails: ["director@empresa.com"], auto_approve_below: 50000 },
+    { company_id: companyId, name: "Pagos mayores a $500,000", min_amount: 500000, required_approvers: 2, approver_emails: ["director@empresa.com", "cfo@empresa.com"] },
+  ]);
 
-    // Approval rules
-    await client.query(`
-      INSERT INTO approval_rules (company_id, name, min_amount, max_amount, required_approvers, approver_emails, auto_approve_below) VALUES
-      ($1, 'Pagos mayores a $50,000', 50000, NULL, 1, ARRAY['director@empresa.com'], 50000),
-      ($1, 'Pagos mayores a $500,000', 500000, NULL, 2, ARRAY['director@empresa.com','cfo@empresa.com'], NULL)
-    `, [companyId]);
+  // Budgets
+  await sb.from("budgets").insert([
+    { company_id: companyId, name: "Marketing Q1", category: "marketing", period_start: "2026-01-01", period_end: "2026-03-31", amount_budgeted: 500000, amount_spent: 320000, amount_committed: 80000, alert_threshold_pct: 80 },
+    { company_id: companyId, name: "Operaciones Q1", category: "operaciones", period_start: "2026-01-01", period_end: "2026-03-31", amount_budgeted: 1200000, amount_spent: 890000, amount_committed: 150000, alert_threshold_pct: 90 },
+    { company_id: companyId, name: "IT Q1", category: "tecnología", period_start: "2026-01-01", period_end: "2026-03-31", amount_budgeted: 300000, amount_spent: 210000, amount_committed: 40000, alert_threshold_pct: 85 },
+  ]);
 
-    // Approval requests
-    const payRes = await client.query(
-      "SELECT id FROM payments WHERE company_id = $1 AND status = 'pending_approval' LIMIT 1",
-      [companyId]
-    );
-    if (payRes.rows.length > 0) {
-      const ruleRes = await client.query(
-        "SELECT id FROM approval_rules WHERE company_id = $1 LIMIT 1",
-        [companyId]
-      );
-      if (ruleRes.rows.length > 0) {
-        await client.query(`
-          INSERT INTO approval_requests (company_id, payment_id, rule_id, status, level, approver_email, amount, partner_name) VALUES
-          ($1, $2, $3, 'pending', 1, 'director@empresa.com', 125000, 'Logística Express')
-        `, [companyId, payRes.rows[0].id, ruleRes.rows[0].id]);
-      }
-    }
+  // Notifications
+  await sb.from("notifications").insert([
+    { company_id: companyId, notification_type: "payment_received", title: "Pago recibido", message: "Se recibió pago de $125,000 de Acme SA", is_read: false },
+    { company_id: companyId, notification_type: "approval_required", title: "Aprobación pendiente", message: "Pago de $125,000 a Logística Express requiere aprobación", is_read: false },
+    { company_id: companyId, notification_type: "invoice_overdue", title: "Factura vencida", message: "Factura de Global Trade MX por $340,000 está vencida", is_read: true },
+  ]);
 
-    // Budgets
-    await client.query(`
-      INSERT INTO budgets (company_id, name, category, period_start, period_end, amount_budgeted, amount_spent, amount_committed, alert_threshold_pct) VALUES
-      ($1, 'Marketing Q1', 'marketing', '2026-01-01', '2026-03-31', 500000, 320000, 80000, 80),
-      ($1, 'Operaciones Q1', 'operaciones', '2026-01-01', '2026-03-31', 1200000, 890000, 150000, 90),
-      ($1, 'IT Q1', 'tecnología', '2026-01-01', '2026-03-31', 300000, 210000, 40000, 85)
-    `, [companyId]);
+  // Reconciliations
+  await sb.from("reconciliations").insert([
+    { company_id: companyId, type: "fintoc-odoo", status: "matched", total_transactions: 45, matched: 42, unmatched: 3, amount_matched: 1850000 },
+    { company_id: companyId, type: "sat", status: "matched", total_transactions: 30, matched: 28, unmatched: 2, amount_matched: 2100000 },
+  ]);
 
-    // Notifications
-    await client.query(`
-      INSERT INTO notifications (company_id, notification_type, title, message, is_read) VALUES
-      ($1, 'payment_received', 'Pago recibido', 'Se recibió pago de $125,000 de Acme SA', false),
-      ($1, 'approval_required', 'Aprobación pendiente', 'Pago de $125,000 a Logística Express requiere aprobación', false),
-      ($1, 'invoice_overdue', 'Factura vencida', 'Factura de Global Trade MX por $340,000 está vencida', true)
-    `, [companyId]);
+  // CFDI documents
+  await sb.from("cfdi_documents").insert([
+    { company_id: companyId, uuid: "ABC12345-XXXX-YYYY-ZZZZ-000000000001", tipo_comprobante: "I", rfc_emisor: "ACM010101AAA", nombre_emisor: "Acme SA", rfc_receptor: "DCO230101AAA", total: 125000, sat_status: "Vigente" },
+    { company_id: companyId, uuid: "DEF67890-XXXX-YYYY-ZZZZ-000000000002", tipo_comprobante: "I", rfc_emisor: "TCS020202BBB", nombre_emisor: "TechCorp", rfc_receptor: "DCO230101AAA", total: 89000, sat_status: "Vigente" },
+  ]);
 
-    // Reconciliations
-    await client.query(`
-      INSERT INTO reconciliations (company_id, type, status, total_transactions, matched, unmatched, amount_matched) VALUES
-      ($1, 'fintoc-odoo', 'matched', 45, 42, 3, 1850000),
-      ($1, 'sat', 'matched', 30, 28, 2, 2100000)
-    `, [companyId]);
-
-    // CFDI documents
-    await client.query(`
-      INSERT INTO cfdi_documents (company_id, uuid, tipo_comprobante, rfc_emisor, nombre_emisor, rfc_receptor, total, sat_status) VALUES
-      ($1, 'ABC12345-XXXX-YYYY-ZZZZ-000000000001', 'I', 'ACM010101AAA', 'Acme SA', 'DCO230101AAA', 125000, 'Vigente'),
-      ($1, 'DEF67890-XXXX-YYYY-ZZZZ-000000000002', 'I', 'TCS020202BBB', 'TechCorp', 'DCO230101AAA', 89000, 'Vigente')
-    `, [companyId]);
-
-    return { seeded: true };
-  } finally {
-    client.release();
-  }
-}
-
-// ── Helpers ──
-
-export function hasDB(): boolean {
-  return !!(process.env.POSTGRES_URL || process.env.DATABASE_URL);
-}
-
-export async function query(text: string, params?: unknown[]) {
-  const client = await pool.connect();
-  try {
-    const result = await client.query(text, params);
-    return result;
-  } finally {
-    client.release();
-  }
+  return { seeded: true };
 }
