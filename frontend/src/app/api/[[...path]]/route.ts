@@ -151,7 +151,6 @@ async function dbGet(path: string, companyId: number | null): Promise<unknown | 
       const payable = (payableRes.data || []).filter((i: Record<string, unknown>) => i.status !== "paid");
       const inflows = payments.filter((p: Record<string, unknown>) => p.direction === "inbound" && p.status === "confirmed").reduce((s: number, p: Record<string, unknown>) => s + Number(p.amount), 0);
       const outflows = payments.filter((p: Record<string, unknown>) => p.direction === "outbound" && p.status === "confirmed").reduce((s: number, p: Record<string, unknown>) => s + Number(p.amount), 0);
-      const pending = payments.filter((p: Record<string, unknown>) => ["draft", "pending_approval"].includes(p.status as string)).length;
       const totalBalance = inflows - outflows;
       const ar = recv.reduce((s: number, i: Record<string, unknown>) => s + Number(i.amount_residual), 0);
       const ap = payable.reduce((s: number, i: Record<string, unknown>) => s + Number(i.amount_residual), 0);
