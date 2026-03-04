@@ -115,31 +115,24 @@ export default function LoginPage() {
   async function handleQuickStart() {
     setDemoLoading(true);
     try {
+      // Generate unique demo account per session
+      const uid = crypto.randomUUID().slice(0, 8);
+      const demoEmail = `demo-${uid}@payana.demo`;
+      const demoPassword = crypto.randomUUID();
       const res = await api.auth.register({
-        email: "admin@demo.com",
-        password: "demo123456",
+        email: demoEmail,
+        password: demoPassword,
         name: "Admin Demo",
-        company_name: "Demo Corp SA de CV",
-        rfc: "DCO230101AAA",
+        company_name: `Demo Corp ${uid}`,
+        rfc: `XAXX010101${uid.slice(0, 3).toUpperCase()}`,
       });
       loginWithToken(res.access_token, res.user, res.tenant);
       toast.success("Empresa demo creada. Bienvenido a Payana.");
       router.push("/");
-    } catch {
-      // If demo already exists, try logging in
-      try {
-        const res = await api.auth.login({
-          email: "admin@demo.com",
-          password: "demo123456",
-        });
-        loginWithToken(res.access_token, res.user, res.tenant);
-        toast.success("Bienvenido de vuelta a la empresa demo.");
-        router.push("/");
-      } catch (error) {
-        toast.error(
-          error instanceof Error ? error.message : "Error al crear empresa demo"
-        );
-      }
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Error al crear empresa demo"
+      );
     } finally {
       setDemoLoading(false);
     }

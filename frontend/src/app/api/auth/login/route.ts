@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { findUserByEmail, createToken } from "@/lib/auth-server";
+import { loginUser } from "@/lib/auth-server";
 
 export async function POST(req: NextRequest) {
   try {
@@ -13,26 +13,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const user = await findUserByEmail(email.toLowerCase().trim());
-    if (!user || user.password !== password) {
-      return NextResponse.json(
-        { detail: "Credenciales inválidas" },
-        { status: 401 }
-      );
-    }
-
-    const token = await createToken({
-      sub: String(user.id),
-      email: user.email,
-      name: user.name,
-      role: user.role,
-      company_id: String(user.company_id),
-      company_name: user.company_name,
-      company_rfc: user.company_rfc,
-    });
+    const user = await loginUser(email, password);
 
     return NextResponse.json({
-      access_token: token,
+      access_token: user.access_token,
       token_type: "bearer",
       user: {
         id: user.id,
@@ -46,10 +30,9 @@ export async function POST(req: NextRequest) {
         rfc: user.company_rfc,
       },
     });
-  } catch {
-    return NextResponse.json(
-      { detail: "Error al iniciar sesión" },
-      { status: 500 }
-    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Error al iniciar sesión";
+    const status = message.includes("inválidas") ? 401 : 500;
+    return NextResponse.json({ detail: message }, { status });
   }
 }

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { registerUser, createToken } from "@/lib/auth-server";
+import { registerUser } from "@/lib/auth-server";
 
 export async function POST(req: NextRequest) {
   try {
@@ -19,21 +19,17 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const user = await registerUser(email.toLowerCase().trim(), password, name, company_name, rfc.toUpperCase());
-
-    const token = await createToken({
-      sub: String(user.id),
-      email: user.email,
-      name: user.name,
-      role: user.role,
-      company_id: String(user.company_id),
-      company_name: user.company_name,
-      company_rfc: user.company_rfc,
-    });
+    const user = await registerUser(
+      email.toLowerCase().trim(),
+      password,
+      name,
+      company_name,
+      rfc.toUpperCase()
+    );
 
     return NextResponse.json(
       {
-        access_token: token,
+        access_token: user.access_token,
         token_type: "bearer",
         user: {
           id: user.id,

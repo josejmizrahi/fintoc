@@ -20,6 +20,11 @@ export function hasDB(): boolean {
 // ── Schema (run in Supabase SQL Editor) ──
 
 export const SCHEMA_SQL = `
+-- ══════════════════════════════════════════════════════════
+-- Schema + RLS Policies for Payana
+-- Run this in the Supabase SQL Editor
+-- ══════════════════════════════════════════════════════════
+
 CREATE TABLE IF NOT EXISTS companies (
   id SERIAL PRIMARY KEY,
   name TEXT NOT NULL,
@@ -30,14 +35,21 @@ CREATE TABLE IF NOT EXISTS companies (
 
 CREATE TABLE IF NOT EXISTS users (
   id SERIAL PRIMARY KEY,
+  auth_uid UUID UNIQUE REFERENCES auth.users(id) ON DELETE CASCADE,
   email TEXT NOT NULL UNIQUE,
-  password_hash TEXT NOT NULL,
+  password_hash TEXT NOT NULL DEFAULT 'SUPABASE_AUTH',
   name TEXT NOT NULL,
   role TEXT DEFAULT 'admin',
   company_id INTEGER REFERENCES companies(id),
   is_active BOOLEAN DEFAULT true,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Helper function: get the company_id for the current authenticated user
+CREATE OR REPLACE FUNCTION auth_company_id() RETURNS INTEGER AS $$
+  SELECT company_id FROM users WHERE auth_uid = auth.uid()
+$$ LANGUAGE sql SECURITY DEFINER STABLE;
+
 
 CREATE TABLE IF NOT EXISTS payments (
   id SERIAL PRIMARY KEY,
@@ -183,6 +195,67 @@ CREATE TABLE IF NOT EXISTS cfdi_documents (
   sat_status TEXT DEFAULT 'Vigente',
   fecha_emision TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- ══════════════════════════════════════════════════════════
+-- Row Level Security (RLS) Policies
+-- Each user can only see/modify data from their own company
+-- ══════════════════════════════════════════════════════════
+
+ALTER TABLE companies ENABLE ROW LEVEL SECURITY;
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE payments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE invoices ENABLE ROW LEVEL SECURITY;
+ALTER TABLE vendors ENABLE ROW LEVEL SECURITY;
+ALTER TABLE customers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE expenses ENABLE ROW LEVEL SECURITY;
+ALTER TABLE approval_rules ENABLE ROW LEVEL SECURITY;
+ALTER TABLE approval_requests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE budgets ENABLE ROW LEVEL SECURITY;
+ALTER TABLE notifications ENABLE ROW LEVEL SECURITY;
+ALTER TABLE reconciliations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE cfdi_documents ENABLE ROW LEVEL SECURITY;
+
+-- Users: can see own profile
+CREATE POLICY users_own ON users
+  FOR ALL USING (auth_uid = auth.uid());
+
+-- Companies: users can see their own company
+CREATE POLICY companies_own ON companies
+  FOR ALL USING (id = auth_company_id());
+
+-- All tenant-scoped tables: filter by company_id
+CREATE POLICY payments_tenant ON payments
+  FOR ALL USING (company_id = auth_company_id());
+
+CREATE POLICY invoices_tenant ON invoices
+  FOR ALL USING (company_id = auth_company_id());
+
+CREATE POLICY vendors_tenant ON vendors
+  FOR ALL USING (company_id = auth_company_id());
+
+CREATE POLICY customers_tenant ON customers
+  FOR ALL USING (company_id = auth_company_id());
+
+CREATE POLICY expenses_tenant ON expenses
+  FOR ALL USING (company_id = auth_company_id());
+
+CREATE POLICY approval_rules_tenant ON approval_rules
+  FOR ALL USING (company_id = auth_company_id());
+
+CREATE POLICY approval_requests_tenant ON approval_requests
+  FOR ALL USING (company_id = auth_company_id());
+
+CREATE POLICY budgets_tenant ON budgets
+  FOR ALL USING (company_id = auth_company_id());
+
+CREATE POLICY notifications_tenant ON notifications
+  FOR ALL USING (company_id = auth_company_id());
+
+CREATE POLICY reconciliations_tenant ON reconciliations
+  FOR ALL USING (company_id = auth_company_id());
+
+CREATE POLICY cfdi_documents_tenant ON cfdi_documents
+  FOR ALL USING (company_id = auth_company_id());
 `;
 
 // ── Query helper using Supabase's from() ──
