@@ -307,7 +307,7 @@ export default function FacturasPage() {
                           )}
                         </TableCell>
                         <TableCell>
-                          {cfdiBadge(inv.payment_state ?? inv.cfdi_uuid ? "valid" : undefined)}
+                          {cfdiBadge(inv.payment_state ?? (inv.cfdi_uuid ? "valid" : undefined))}
                         </TableCell>
                         <TableCell className="text-right">
                           <Button
@@ -391,7 +391,7 @@ export default function FacturasPage() {
                           )}
                         </TableCell>
                         <TableCell>
-                          {cfdiBadge(inv.payment_state ?? inv.cfdi_uuid ? "valid" : undefined)}
+                          {cfdiBadge(inv.payment_state ?? (inv.cfdi_uuid ? "valid" : undefined))}
                         </TableCell>
                       </TableRow>
                     ))}
