@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
@@ -26,6 +26,14 @@ import {
 export default function LoginPage() {
   const router = useRouter();
   const loginWithToken = useAuthStore((s) => s.loginWithToken);
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+
+  // Redirect to dashboard if already authenticated
+  useEffect(() => {
+    if (isAuthenticated) {
+      router.replace("/");
+    }
+  }, [isAuthenticated, router]);
 
   // Login state
   const [loginEmail, setLoginEmail] = useState("");

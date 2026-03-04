@@ -22,16 +22,24 @@ async function getCompanyId(req: NextRequest): Promise<number | null> {
 
 const MOCK = {
   dashboard: {
-    cash_balance: 2_450_000.0,
+    total_balance: 2_450_000.0,
     accounts_receivable: 1_850_000.0,
     accounts_payable: 980_000.0,
-    pending_payments: 5,
+    net_position: 2_450_000.0 + 1_850_000.0 - 980_000.0,
+    pending_invoices_count: 5,
+    pending_bills_count: 2,
     overdue_invoices: 3,
     pending_approvals: 2,
-    recent_movements: [
-      { id: 1, type: "inbound", amount: 125000, description: "Pago cliente Acme SA", date: today, status: "confirmed" },
-      { id: 2, type: "outbound", amount: 45000, description: "Pago proveedor Materiales MX", date: today, status: "confirmed" },
-      { id: 3, type: "inbound", amount: 89000, description: "Pago cliente TechCorp", date: today, status: "confirmed" },
+    unread_notifications: 2,
+    budget_alerts: 0,
+    sat_issues: 0,
+    recent_payments: [
+      { id: 1, direction: "inbound", status: "confirmed", amount: 125000, currency: "MXN", reference_id: "PAY-003", partner_name: "Acme SA", created_at: now },
+      { id: 2, direction: "outbound", status: "confirmed", amount: 45000, currency: "MXN", reference_id: "PAY-001", partner_name: "Materiales MX", created_at: now },
+      { id: 3, direction: "inbound", status: "confirmed", amount: 89000, currency: "MXN", reference_id: "PAY-003", partner_name: "TechCorp", created_at: now },
+    ],
+    overdue_invoice_list: [
+      { id: 3, name: "GHI11111", partner: "Global Trade MX", amount_total: 340000, amount_residual: 340000, invoice_date_due: "2026-02-28" },
     ],
     cash_flow_trend: [
       { date: "Lun", inflows: 250000, outflows: 180000 },
@@ -144,14 +152,34 @@ async function dbGet(path: string, companyId: number | null): Promise<unknown | 
       const inflows = payments.filter((p: Record<string, unknown>) => p.direction === "inbound" && p.status === "confirmed").reduce((s: number, p: Record<string, unknown>) => s + Number(p.amount), 0);
       const outflows = payments.filter((p: Record<string, unknown>) => p.direction === "outbound" && p.status === "confirmed").reduce((s: number, p: Record<string, unknown>) => s + Number(p.amount), 0);
       const pending = payments.filter((p: Record<string, unknown>) => ["draft", "pending_approval"].includes(p.status as string)).length;
+      const totalBalance = inflows - outflows;
+      const ar = recv.reduce((s: number, i: Record<string, unknown>) => s + Number(i.amount_residual), 0);
+      const ap = payable.reduce((s: number, i: Record<string, unknown>) => s + Number(i.amount_residual), 0);
+      const overdueList = (overdueRes.data || []).map((inv: Record<string, unknown>) => ({
+        id: inv.id, name: inv.cfdi_uuid || `INV-${inv.id}`, partner: inv.partner_name,
+        amount_total: inv.amount_total, amount_residual: inv.amount_residual,
+        invoice_date_due: inv.date_due,
+      }));
+      const recentPayments = (movRes.data || []).map((p: Record<string, unknown>) => ({
+        id: p.id, direction: p.direction, status: p.status, amount: p.amount,
+        currency: p.currency, reference_id: p.reference_id, partner_name: p.partner_name,
+        created_at: p.created_at,
+      }));
+
       return {
-        cash_balance: inflows - outflows,
-        accounts_receivable: recv.reduce((s: number, i: Record<string, unknown>) => s + Number(i.amount_residual), 0),
-        accounts_payable: payable.reduce((s: number, i: Record<string, unknown>) => s + Number(i.amount_residual), 0),
-        pending_payments: pending,
-        overdue_invoices: (overdueRes.data || []).length,
+        total_balance: totalBalance,
+        accounts_receivable: ar,
+        accounts_payable: ap,
+        net_position: totalBalance + ar - ap,
+        pending_invoices_count: recv.length + payable.length,
+        pending_bills_count: payable.length,
+        overdue_invoices: overdueList.length,
         pending_approvals: (approvalRes.data || []).length,
-        recent_movements: (movRes.data || []).map((p: Record<string, unknown>) => ({ id: p.id, type: p.direction, amount: p.amount, description: p.partner_name, date: p.created_at, status: p.status })),
+        unread_notifications: 0,
+        budget_alerts: 0,
+        sat_issues: 0,
+        recent_payments: recentPayments,
+        overdue_invoice_list: overdueList,
         cash_flow_trend: MOCK.dashboard.cash_flow_trend,
       };
     }
@@ -540,7 +568,7 @@ function mockGet(path: string): Response {
   ]);
   if (path === "treasury/cash-flow") return NextResponse.json({ inflows: 554000, outflows: 467000, net: 87000 });
   if (path === "treasury/balance") return NextResponse.json({ balance: 2_450_000, currency: "MXN" });
-  if (path === "treasury/movements") return NextResponse.json(MOCK.dashboard.recent_movements);
+  if (path === "treasury/movements") return NextResponse.json(MOCK.dashboard.recent_payments);
   if (path === "budgets" || path === "budgets/" || path === "budgets/vs-actual") return NextResponse.json(MOCK.budgets);
   if (matchPath(path, "budgets/:id")) return NextResponse.json(MOCK.budgets[0]);
   if (path === "reconciliation/history") return NextResponse.json(MOCK.reconciliationHistory);
