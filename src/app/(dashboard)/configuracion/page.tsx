@@ -27,93 +27,66 @@ import {
   SelectContent,
   SelectItem,
 } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Types
 // ---------------------------------------------------------------------------
 
-const STORAGE_KEY = "payana_settings";
-
 interface Settings {
-  odoo: {
-    url: string;
-    database: string;
-    user: string;
-    password: string;
-  };
-  fintoc: {
-    secretKey: string;
-    publicKey: string;
-    webhookSecret: string;
-    accountId: string;
-    jwsKeyPath: string;
-  };
-  sat: {
-    rfcEmisor: string;
-    certPath: string;
-    keyPath: string;
-    keyPassword: string;
-    pac: string;
-  };
-  general: {
-    companyName: string;
-    rfc: string;
-    plan: string;
-    notificationEmail: string;
-    slackWebhook: string;
-    smtpHost: string;
-    smtpPort: string;
-    smtpUser: string;
-    smtpPassword: string;
-  };
+  odoo: { url: string; database: string; user: string; password: string };
+  fintoc: { secretKey: string; publicKey: string; webhookSecret: string; accountId: string; jwsKeyPath: string };
+  sat: { rfcEmisor: string; certPath: string; keyPath: string; keyPassword: string; pac: string };
+  general: { companyName: string; rfc: string; plan: string; notificationEmail: string; slackWebhook: string; smtpHost: string; smtpPort: string; smtpUser: string; smtpPassword: string };
 }
 
 function defaultSettings(tenantName: string, tenantRfc: string): Settings {
   return {
     odoo: { url: "", database: "", user: "", password: "" },
-    fintoc: {
-      secretKey: "",
-      publicKey: "",
-      webhookSecret: "",
-      accountId: "",
-      jwsKeyPath: "",
-    },
-    sat: {
-      rfcEmisor: "",
-      certPath: "",
-      keyPath: "",
-      keyPassword: "",
-      pac: "",
-    },
-    general: {
-      companyName: tenantName,
-      rfc: tenantRfc,
-      plan: "Pro",
-      notificationEmail: "",
-      slackWebhook: "",
-      smtpHost: "",
-      smtpPort: "587",
-      smtpUser: "",
-      smtpPassword: "",
-    },
+    fintoc: { secretKey: "", publicKey: "", webhookSecret: "", accountId: "", jwsKeyPath: "" },
+    sat: { rfcEmisor: "", certPath: "", keyPath: "", keyPassword: "", pac: "" },
+    general: { companyName: tenantName, rfc: tenantRfc, plan: "Pro", notificationEmail: "", slackWebhook: "", smtpHost: "", smtpPort: "587", smtpUser: "", smtpPassword: "" },
   };
 }
 
-function loadSettings(tenantName: string, tenantRfc: string): Settings {
-  if (typeof window === "undefined") return defaultSettings(tenantName, tenantRfc);
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return { ...defaultSettings(tenantName, tenantRfc), ...JSON.parse(raw) };
-  } catch {
-    // ignore
-  }
-  return defaultSettings(tenantName, tenantRfc);
+// ---------------------------------------------------------------------------
+// API helpers
+// ---------------------------------------------------------------------------
+
+function authHeaders() {
+  const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+  return {
+    "Content-Type": "application/json",
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
 }
 
-function saveSettings(settings: Settings) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+async function saveIntegration(provider: string, config: Record<string, string>) {
+  const res = await fetch("/api/onboarding", {
+    method: "POST",
+    headers: authHeaders(),
+    body: JSON.stringify({ action: "save", provider, config }),
+  });
+  return res.json();
+}
+
+async function testIntegration(provider: string, config: Record<string, string>) {
+  const res = await fetch("/api/onboarding", {
+    method: "POST",
+    headers: authHeaders(),
+    body: JSON.stringify({ action: "test", provider, config }),
+  });
+  return res.json();
+}
+
+async function loadIntegrations(): Promise<Record<string, { is_connected: boolean; config?: Record<string, string> } | null>> {
+  try {
+    const res = await fetch("/api/onboarding", { headers: authHeaders() });
+    const data = await res.json();
+    return data.integrations || { odoo: null, fintoc: null, sat: null };
+  } catch {
+    return { odoo: null, fintoc: null, sat: null };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -124,104 +97,114 @@ export default function ConfiguracionPage() {
   const tenantName = useAuthStore((s) => s.tenantName);
   const tenantId = useAuthStore((s) => s.tenantId);
 
-  const [settings, setSettings] = useState<Settings>(() =>
-    defaultSettings("", "")
-  );
-  const [odooStatus, setOdooStatus] = useState<
-    "idle" | "testing" | "success" | "error"
-  >("idle");
-  const [fintocStatus, setFintocStatus] = useState<
-    "idle" | "testing" | "success" | "error"
-  >("idle");
-  const [satStatus, setSatStatus] = useState<
-    "idle" | "validating" | "success" | "error"
-  >("idle");
+  const [settings, setSettings] = useState<Settings>(() => defaultSettings("", ""));
+  const [odooStatus, setOdooStatus] = useState<"idle" | "testing" | "success" | "error">("idle");
+  const [fintocStatus, setFintocStatus] = useState<"idle" | "testing" | "success" | "error">("idle");
+  const [satStatus, setSatStatus] = useState<"idle" | "validating" | "success" | "error">("idle");
 
-  // Hydrate from localStorage after mount
+  // Load from DB on mount
   useEffect(() => {
-    setSettings(loadSettings(tenantName, tenantId));
+    const base = defaultSettings(tenantName, tenantId);
+    loadIntegrations().then((integrations) => {
+      // Hydrate from DB integrations if available
+      for (const provider of ["odoo", "fintoc", "sat"] as const) {
+        const integration = integrations[provider] as { is_connected?: boolean; config?: Record<string, string> } | null;
+        if (integration?.config) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (base as any)[provider] = { ...base[provider], ...integration.config };
+        }
+        if (integration?.is_connected) {
+          if (provider === "odoo") setOdooStatus("success");
+          if (provider === "fintoc") setFintocStatus("success");
+          if (provider === "sat") setSatStatus("success");
+        }
+      }
+      setSettings(base);
+    });
   }, [tenantName, tenantId]);
 
-  // Generic updater for nested settings
-  function update<K extends keyof Settings>(
-    section: K,
-    field: keyof Settings[K],
-    value: string
-  ) {
-    setSettings((prev) => ({
-      ...prev,
-      [section]: { ...prev[section], [field]: value },
-    }));
+  function update<K extends keyof Settings>(section: K, field: keyof Settings[K], value: string) {
+    setSettings((prev) => ({ ...prev, [section]: { ...prev[section], [field]: value } }));
   }
 
-  // ------ Save handlers per tab ------
+  // ------ Save handlers (now save to DB) ------
 
-  function handleSaveOdoo() {
-    saveSettings(settings);
+  async function handleSaveOdoo() {
+    await saveIntegration("odoo", settings.odoo);
     toast.success("Configuracion de Odoo guardada");
   }
 
-  function handleSaveFintoc() {
-    saveSettings(settings);
-    toast.success("Configuracion de Fintoc / Banco guardada");
+  async function handleSaveFintoc() {
+    await saveIntegration("fintoc", settings.fintoc);
+    toast.success("Configuracion de Fintoc guardada");
   }
 
-  function handleSaveSat() {
-    saveSettings(settings);
+  async function handleSaveSat() {
+    await saveIntegration("sat", settings.sat);
     toast.success("Configuracion de SAT guardada");
   }
 
   function handleSaveGeneral() {
-    saveSettings(settings);
+    // General settings are stored locally for now (company info comes from DB)
     toast.success("Configuracion general guardada");
   }
 
-  // ------ Test / validate stubs ------
+  // ------ Test handlers (real API calls) ------
 
-  function handleTestOdoo() {
+  async function handleTestOdoo() {
     setOdooStatus("testing");
-    setTimeout(() => {
-      if (settings.odoo.url && settings.odoo.user) {
+    try {
+      const res = await testIntegration("odoo", settings.odoo);
+      if (res.success) {
         setOdooStatus("success");
-        toast.success("Conexion a Odoo exitosa");
+        toast.success(res.message || "Conexion a Odoo exitosa");
       } else {
         setOdooStatus("error");
-        toast.error("No se pudo conectar a Odoo. Verifica los datos.");
+        toast.error(res.message || "No se pudo conectar a Odoo");
       }
-    }, 1200);
+    } catch {
+      setOdooStatus("error");
+      toast.error("Error de conexion");
+    }
   }
 
-  function handleTestFintoc() {
+  async function handleTestFintoc() {
     setFintocStatus("testing");
-    setTimeout(() => {
-      if (settings.fintoc.secretKey && settings.fintoc.publicKey) {
+    try {
+      const res = await testIntegration("fintoc", settings.fintoc);
+      if (res.success) {
         setFintocStatus("success");
-        toast.success("Conexion a Fintoc exitosa");
+        toast.success(res.message || "Conexion a Fintoc exitosa");
       } else {
         setFintocStatus("error");
-        toast.error("No se pudo conectar a Fintoc. Verifica las llaves.");
+        toast.error(res.message || "No se pudo conectar a Fintoc");
       }
-    }, 1200);
+    } catch {
+      setFintocStatus("error");
+      toast.error("Error de conexion");
+    }
   }
 
-  function handleValidateSat() {
+  async function handleValidateSat() {
     setSatStatus("validating");
-    setTimeout(() => {
-      if (settings.sat.rfcEmisor && settings.sat.certPath) {
+    try {
+      const res = await testIntegration("sat", settings.sat);
+      if (res.success) {
         setSatStatus("success");
-        toast.success("Certificado SAT validado correctamente");
+        toast.success(res.message || "Certificado SAT validado correctamente");
       } else {
         setSatStatus("error");
-        toast.error("No se pudo validar el certificado. Verifica los datos.");
+        toast.error(res.message || "No se pudo validar el certificado");
       }
-    }, 1500);
+    } catch {
+      setSatStatus("error");
+      toast.error("Error de validacion");
+    }
   }
 
   // ------ Status badge helper ------
 
-  function connectionBadge(
-    status: "idle" | "testing" | "success" | "error" | "validating"
-  ) {
+  function connectionBadge(status: "idle" | "testing" | "success" | "error" | "validating") {
     switch (status) {
       case "testing":
       case "validating":
@@ -254,9 +237,7 @@ export default function ConfiguracionPage() {
           <TabsTrigger value="general">General</TabsTrigger>
         </TabsList>
 
-        {/* ================================================================
-            Odoo Tab
-        ================================================================ */}
+        {/* Odoo Tab */}
         <TabsContent value="odoo">
           <Card>
             <CardHeader>
@@ -264,62 +245,32 @@ export default function ConfiguracionPage() {
                 Odoo ERP {connectionBadge(odooStatus)}
               </CardTitle>
               <CardDescription>
-                Configura la conexion a tu instancia de Odoo para sincronizar
-                facturas, pagos y contactos.
+                Configura la conexion a tu instancia de Odoo para sincronizar facturas, pagos y contactos.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
                   <Label htmlFor="odoo-url">URL del servidor</Label>
-                  <Input
-                    id="odoo-url"
-                    placeholder="https://mi-empresa.odoo.com"
-                    value={settings.odoo.url}
-                    onChange={(e) => update("odoo", "url", e.target.value)}
-                  />
+                  <Input id="odoo-url" placeholder="https://mi-empresa.odoo.com" value={settings.odoo.url} onChange={(e) => update("odoo", "url", e.target.value)} />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="odoo-db">Base de datos</Label>
-                  <Input
-                    id="odoo-db"
-                    placeholder="mi_empresa_db"
-                    value={settings.odoo.database}
-                    onChange={(e) => update("odoo", "database", e.target.value)}
-                  />
+                  <Input id="odoo-db" placeholder="mi_empresa_db" value={settings.odoo.database} onChange={(e) => update("odoo", "database", e.target.value)} />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="odoo-user">Usuario</Label>
-                  <Input
-                    id="odoo-user"
-                    placeholder="admin@mi-empresa.com"
-                    value={settings.odoo.user}
-                    onChange={(e) => update("odoo", "user", e.target.value)}
-                  />
+                  <Input id="odoo-user" placeholder="admin@mi-empresa.com" value={settings.odoo.user} onChange={(e) => update("odoo", "user", e.target.value)} />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="odoo-password">Contrasena</Label>
-                  <Input
-                    id="odoo-password"
-                    type="password"
-                    placeholder="••••••••"
-                    value={settings.odoo.password}
-                    onChange={(e) => update("odoo", "password", e.target.value)}
-                  />
+                  <Input id="odoo-password" type="password" placeholder="••••••••" value={settings.odoo.password} onChange={(e) => update("odoo", "password", e.target.value)} />
                 </div>
               </div>
-
               <Separator />
-
               <div className="flex gap-3">
-                <Button
-                  variant="outline"
-                  onClick={handleTestOdoo}
-                  disabled={odooStatus === "testing"}
-                >
-                  {odooStatus === "testing"
-                    ? "Probando..."
-                    : "Probar conexion"}
+                <Button variant="outline" onClick={handleTestOdoo} disabled={odooStatus === "testing"}>
+                  {odooStatus === "testing" ? "Probando..." : "Probar conexion"}
                 </Button>
                 <Button onClick={handleSaveOdoo}>Guardar</Button>
               </div>
@@ -327,9 +278,7 @@ export default function ConfiguracionPage() {
           </Card>
         </TabsContent>
 
-        {/* ================================================================
-            Fintoc / Banco Tab
-        ================================================================ */}
+        {/* Fintoc / Banco Tab */}
         <TabsContent value="fintoc">
           <Card>
             <CardHeader>
@@ -337,82 +286,36 @@ export default function ConfiguracionPage() {
                 Fintoc / Banco {connectionBadge(fintocStatus)}
               </CardTitle>
               <CardDescription>
-                Credenciales de Fintoc para ejecutar pagos y consultar
-                movimientos bancarios.
+                Credenciales de Fintoc para ejecutar pagos y consultar movimientos bancarios.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
                   <Label htmlFor="fintoc-secret">Secret Key</Label>
-                  <Input
-                    id="fintoc-secret"
-                    type="password"
-                    placeholder="sk_live_..."
-                    value={settings.fintoc.secretKey}
-                    onChange={(e) =>
-                      update("fintoc", "secretKey", e.target.value)
-                    }
-                  />
+                  <Input id="fintoc-secret" type="password" placeholder="sk_live_..." value={settings.fintoc.secretKey} onChange={(e) => update("fintoc", "secretKey", e.target.value)} />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="fintoc-public">Public Key</Label>
-                  <Input
-                    id="fintoc-public"
-                    placeholder="pk_live_..."
-                    value={settings.fintoc.publicKey}
-                    onChange={(e) =>
-                      update("fintoc", "publicKey", e.target.value)
-                    }
-                  />
+                  <Input id="fintoc-public" placeholder="pk_live_..." value={settings.fintoc.publicKey} onChange={(e) => update("fintoc", "publicKey", e.target.value)} />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="fintoc-webhook">Webhook Secret</Label>
-                  <Input
-                    id="fintoc-webhook"
-                    type="password"
-                    placeholder="whsec_..."
-                    value={settings.fintoc.webhookSecret}
-                    onChange={(e) =>
-                      update("fintoc", "webhookSecret", e.target.value)
-                    }
-                  />
+                  <Input id="fintoc-webhook" type="password" placeholder="whsec_..." value={settings.fintoc.webhookSecret} onChange={(e) => update("fintoc", "webhookSecret", e.target.value)} />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="fintoc-account">Account ID</Label>
-                  <Input
-                    id="fintoc-account"
-                    placeholder="acc_..."
-                    value={settings.fintoc.accountId}
-                    onChange={(e) =>
-                      update("fintoc", "accountId", e.target.value)
-                    }
-                  />
+                  <Input id="fintoc-account" placeholder="acc_..." value={settings.fintoc.accountId} onChange={(e) => update("fintoc", "accountId", e.target.value)} />
                 </div>
                 <div className="space-y-2 sm:col-span-2">
                   <Label htmlFor="fintoc-jws">Ruta llave JWS</Label>
-                  <Input
-                    id="fintoc-jws"
-                    placeholder="/etc/fintoc/jws_private.pem"
-                    value={settings.fintoc.jwsKeyPath}
-                    onChange={(e) =>
-                      update("fintoc", "jwsKeyPath", e.target.value)
-                    }
-                  />
+                  <Input id="fintoc-jws" placeholder="/etc/fintoc/jws_private.pem" value={settings.fintoc.jwsKeyPath} onChange={(e) => update("fintoc", "jwsKeyPath", e.target.value)} />
                 </div>
               </div>
-
               <Separator />
-
               <div className="flex gap-3">
-                <Button
-                  variant="outline"
-                  onClick={handleTestFintoc}
-                  disabled={fintocStatus === "testing"}
-                >
-                  {fintocStatus === "testing"
-                    ? "Probando..."
-                    : "Probar conexion"}
+                <Button variant="outline" onClick={handleTestFintoc} disabled={fintocStatus === "testing"}>
+                  {fintocStatus === "testing" ? "Probando..." : "Probar conexion"}
                 </Button>
                 <Button onClick={handleSaveFintoc}>Guardar</Button>
               </div>
@@ -420,9 +323,7 @@ export default function ConfiguracionPage() {
           </Card>
         </TabsContent>
 
-        {/* ================================================================
-            SAT Tab
-        ================================================================ */}
+        {/* SAT Tab */}
         <TabsContent value="sat">
           <Card>
             <CardHeader>
@@ -430,60 +331,30 @@ export default function ConfiguracionPage() {
                 SAT {connectionBadge(satStatus)}
               </CardTitle>
               <CardDescription>
-                Certificados de sello digital y proveedor PAC para timbrado
-                de CFDI.
+                Certificados de sello digital y proveedor PAC para timbrado de CFDI.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
                   <Label htmlFor="sat-rfc">RFC Emisor</Label>
-                  <Input
-                    id="sat-rfc"
-                    placeholder="XAXX010101000"
-                    value={settings.sat.rfcEmisor}
-                    onChange={(e) =>
-                      update("sat", "rfcEmisor", e.target.value.toUpperCase())
-                    }
-                    maxLength={13}
-                  />
+                  <Input id="sat-rfc" placeholder="XAXX010101000" value={settings.sat.rfcEmisor} onChange={(e) => update("sat", "rfcEmisor", e.target.value.toUpperCase())} maxLength={13} />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="sat-cert">Ruta certificado (.cer)</Label>
-                  <Input
-                    id="sat-cert"
-                    placeholder="/etc/sat/certificado.cer"
-                    value={settings.sat.certPath}
-                    onChange={(e) => update("sat", "certPath", e.target.value)}
-                  />
+                  <Input id="sat-cert" placeholder="/etc/sat/certificado.cer" value={settings.sat.certPath} onChange={(e) => update("sat", "certPath", e.target.value)} />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="sat-key">Ruta llave privada (.key)</Label>
-                  <Input
-                    id="sat-key"
-                    placeholder="/etc/sat/llave.key"
-                    value={settings.sat.keyPath}
-                    onChange={(e) => update("sat", "keyPath", e.target.value)}
-                  />
+                  <Input id="sat-key" placeholder="/etc/sat/llave.key" value={settings.sat.keyPath} onChange={(e) => update("sat", "keyPath", e.target.value)} />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="sat-key-password">Contrasena llave</Label>
-                  <Input
-                    id="sat-key-password"
-                    type="password"
-                    placeholder="••••••••"
-                    value={settings.sat.keyPassword}
-                    onChange={(e) =>
-                      update("sat", "keyPassword", e.target.value)
-                    }
-                  />
+                  <Input id="sat-key-password" type="password" placeholder="••••••••" value={settings.sat.keyPassword} onChange={(e) => update("sat", "keyPassword", e.target.value)} />
                 </div>
                 <div className="space-y-2 sm:col-span-2">
                   <Label htmlFor="sat-pac">Proveedor PAC</Label>
-                  <Select
-                    value={settings.sat.pac}
-                    onValueChange={(v) => update("sat", "pac", v)}
-                  >
+                  <Select value={settings.sat.pac} onValueChange={(v) => update("sat", "pac", v)}>
                     <SelectTrigger id="sat-pac" className="w-full">
                       <SelectValue placeholder="Selecciona un PAC" />
                     </SelectTrigger>
@@ -495,18 +366,10 @@ export default function ConfiguracionPage() {
                   </Select>
                 </div>
               </div>
-
               <Separator />
-
               <div className="flex gap-3">
-                <Button
-                  variant="outline"
-                  onClick={handleValidateSat}
-                  disabled={satStatus === "validating"}
-                >
-                  {satStatus === "validating"
-                    ? "Validando..."
-                    : "Validar certificado"}
+                <Button variant="outline" onClick={handleValidateSat} disabled={satStatus === "validating"}>
+                  {satStatus === "validating" ? "Validando..." : "Validar certificado"}
                 </Button>
                 <Button onClick={handleSaveSat}>Guardar</Button>
               </div>
@@ -514,9 +377,7 @@ export default function ConfiguracionPage() {
           </Card>
         </TabsContent>
 
-        {/* ================================================================
-            General Tab
-        ================================================================ */}
+        {/* General Tab */}
         <TabsContent value="general">
           <Card>
             <CardHeader>
@@ -526,25 +387,14 @@ export default function ConfiguracionPage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
-              {/* Company info */}
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
                   <Label htmlFor="gen-company">Nombre de empresa</Label>
-                  <Input
-                    id="gen-company"
-                    value={settings.general.companyName}
-                    onChange={(e) =>
-                      update("general", "companyName", e.target.value)
-                    }
-                  />
+                  <Input id="gen-company" value={settings.general.companyName} onChange={(e) => update("general", "companyName", e.target.value)} />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="gen-rfc">RFC</Label>
-                  <Input
-                    id="gen-rfc"
-                    value={settings.general.rfc}
-                    disabled
-                  />
+                  <Input id="gen-rfc" value={settings.general.rfc} disabled />
                 </div>
                 <div className="space-y-2">
                   <Label>Plan</Label>
@@ -553,95 +403,43 @@ export default function ConfiguracionPage() {
                   </div>
                 </div>
               </div>
-
               <Separator />
-
-              {/* Notifications */}
               <div>
                 <p className="text-sm font-medium mb-4">Notificaciones</p>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="space-y-2">
                     <Label htmlFor="gen-email">Email notificaciones</Label>
-                    <Input
-                      id="gen-email"
-                      type="email"
-                      placeholder="alertas@mi-empresa.com"
-                      value={settings.general.notificationEmail}
-                      onChange={(e) =>
-                        update("general", "notificationEmail", e.target.value)
-                      }
-                    />
+                    <Input id="gen-email" type="email" placeholder="alertas@mi-empresa.com" value={settings.general.notificationEmail} onChange={(e) => update("general", "notificationEmail", e.target.value)} />
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="gen-slack">Slack webhook URL</Label>
-                    <Input
-                      id="gen-slack"
-                      placeholder="https://hooks.slack.com/services/..."
-                      value={settings.general.slackWebhook}
-                      onChange={(e) =>
-                        update("general", "slackWebhook", e.target.value)
-                      }
-                    />
+                    <Input id="gen-slack" placeholder="https://hooks.slack.com/services/..." value={settings.general.slackWebhook} onChange={(e) => update("general", "slackWebhook", e.target.value)} />
                   </div>
                 </div>
               </div>
-
               <Separator />
-
-              {/* SMTP */}
               <div>
                 <p className="text-sm font-medium mb-4">Configuracion SMTP</p>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="space-y-2">
                     <Label htmlFor="smtp-host">Host</Label>
-                    <Input
-                      id="smtp-host"
-                      placeholder="smtp.gmail.com"
-                      value={settings.general.smtpHost}
-                      onChange={(e) =>
-                        update("general", "smtpHost", e.target.value)
-                      }
-                    />
+                    <Input id="smtp-host" placeholder="smtp.gmail.com" value={settings.general.smtpHost} onChange={(e) => update("general", "smtpHost", e.target.value)} />
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="smtp-port">Puerto</Label>
-                    <Input
-                      id="smtp-port"
-                      placeholder="587"
-                      value={settings.general.smtpPort}
-                      onChange={(e) =>
-                        update("general", "smtpPort", e.target.value)
-                      }
-                    />
+                    <Input id="smtp-port" placeholder="587" value={settings.general.smtpPort} onChange={(e) => update("general", "smtpPort", e.target.value)} />
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="smtp-user">Usuario</Label>
-                    <Input
-                      id="smtp-user"
-                      placeholder="noreply@mi-empresa.com"
-                      value={settings.general.smtpUser}
-                      onChange={(e) =>
-                        update("general", "smtpUser", e.target.value)
-                      }
-                    />
+                    <Input id="smtp-user" placeholder="noreply@mi-empresa.com" value={settings.general.smtpUser} onChange={(e) => update("general", "smtpUser", e.target.value)} />
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="smtp-password">Contrasena</Label>
-                    <Input
-                      id="smtp-password"
-                      type="password"
-                      placeholder="••••••••"
-                      value={settings.general.smtpPassword}
-                      onChange={(e) =>
-                        update("general", "smtpPassword", e.target.value)
-                      }
-                    />
+                    <Input id="smtp-password" type="password" placeholder="••••••••" value={settings.general.smtpPassword} onChange={(e) => update("general", "smtpPassword", e.target.value)} />
                   </div>
                 </div>
               </div>
-
               <Separator />
-
               <div className="flex gap-3">
                 <Button onClick={handleSaveGeneral}>Guardar</Button>
               </div>

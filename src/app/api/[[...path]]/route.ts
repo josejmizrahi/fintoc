@@ -1,6 +1,54 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { verifyToken } from "@/lib/auth-server";
 import { hasDB, query, insert, update } from "@/lib/db";
+
+// ── Zod schemas for input validation ──
+
+const paymentSchema = z.object({
+  amount: z.number().positive("Monto debe ser positivo"),
+  currency: z.string().default("MXN"),
+  partner_name: z.string().min(1, "Nombre del proveedor requerido"),
+  partner_rfc: z.string().optional(),
+  clabe: z.string().regex(/^\d{18}$/, "CLABE debe tener 18 digitos").optional(),
+  comment: z.string().optional(),
+});
+
+const expenseSchema = z.object({
+  employee_name: z.string().min(1),
+  employee_email: z.string().email().optional(),
+  category: z.string().min(1),
+  description: z.string().optional(),
+  amount: z.number().positive(),
+  currency: z.string().default("MXN"),
+});
+
+const budgetSchema = z.object({
+  name: z.string().min(1),
+  category: z.string().optional(),
+  period_start: z.string(),
+  period_end: z.string(),
+  amount_budgeted: z.number().positive(),
+  alert_threshold_pct: z.number().min(0).max(100).default(80),
+});
+
+const approvalRuleSchema = z.object({
+  name: z.string().min(1),
+  min_amount: z.number().min(0).default(0),
+  max_amount: z.number().nullable().optional(),
+  required_approvers: z.number().min(1).default(1),
+  approver_emails: z.array(z.string().email()).default([]),
+  auto_approve_below: z.number().nullable().optional(),
+});
+
+const clabeSchema = z.object({
+  clabe: z.string().regex(/^\d{18}$/, "CLABE debe tener 18 digitos"),
+});
+
+function zodError(error: z.ZodError): Response {
+  const msg = error.issues.map((i) => i.message).join(", ");
+  return NextResponse.json({ detail: msg }, { status: 400 });
+}
 
 /**
  * Catch-all API route — uses Supabase when configured, otherwise mock data.
@@ -417,6 +465,45 @@ async function dbGet(path: string, companyId: number | null): Promise<unknown | 
       return data || [];
     }
 
+    // Collections
+    if (path === "collections/pending") {
+      const { data } = await query("invoices", { match: { company_id: companyId, type: "receivable", status: "open" }, order: { column: "date_due", ascending: true } });
+      return data || [];
+    }
+    if (path === "collections/overdue") {
+      const { data } = await query("invoices", { match: { company_id: companyId, type: "receivable", status: "overdue" }, order: { column: "date_due", ascending: true } });
+      return data || [];
+    }
+    if (path === "collections/aging") {
+      const { data } = await query("invoices", { match: { company_id: companyId, type: "receivable" } });
+      const now = new Date();
+      const buckets = { "0-30": 0, "31-60": 0, "61-90": 0, "90+": 0 };
+      for (const inv of data || []) {
+        if (inv.status === "paid") continue;
+        const due = new Date(inv.date_due as string);
+        const daysPast = Math.max(0, Math.floor((now.getTime() - due.getTime()) / 86400000));
+        const amount = Number(inv.amount_residual) || 0;
+        if (daysPast <= 30) buckets["0-30"] += amount;
+        else if (daysPast <= 60) buckets["31-60"] += amount;
+        else if (daysPast <= 90) buckets["61-90"] += amount;
+        else buckets["90+"] += amount;
+      }
+      return buckets;
+    }
+    m = matchPath(path, "collections/customer/:id");
+    if (m) {
+      const { data } = await query("customers", { match: { id: Number(m.id), company_id: companyId }, single: true });
+      return data;
+    }
+
+    // Integrations status (for settings page)
+    if (path === "integrations" || path === "integrations/") {
+      try {
+        const { data } = await query("integrations", { match: { company_id: companyId } });
+        return data || [];
+      } catch { return []; }
+    }
+
   } catch (e) {
     console.error("DB query error:", e);
     return null;
@@ -425,18 +512,22 @@ async function dbGet(path: string, companyId: number | null): Promise<unknown | 
   return null;
 }
 
-async function dbPost(path: string, body: unknown, companyId: number | null): Promise<unknown | null> {
+async function dbPost(path: string, body: unknown, companyId: number | null): Promise<Response | unknown | null> {
   if (!hasDB() || !companyId) return null;
   const b = body as Record<string, unknown>;
 
   try {
     // Payments
     if (path === "payments/vendor") {
+      const parsed = paymentSchema.safeParse(b);
+      if (!parsed.success) return zodError(parsed.error);
+      const v = parsed.data;
       const { data } = await insert("payments", {
         company_id: companyId, direction: "outbound", status: "pending_approval",
-        amount: b.amount, currency: (b.currency as string) || "MXN",
-        partner_name: b.partner_name, partner_rfc: b.partner_rfc,
-        clabe_destination: b.clabe, comment: b.comment, reference_id: `PAY-${Date.now()}`,
+        amount: v.amount, currency: v.currency,
+        partner_name: v.partner_name, partner_rfc: v.partner_rfc || null,
+        clabe_destination: v.clabe || null, comment: v.comment || null,
+        reference_id: `PAY-${Date.now()}`,
       });
       return data?.[0];
     }
@@ -453,9 +544,12 @@ async function dbPost(path: string, body: unknown, companyId: number | null): Pr
 
     // Expenses
     if (path === "expenses" || path === "expenses/") {
+      const parsed = expenseSchema.safeParse(b);
+      if (!parsed.success) return zodError(parsed.error);
+      const v = parsed.data;
       const { data } = await insert("expenses", {
-        company_id: companyId, employee_name: b.employee_name, employee_email: b.employee_email,
-        category: b.category, description: b.description, amount: b.amount, currency: (b.currency as string) || "MXN",
+        company_id: companyId, employee_name: v.employee_name, employee_email: v.employee_email || null,
+        category: v.category, description: v.description || null, amount: v.amount, currency: v.currency,
       });
       return data?.[0];
     }
@@ -469,10 +563,13 @@ async function dbPost(path: string, body: unknown, companyId: number | null): Pr
 
     // Approvals
     if (path === "approvals/rules") {
+      const parsed = approvalRuleSchema.safeParse(b);
+      if (!parsed.success) return zodError(parsed.error);
+      const v = parsed.data;
       const { data } = await insert("approval_rules", {
-        company_id: companyId, name: b.name, min_amount: b.min_amount || 0,
-        max_amount: b.max_amount || null, required_approvers: b.required_approvers || 1,
-        approver_emails: b.approver_emails || [], auto_approve_below: b.auto_approve_below || null,
+        company_id: companyId, name: v.name, min_amount: v.min_amount,
+        max_amount: v.max_amount || null, required_approvers: v.required_approvers,
+        approver_emails: v.approver_emails, auto_approve_below: v.auto_approve_below || null,
       });
       return data?.[0];
     }
@@ -489,22 +586,80 @@ async function dbPost(path: string, body: unknown, companyId: number | null): Pr
 
     // Budgets
     if (path === "budgets" || path === "budgets/") {
+      const parsed = budgetSchema.safeParse(b);
+      if (!parsed.success) return zodError(parsed.error);
+      const v = parsed.data;
       const { data } = await insert("budgets", {
-        company_id: companyId, name: b.name, category: b.category,
-        period_start: b.period_start, period_end: b.period_end,
-        amount_budgeted: b.amount_budgeted, alert_threshold_pct: b.alert_threshold_pct || 80,
+        company_id: companyId, name: v.name, category: v.category || null,
+        period_start: v.period_start, period_end: v.period_end,
+        amount_budgeted: v.amount_budgeted, alert_threshold_pct: v.alert_threshold_pct,
       });
       return data?.[0];
     }
 
-    // Reconciliation
-    if (path === "reconciliation/fintoc-odoo" || path === "reconciliation/sat") {
-      const rType = path.includes("fintoc") ? "fintoc-odoo" : "sat";
-      const { data } = await insert("reconciliations", {
-        company_id: companyId, type: rType, status: "matched",
-        total_transactions: 45, matched: 42, unmatched: 3, amount_matched: 1850000,
-      });
-      return data?.[0];
+    // Vendor CLABE set
+    m = matchPath(path, "vendors/:id/clabe");
+    if (m) {
+      const parsed = clabeSchema.safeParse(b);
+      if (!parsed.success) return zodError(parsed.error);
+      const { data } = await update("vendors", { clabe: parsed.data.clabe }, { id: Number(m.id), company_id: companyId });
+      return data?.[0] || { clabe: parsed.data.clabe };
+    }
+
+    // Vendor CLABE verify
+    m = matchPath(path, "vendors/:id/verify-clabe");
+    if (m) {
+      const { data: vendor } = await query("vendors", { select: "clabe", match: { id: Number(m.id), company_id: companyId }, single: true });
+      if (!vendor?.clabe) return { valid: false, message: "Proveedor sin CLABE registrada" };
+      // Basic CLABE validation: 18 digits, valid check digit
+      const clabe = vendor.clabe as string;
+      const valid = /^\d{18}$/.test(clabe);
+      return { valid, clabe, message: valid ? "CLABE valida" : "CLABE con formato invalido" };
+    }
+
+    // Customer CLABE set
+    m = matchPath(path, "customers/:id/clabe");
+    if (m) {
+      const parsed = clabeSchema.safeParse(b);
+      if (!parsed.success) return zodError(parsed.error);
+      const { data } = await update("customers", { clabe: parsed.data.clabe }, { id: Number(m.id), company_id: companyId });
+      return data?.[0] || { clabe: parsed.data.clabe };
+    }
+
+    // Collections — customer CLABE setup
+    m = matchPath(path, "collections/customer/:id/clabe");
+    if (m) {
+      const clabe = `646180${Date.now().toString().slice(-12)}`;
+      const { data } = await update("customers", { clabe }, { id: Number(m.id), company_id: companyId });
+      return { clabe, partner_id: Number(m.id), ...(data?.[0] || {}) };
+    }
+
+    // Collections — setup all CLABEs
+    if (path === "collections/clabes/setup-all") {
+      const { data: customers } = await query("customers", { match: { company_id: companyId } });
+      let created = 0;
+      for (const c of customers || []) {
+        if (!c.clabe) {
+          const clabe = `646180${Date.now().toString().slice(-12)}`;
+          await update("customers", { clabe }, { id: c.id as number, company_id: companyId });
+          created++;
+        }
+      }
+      return { created, total: (customers || []).length };
+    }
+
+    // Collections — sync CLABEs
+    if (path === "collections/clabes/sync") {
+      const { data: customers } = await query("customers", { match: { company_id: companyId } });
+      const synced = (customers || []).filter((c: Record<string, unknown>) => c.clabe).length;
+      return { synced };
+    }
+
+    // Collections — payment link
+    if (path === "collections/payment-link") {
+      const amount = Number(b.amount) || 0;
+      const partnerId = Number(b.partner_id) || 0;
+      return { link: `https://pay.payana.mx/${companyId}/${partnerId}/${amount}`, amount, partner_id: partnerId };
     }
 
     // Notifications
@@ -640,14 +795,94 @@ export async function POST(req: NextRequest) {
   let body = {};
   try { body = await req.json(); } catch { /* no body */ }
   const dbResult = await dbPost(path, body, companyId);
+  if (dbResult instanceof Response) return dbResult; // Zod validation error
   if (dbResult !== null) return NextResponse.json(dbResult);
   return mockPost(path);
 }
 
 export async function PUT(req: NextRequest) {
-  return NextResponse.json({ success: true });
+  const path = cleanPath(req);
+  const companyId = await getCompanyId(req);
+  if (!companyId) return NextResponse.json({ detail: "No autorizado" }, { status: 401 });
+  if (!hasDB()) return NextResponse.json({ detail: "DB no configurada" }, { status: 500 });
+
+  let body: Record<string, unknown> = {};
+  try { body = await req.json(); } catch { /* no body */ }
+
+  try {
+    let m = matchPath(path, "vendors/:id");
+    if (m) {
+      const { data } = await update("vendors", body, { id: Number(m.id), company_id: companyId });
+      return NextResponse.json(data?.[0] || { success: true });
+    }
+    m = matchPath(path, "customers/:id");
+    if (m) {
+      const { data } = await update("customers", body, { id: Number(m.id), company_id: companyId });
+      return NextResponse.json(data?.[0] || { success: true });
+    }
+    m = matchPath(path, "payments/:id");
+    if (m) {
+      const { data } = await update("payments", { ...body, updated_at: new Date().toISOString() }, { id: Number(m.id), company_id: companyId });
+      return NextResponse.json(data?.[0] || { success: true });
+    }
+    m = matchPath(path, "invoices/:id");
+    if (m) {
+      const { data } = await update("invoices", body, { id: Number(m.id), company_id: companyId });
+      return NextResponse.json(data?.[0] || { success: true });
+    }
+    m = matchPath(path, "expenses/:id");
+    if (m) {
+      const { data } = await update("expenses", body, { id: Number(m.id), company_id: companyId });
+      return NextResponse.json(data?.[0] || { success: true });
+    }
+    m = matchPath(path, "budgets/:id");
+    if (m) {
+      const { data } = await update("budgets", body, { id: Number(m.id), company_id: companyId });
+      return NextResponse.json(data?.[0] || { success: true });
+    }
+    m = matchPath(path, "approval-rules/:id");
+    if (m) {
+      const { data } = await update("approval_rules", body, { id: Number(m.id), company_id: companyId });
+      return NextResponse.json(data?.[0] || { success: true });
+    }
+  } catch (e) {
+    console.error("DB put error:", e);
+    return NextResponse.json({ detail: "Error al actualizar" }, { status: 500 });
+  }
+
+  return NextResponse.json({ detail: "Ruta no encontrada" }, { status: 404 });
 }
 
 export async function DELETE(req: NextRequest) {
-  return NextResponse.json({ success: true });
+  const path = cleanPath(req);
+  const companyId = await getCompanyId(req);
+  if (!companyId) return NextResponse.json({ detail: "No autorizado" }, { status: 401 });
+  if (!hasDB()) return NextResponse.json({ detail: "DB no configurada" }, { status: 500 });
+
+  try {
+    // Generic delete for all tenant-scoped tables
+    const tables: Record<string, string> = {
+      payments: "payments",
+      invoices: "invoices",
+      vendors: "vendors",
+      customers: "customers",
+      expenses: "expenses",
+      budgets: "budgets",
+      "approval-rules": "approval_rules",
+      notifications: "notifications",
+    };
+
+    for (const [prefix, table] of Object.entries(tables)) {
+      const m = matchPath(path, `${prefix}/:id`);
+      if (m) {
+        await update(table, { is_active: false }, { id: Number(m.id), company_id: companyId });
+        return NextResponse.json({ success: true, id: Number(m.id) });
+      }
+    }
+  } catch (e) {
+    console.error("DB delete error:", e);
+    return NextResponse.json({ detail: "Error al eliminar" }, { status: 500 });
+  }
+
+  return NextResponse.json({ detail: "Ruta no encontrada" }, { status: 404 });
 }
