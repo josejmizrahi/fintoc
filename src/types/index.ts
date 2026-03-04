@@ -91,7 +91,7 @@ export interface Invoice {
 export interface Vendor {
   id: number;
   name: string;
-  vat?: string;
+  rfc?: string;
   email?: string;
   clabe?: string;
 }
@@ -99,7 +99,7 @@ export interface Vendor {
 export interface Customer {
   id: number;
   name: string;
-  vat?: string;
+  rfc?: string;
   email?: string;
   clabe?: string;
 }

@@ -222,7 +222,7 @@ function VendorDetailDialog({
               </div>
               <div className="grid grid-cols-[120px_1fr] gap-2 text-sm">
                 <span className="font-medium text-muted-foreground">RFC</span>
-                <span className="font-mono">{vendor.vat || vendor.rfc || "-"}</span>
+                <span className="font-mono">{vendor.rfc || "-"}</span>
               </div>
               <div className="grid grid-cols-[120px_1fr] gap-2 text-sm">
                 <span className="font-medium text-muted-foreground">Email</span>
@@ -410,7 +410,7 @@ export default function ProveedoresPage() {
                       </button>
                     </TableCell>
                     <TableCell className="font-mono text-sm">
-                      {vendor.vat || "-"}
+                      {vendor.rfc || "-"}
                     </TableCell>
                     <TableCell className="text-muted-foreground">
                       {vendor.email || "-"}

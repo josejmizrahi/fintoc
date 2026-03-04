@@ -102,7 +102,7 @@ export default function LoginPage() {
       });
       loginWithToken(res.access_token, res.user, res.tenant);
       toast.success(`Empresa ${regCompanyName} registrada correctamente`);
-      router.push("/");
+      router.push("/onboarding");
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "Error al registrar"

@@ -96,6 +96,10 @@ function NewBudgetDialog({ open, onOpenChange, onSuccess }: NewBudgetDialogProps
       toast.error("Completa todos los campos requeridos");
       return;
     }
+    if (periodStart >= periodEnd) {
+      toast.error("La fecha de inicio debe ser anterior a la fecha de fin");
+      return;
+    }
     setSubmitting(true);
     try {
       await api.budgets.create({

@@ -385,7 +385,7 @@ export default function ClientesPage() {
                     </TableCell>
                     <TableCell>
                       <Badge variant="outline" className="font-mono">
-                        {customer.vat || "-"}
+                        {customer.rfc || "-"}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-muted-foreground">

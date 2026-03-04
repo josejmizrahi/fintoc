@@ -416,6 +416,7 @@ export default function GastosPage() {
                       {formatDate(expense.created_at)}
                     </TableCell>
                     <TableCell className="text-right">
+                      {["draft", "submitted", "approved"].includes(expense.status) ? (
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Button
@@ -431,27 +432,36 @@ export default function GastosPage() {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => handleAction(expense.id, "submit")}>
-                            <Send className="mr-2 size-4" />
-                            Enviar
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => handleAction(expense.id, "approve")}>
-                            <CheckCircle className="mr-2 size-4" />
-                            Aprobar
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            variant="destructive"
-                            onClick={() => handleAction(expense.id, "reject")}
-                          >
-                            <XCircle className="mr-2 size-4" />
-                            Rechazar
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => handleAction(expense.id, "pay")}>
-                            <Banknote className="mr-2 size-4" />
-                            Pagar
-                          </DropdownMenuItem>
+                          {expense.status === "draft" && (
+                            <DropdownMenuItem onClick={() => handleAction(expense.id, "submit")}>
+                              <Send className="mr-2 size-4" />
+                              Enviar
+                            </DropdownMenuItem>
+                          )}
+                          {expense.status === "submitted" && (
+                            <>
+                              <DropdownMenuItem onClick={() => handleAction(expense.id, "approve")}>
+                                <CheckCircle className="mr-2 size-4" />
+                                Aprobar
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                variant="destructive"
+                                onClick={() => handleAction(expense.id, "reject")}
+                              >
+                                <XCircle className="mr-2 size-4" />
+                                Rechazar
+                              </DropdownMenuItem>
+                            </>
+                          )}
+                          {expense.status === "approved" && (
+                            <DropdownMenuItem onClick={() => handleAction(expense.id, "pay")}>
+                              <Banknote className="mr-2 size-4" />
+                              Pagar
+                            </DropdownMenuItem>
+                          )}
                         </DropdownMenuContent>
                       </DropdownMenu>
+                      ) : null}
                     </TableCell>
                   </TableRow>
                 ))}
