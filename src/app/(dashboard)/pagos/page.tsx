@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { api } from "@/lib/api";
 import { Payment } from "@/types";
 import { toast } from "sonner";
@@ -10,6 +10,7 @@ import {
   Loader2,
   CalendarClock,
   CreditCard,
+  RefreshCw,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -52,6 +53,8 @@ type BadgeVariant =
 
 const STATUS_BADGE: Record<string, { label: string; variant: BadgeVariant }> = {
   completed: { label: "Completado", variant: "default" },
+  confirmed: { label: "Confirmado", variant: "default" },
+  processing: { label: "Procesando", variant: "secondary" },
   pending: { label: "Pendiente", variant: "secondary" },
   pending_approval: { label: "Por aprobar", variant: "outline" },
   failed: { label: "Fallido", variant: "destructive" },
@@ -214,6 +217,37 @@ export default function PagosPage() {
     fetchPayments();
   }, []);
 
+  // Auto-poll processing payments every 15s
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => {
+    const hasProcessing = payments.some((p) => p.status === "processing");
+    if (hasProcessing && !pollingRef.current) {
+      pollingRef.current = setInterval(async () => {
+        try {
+          await api.payments.pollStuck();
+          fetchPayments();
+        } catch { /* ignore */ }
+      }, 15000);
+    } else if (!hasProcessing && pollingRef.current) {
+      clearInterval(pollingRef.current);
+      pollingRef.current = null;
+    }
+    return () => { if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null; } };
+  }, [payments]);
+
+  const [pollingId, setPollingId] = useState<number | null>(null);
+  async function handlePollStatus(id: number) {
+    setPollingId(id);
+    try {
+      const result = await api.payments.pollStatus(id);
+      if (result.status === "confirmed") toast.success("Pago confirmado por Fintoc");
+      else if (result.status === "failed") toast.error("Pago falló en Fintoc");
+      else toast.info("Pago aún en proceso");
+      fetchPayments();
+    } catch { toast.error("Error al verificar status"); }
+    finally { setPollingId(null); }
+  }
+
   async function handleExecute(id: number) {
     setExecutingId(id);
     try {
@@ -310,7 +344,7 @@ export default function PagosPage() {
                         <TableCell className="text-muted-foreground">
                           {formatDate(p.created_at)}
                         </TableCell>
-                        <TableCell className="text-right">
+                        <TableCell className="text-right space-x-1">
                           {p.status === "pending_approval" && (
                             <Button
                               variant="outline"
@@ -324,6 +358,21 @@ export default function PagosPage() {
                                 <Play className="mr-1.5 size-3.5" />
                               )}
                               Ejecutar
+                            </Button>
+                          )}
+                          {p.status === "processing" && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handlePollStatus(p.id)}
+                              disabled={pollingId === p.id}
+                            >
+                              {pollingId === p.id ? (
+                                <Loader2 className="mr-1.5 size-3.5 animate-spin" />
+                              ) : (
+                                <RefreshCw className="mr-1.5 size-3.5" />
+                              )}
+                              Verificar
                             </Button>
                           )}
                         </TableCell>

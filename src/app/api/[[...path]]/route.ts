@@ -3,7 +3,7 @@ import { z } from "zod";
 import { hasDB, query, insert, update } from "@/lib/db";
 import { getCompanyId } from "@/lib/auth-helpers";
 import { validateCfdiAgainstSat, parseCfdiXml } from "@/lib/sat";
-import { fintocPost } from "@/lib/fintoc";
+import { fintocGet, fintocPost } from "@/lib/fintoc";
 
 // ── Zod schemas ──
 
@@ -592,6 +592,68 @@ async function dbPost(path: string, body: unknown, companyId: number | null): Pr
       return data?.[0];
     }
 
+    // Payments — poll status from Fintoc for stuck "processing" payments
+    m = matchPath(path, "payments/:id/poll-status");
+    if (m) {
+      const { data: payment } = await query("payments", { match: { id: Number(m.id), company_id: companyId }, single: true });
+      if (!payment) return NextResponse.json({ detail: "Pago no encontrado" }, { status: 404 });
+      if (payment.status !== "processing") return payment;
+
+      const piId = payment.fintoc_payment_intent_id as string;
+      if (!piId) return payment;
+
+      try {
+        const { data: fintocInt } = await query("integrations", { match: { company_id: companyId, provider: "fintoc" }, single: true });
+        const fintocKey = fintocInt?.config ? (fintocInt.config as Record<string, string>).secretKey : null;
+        if (fintocKey && fintocKey !== "••••••••") {
+          const pi = await fintocGet(`/payment_intents/${piId}`, fintocKey) as Record<string, unknown>;
+          const piStatus = (pi.status as string) || "";
+          if (piStatus === "succeeded") {
+            await update("payments", { status: "confirmed", updated_at: new Date().toISOString() }, { id: Number(m.id), company_id: companyId });
+            return { ...payment, status: "confirmed" };
+          } else if (piStatus === "failed" || piStatus === "cancelled") {
+            await update("payments", { status: "failed", updated_at: new Date().toISOString() }, { id: Number(m.id), company_id: companyId });
+            return { ...payment, status: "failed" };
+          }
+          return { ...payment, fintoc_status: piStatus };
+        }
+      } catch { /* Fintoc unreachable */ }
+      return payment;
+    }
+
+    // Payments — bulk poll all stuck "processing" payments
+    if (path === "payments/poll-stuck") {
+      const { data: stuck } = await query("payments", { match: { company_id: companyId, status: "processing" } });
+      if (!stuck?.length) return { updated: 0, payments: [] };
+
+      let fintocKey: string | null = null;
+      try {
+        const { data: fintocInt } = await query("integrations", { match: { company_id: companyId, provider: "fintoc" }, single: true });
+        fintocKey = fintocInt?.config ? (fintocInt.config as Record<string, string>).secretKey : null;
+        if (fintocKey === "••••••••") fintocKey = null;
+      } catch { /* no integration */ }
+
+      const results: Record<string, unknown>[] = [];
+      for (const p of stuck) {
+        const piId = p.fintoc_payment_intent_id as string;
+        if (!piId || !fintocKey) { results.push({ id: p.id, status: "processing", reason: "no_fintoc_id" }); continue; }
+        try {
+          const pi = await fintocGet(`/payment_intents/${piId}`, fintocKey) as Record<string, unknown>;
+          const piStatus = (pi.status as string) || "";
+          if (piStatus === "succeeded") {
+            await update("payments", { status: "confirmed", updated_at: new Date().toISOString() }, { id: p.id, company_id: companyId });
+            results.push({ id: p.id, status: "confirmed" });
+          } else if (piStatus === "failed" || piStatus === "cancelled") {
+            await update("payments", { status: "failed", updated_at: new Date().toISOString() }, { id: p.id, company_id: companyId });
+            results.push({ id: p.id, status: "failed" });
+          } else {
+            results.push({ id: p.id, status: "processing", fintoc_status: piStatus });
+          }
+        } catch { results.push({ id: p.id, status: "processing", reason: "fintoc_error" }); }
+      }
+      return { updated: results.filter(r => r.status !== "processing").length, payments: results };
+    }
+
     // Payments — schedule
     m = matchPath(path, "payments/:id/schedule");
     if (m) {
@@ -753,6 +815,34 @@ async function dbPost(path: string, body: unknown, companyId: number | null): Pr
     if (path === "notifications/mark-all-read") {
       await update("notifications", { is_read: true }, { company_id: companyId });
       return { success: true };
+    }
+
+    // Fintoc — exchange token for link_token (fiscal widget flow)
+    if (path === "fintoc/exchange") {
+      const exchangeToken = b.exchange_token as string;
+      if (!exchangeToken) return NextResponse.json({ detail: "exchange_token requerido" }, { status: 400 });
+
+      try {
+        const { data: fintocInt } = await query("integrations", { match: { company_id: companyId, provider: "fintoc" }, single: true });
+        const fintocKey = fintocInt?.config ? (fintocInt.config as Record<string, string>).secretKey : null;
+        if (!fintocKey || fintocKey === "••••••••") return NextResponse.json({ detail: "Fintoc no configurado" }, { status: 400 });
+
+        const result = await fintocPost("/links/exchange", fintocKey, { exchange_token: exchangeToken });
+        if (!result.ok) return NextResponse.json({ detail: result.error || "Error al intercambiar token" }, { status: 400 });
+
+        const linkToken = (result.data as Record<string, unknown>)?.link_token as string;
+        if (linkToken) {
+          const currentConfig = (fintocInt?.config as Record<string, string>) || {};
+          await update("integrations", {
+            config: { ...currentConfig, linkToken },
+            updated_at: new Date().toISOString(),
+          }, { company_id: companyId, provider: "fintoc" });
+        }
+
+        return { success: true, link_token: linkToken, link: result.data };
+      } catch (e) {
+        return NextResponse.json({ detail: e instanceof Error ? e.message : "Error" }, { status: 500 });
+      }
     }
 
     // SAT — CFDI validation

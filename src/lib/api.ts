@@ -80,6 +80,8 @@ export const api = {
     payVendor: (data: any) => request<any>("/api/payments/vendor", { method: "POST", body: JSON.stringify(data) }),
     batch: (data: any) => request<any>("/api/payments/batch", { method: "POST", body: JSON.stringify(data) }),
     execute: (id: number) => request<any>(`/api/payments/${id}/execute`, { method: "POST" }),
+    pollStatus: (id: number) => request<any>(`/api/payments/${id}/poll-status`, { method: "POST" }),
+    pollStuck: () => request<any>("/api/payments/poll-stuck", { method: "POST" }),
     schedule: (id: number, date: string) => request<any>(`/api/payments/${id}/schedule?scheduled_date=${date}`, { method: "POST" }),
     scheduled: () => request<any[]>("/api/payments/scheduled/list"),
   },
@@ -199,6 +201,12 @@ export const api = {
   companies: {
     list: () => request<any[]>("/api/companies/"),
     create: (data: any) => request<any>(`/api/companies/?name=${data.name}&rfc=${data.rfc}`, { method: "POST" }),
+  },
+
+  // Fintoc Widget
+  fintoc: {
+    exchange: (exchangeToken: string) =>
+      request<any>("/api/fintoc/exchange", { method: "POST", body: JSON.stringify({ exchange_token: exchangeToken }) }),
   },
 
   // Onboarding
