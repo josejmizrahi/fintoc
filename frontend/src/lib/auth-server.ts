@@ -51,38 +51,42 @@ let nextCompanyId = 1;
 // ── DB-backed functions ──
 
 export async function findUserByEmail(email: string): Promise<StoredUser | undefined> {
+  const normalizedEmail = email.toLowerCase().trim();
+
   if (hasDB()) {
-    try {
-      // Get user
-      const { data: user } = await query("users", {
-        select: "id, email, password_hash, name, role, company_id",
-        match: { email },
-        single: true,
-      });
-      if (!user) return undefined;
+    // Get user
+    const { data: user, error: userError } = await query("users", {
+      select: "id, email, password_hash, name, role, company_id",
+      match: { email: normalizedEmail },
+      single: true,
+    });
 
-      // Get company
-      const { data: company } = await query("companies", {
-        select: "name, rfc",
-        match: { id: user.company_id },
-        single: true,
-      });
-
-      return {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        role: user.role,
-        password: user.password_hash,
-        company_id: user.company_id,
-        company_name: company?.name || "",
-        company_rfc: company?.rfc || "",
-      };
-    } catch {
-      // DB error — fall through to in-memory
+    if (userError && !userError.message?.includes("rows returned")) {
+      console.error("DB findUserByEmail error:", userError.message);
     }
+
+    if (!user) return undefined;
+
+    // Get company
+    const { data: company } = await query("companies", {
+      select: "name, rfc",
+      match: { id: user.company_id },
+      single: true,
+    });
+
+    return {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      role: user.role,
+      password: user.password_hash,
+      company_id: user.company_id,
+      company_name: company?.name || "",
+      company_rfc: company?.rfc || "",
+    };
   }
-  return memUsers.find((u) => u.email === email);
+
+  return memUsers.find((u) => u.email === normalizedEmail);
 }
 
 export async function registerUser(
@@ -92,53 +96,57 @@ export async function registerUser(
   companyName: string,
   rfc: string
 ): Promise<StoredUser> {
-  const existing = await findUserByEmail(email);
+  const normalizedEmail = email.toLowerCase().trim();
+
+  const existing = await findUserByEmail(normalizedEmail);
   if (existing) {
     throw new Error("El correo ya está registrado");
   }
 
   if (hasDB()) {
-    try {
-      // Create or get company
-      const { data: companies } = await insert("companies", { name: companyName, rfc });
-      const companyId = companies?.[0]?.id;
-      if (!companyId) throw new Error("Error creating company");
-
-      // Create user
-      const { data: users } = await insert("users", {
-        email,
-        password_hash: password,
-        name,
-        role: "admin",
-        company_id: companyId,
-      });
-      if (!users?.[0]) throw new Error("Error creating user");
-
-      // Seed demo data for this company
-      await seedDB(companyId);
-
-      return {
-        id: users[0].id,
-        email,
-        name,
-        role: "admin",
-        password,
-        company_id: companyId,
-        company_name: companyName,
-        company_rfc: rfc,
-      };
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "DB error";
-      if (msg.includes("ya está registrado")) throw e;
-      console.error("DB register error, falling back to memory:", msg);
+    // Create or get company
+    const { data: companies, error: companyError } = await insert("companies", { name: companyName, rfc });
+    if (companyError) {
+      console.error("DB company insert error:", companyError.message);
+      throw new Error(`Error al crear empresa: ${companyError.message}`);
     }
+    const companyId = companies?.[0]?.id;
+    if (!companyId) throw new Error("Error al crear empresa");
+
+    // Create user
+    const { data: users, error: userError } = await insert("users", {
+      email: normalizedEmail,
+      password_hash: password,
+      name,
+      role: "admin",
+      company_id: companyId,
+    });
+    if (userError) {
+      console.error("DB user insert error:", userError.message);
+      throw new Error(`Error al crear usuario: ${userError.message}`);
+    }
+    if (!users?.[0]) throw new Error("Error al crear usuario");
+
+    // Seed demo data for this company
+    await seedDB(companyId);
+
+    return {
+      id: users[0].id,
+      email: normalizedEmail,
+      name,
+      role: "admin",
+      password,
+      company_id: companyId,
+      company_name: companyName,
+      company_rfc: rfc,
+    };
   }
 
-  // In-memory fallback
+  // In-memory fallback (only when no DB configured)
   const companyId = nextCompanyId++;
   const user: StoredUser = {
     id: nextUserId++,
-    email,
+    email: normalizedEmail,
     name,
     role: "admin",
     password,
