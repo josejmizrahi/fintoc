@@ -322,25 +322,18 @@ export default function DashboardPage() {
                       <TableCell className="font-medium">
                         {invoice.name}
                       </TableCell>
-                      <TableCell>{invoice.partner || "—"}</TableCell>
+                      <TableCell>{invoice.partner_name || invoice.partner || "—"}</TableCell>
                       <TableCell>
                         {formatCurrency(
                           invoice.amount_residual ??
                             invoice.amount_total ??
-                            invoice.amount ??
                             0
                         )}
                       </TableCell>
                       <TableCell>
-                        {invoice.invoice_date_due
-                          ? new Date(
-                              invoice.invoice_date_due
-                            ).toLocaleDateString("es-MX")
-                          : invoice.due_date
-                            ? new Date(invoice.due_date).toLocaleDateString(
-                                "es-MX"
-                              )
-                            : "—"}
+                        {invoice.date_due
+                          ? new Date(invoice.date_due).toLocaleDateString("es-MX")
+                          : "—"}
                       </TableCell>
                     </TableRow>
                   ))

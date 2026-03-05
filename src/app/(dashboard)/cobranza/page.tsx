@@ -347,15 +347,15 @@ export default function CobranzaPage() {
                   <TableBody>
                     {pending.map((inv) => (
                       <TableRow key={inv.id}>
-                        <TableCell>{inv.partner || "-"}</TableCell>
+                        <TableCell>{inv.partner_name || "-"}</TableCell>
                         <TableCell className="font-medium">{inv.name}</TableCell>
                         <TableCell className="text-right font-mono">
                           {formatMXN(
-                            inv.amount_residual ?? inv.amount_total ?? inv.amount ?? 0
+                            inv.amount_residual ?? inv.amount_total ?? 0
                           )}
                         </TableCell>
                         <TableCell className="text-muted-foreground">
-                          {formatDate(inv.invoice_date_due || inv.due_date)}
+                          {formatDate(inv.date_due)}
                         </TableCell>
                         <TableCell className="text-right">
                           <Button
@@ -405,18 +405,18 @@ export default function CobranzaPage() {
                   </TableHeader>
                   <TableBody>
                     {overdue.map((inv) => {
-                      const days = daysOverdue(inv.invoice_date_due || inv.due_date);
+                      const days = daysOverdue(inv.date_due);
                       return (
                         <TableRow key={inv.id}>
-                          <TableCell>{inv.partner || "-"}</TableCell>
+                          <TableCell>{inv.partner_name || "-"}</TableCell>
                           <TableCell className="font-medium">{inv.name}</TableCell>
                           <TableCell className="text-right font-mono">
                             {formatMXN(
-                              inv.amount_residual ?? inv.amount_total ?? inv.amount ?? 0
+                              inv.amount_residual ?? inv.amount_total ?? 0
                             )}
                           </TableCell>
                           <TableCell className="text-muted-foreground">
-                            {formatDate(inv.invoice_date_due || inv.due_date)}
+                            {formatDate(inv.date_due)}
                           </TableCell>
                           <TableCell>
                             <Badge

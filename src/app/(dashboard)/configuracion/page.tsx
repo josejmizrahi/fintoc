@@ -37,16 +37,16 @@ import { SyncStatus } from "@/components/sync-status";
 
 interface Settings {
   odoo: { url: string; database: string; user: string; password: string };
-  fintoc: { secretKey: string; publicKey: string; webhookSecret: string; accountId: string; linkToken: string; jwsKeyPath: string };
-  sat: { rfcEmisor: string; certPath: string; keyPath: string; keyPassword: string; pac: string };
+  fintoc: { secretKey: string; publicKey: string; webhookSecret: string; accountId: string; linkToken: string };
+  sat: { rfcEmisor: string; keyPassword: string; pac: string };
   general: { companyName: string; rfc: string; plan: string; notificationEmail: string; slackWebhook: string; smtpHost: string; smtpPort: string; smtpUser: string; smtpPassword: string };
 }
 
 function defaultSettings(tenantName: string, tenantRfc: string): Settings {
   return {
     odoo: { url: "", database: "", user: "", password: "" },
-    fintoc: { secretKey: "", publicKey: "", webhookSecret: "", accountId: "", linkToken: "", jwsKeyPath: "" },
-    sat: { rfcEmisor: "", certPath: "", keyPath: "", keyPassword: "", pac: "" },
+    fintoc: { secretKey: "", publicKey: "", webhookSecret: "", accountId: "", linkToken: "" },
+    sat: { rfcEmisor: "", keyPassword: "", pac: "" },
     general: { companyName: tenantName, rfc: tenantRfc, plan: "Pro", notificationEmail: "", slackWebhook: "", smtpHost: "", smtpPort: "587", smtpUser: "", smtpPassword: "" },
   };
 }
@@ -487,10 +487,6 @@ export default function ConfiguracionPage() {
                   <p className="text-xs text-muted-foreground">
                     Conecta tu cuenta fiscal via el widget o pega el token manualmente. Permite sincronizar facturas del SAT.
                   </p>
-                </div>
-                <div className="space-y-2 sm:col-span-2">
-                  <Label htmlFor="fintoc-jws">Ruta llave JWS</Label>
-                  <Input id="fintoc-jws" placeholder="/etc/fintoc/jws_private.pem" value={settings.fintoc.jwsKeyPath} onChange={(e) => update("fintoc", "jwsKeyPath", e.target.value)} />
                 </div>
               </div>
               <Separator />

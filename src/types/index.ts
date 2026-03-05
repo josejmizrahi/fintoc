@@ -28,16 +28,16 @@ export interface FintocConfig {
   publicKey: string;
   webhookSecret: string;
   accountId: string;
-  jwsKeyPath: string;
+  linkToken: string;
   connected: boolean;
 }
 
 export interface SATConfig {
   rfcEmisor: string;
-  certificatePath: string;
-  keyPath: string;
   keyPassword: string;
-  pacProvider: string;
+  pac: string;
+  certFileName?: string;
+  keyFileName?: string;
   connected: boolean;
 }
 
@@ -76,16 +76,16 @@ export interface Payment {
 export interface Invoice {
   id: number;
   name: string;
-  partner_id?: number;
+  type?: string;
+  partner_name?: string;
   partner?: string;
   amount_total?: number;
   amount_residual?: number;
-  amount?: number;
-  invoice_date_due?: string;
-  due_date?: string;
-  move_type?: string;
+  date_invoice?: string;
+  date_due?: string;
+  status?: string;
   cfdi_uuid?: string;
-  payment_state?: string;
+  sat_status?: string;
 }
 
 export interface Vendor {

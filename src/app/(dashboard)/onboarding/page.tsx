@@ -16,6 +16,13 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from "@/components/ui/select";
 import { FintocWidget } from "@/components/fintoc-widget";
 import { SyncStatus } from "@/components/sync-status";
 
@@ -24,7 +31,7 @@ import { SyncStatus } from "@/components/sync-status";
 interface StepConfig {
   odoo: { url: string; database: string; user: string; password: string };
   fintoc: { secretKey: string; publicKey: string; webhookSecret: string; linkToken: string; accountId: string };
-  sat: { rfcEmisor: string; keyPassword: string };
+  sat: { rfcEmisor: string; keyPassword: string; pac: string };
 }
 
 interface IntegrationStatus {
@@ -81,7 +88,7 @@ export default function OnboardingPage() {
   const [config, setConfig] = useState<StepConfig>({
     odoo: { url: "", database: "", user: "", password: "" },
     fintoc: { secretKey: "", publicKey: "", webhookSecret: "", linkToken: "", accountId: "" },
-    sat: { rfcEmisor: "", keyPassword: "" },
+    sat: { rfcEmisor: "", keyPassword: "", pac: "" },
   });
 
   // SAT file upload state
@@ -92,11 +99,23 @@ export default function OnboardingPage() {
   const cerInputRef = useRef<HTMLInputElement>(null);
   const keyInputRef = useRef<HTMLInputElement>(null);
 
-  // Load existing status on mount
+  // Load existing status and saved config on mount
   useEffect(() => {
     onboardingApi("GET").then((data) => {
       if (data.integrations) {
         setStatuses(data.integrations);
+        // Populate form fields from saved config
+        setConfig((prev) => {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const next = { ...prev } as any;
+          for (const provider of ["odoo", "fintoc", "sat"] as const) {
+            const integration = data.integrations[provider] as IntegrationStatus | null;
+            if (integration?.config) {
+              next[provider] = { ...prev[provider], ...integration.config };
+            }
+          }
+          return next as StepConfig;
+        });
         // Load SAT certificate file names
         const satIntegration = data.integrations.sat as IntegrationStatus | null;
         if (satIntegration?.config) {
@@ -410,6 +429,19 @@ export default function OnboardingPage() {
                     value={config.sat.keyPassword}
                     onChange={(e) => updateField("sat", "keyPassword", e.target.value)}
                   />
+                </div>
+                <div className="space-y-2 sm:col-span-2">
+                  <Label>Proveedor PAC</Label>
+                  <Select value={config.sat.pac} onValueChange={(v) => updateField("sat", "pac", v)}>
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Selecciona un PAC" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="finkok">Finkok</SelectItem>
+                      <SelectItem value="sw_sapien">SW Sapien</SelectItem>
+                      <SelectItem value="digicel">Digicel</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
 
