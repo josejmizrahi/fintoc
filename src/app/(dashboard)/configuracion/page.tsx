@@ -1,672 +1,1101 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useState, useMemo, useRef } from "react";
+import { type ColumnDef } from "@tanstack/react-table";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useForm, Controller } from "react-hook-form";
+import { z } from "zod";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
-import { useAuthStore } from "@/lib/store";
-import { api } from "@/lib/api";
+import {
+  Loader2,
+  Building2,
+  Users,
+  Link2,
+  Settings,
+  Plus,
+  CheckCircle2,
+  XCircle,
+  RefreshCw,
+  Unplug,
+  Shield,
+  UserPlus,
+  MoreHorizontal,
+} from "lucide-react";
+
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import {
   Card,
+  CardContent,
+  CardDescription,
   CardHeader,
   CardTitle,
-  CardDescription,
-  CardContent,
 } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
+import { Separator } from "@/components/ui/separator";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Tabs,
   TabsList,
   TabsTrigger,
   TabsContent,
 } from "@/components/ui/tabs";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import {
-  Select,
-  SelectTrigger,
-  SelectValue,
-  SelectContent,
-  SelectItem,
-} from "@/components/ui/select";
-import { Separator } from "@/components/ui/separator";
-import { FintocWidget } from "@/components/fintoc-widget";
-import { SyncStatus } from "@/components/sync-status";
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
+import { DataTable } from "@/components/shared/data-table";
+import { EmptyState } from "@/components/shared/empty-state";
+import { PermissionGate } from "@/components/shared/permission-gate";
+import { StatusBadge } from "@/components/shared/status-badge";
+import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 
-interface Settings {
-  odoo: { url: string; database: string; user: string; password: string };
-  fintoc: { secretKey: string; publicKey: string; webhookSecret: string; accountId: string; linkToken: string };
-  sat: { rfcEmisor: string; keyPassword: string; pac: string };
-  general: { companyName: string; rfc: string; plan: string; notificationEmail: string; slackWebhook: string; smtpHost: string; smtpPort: string; smtpUser: string; smtpPassword: string };
+import { api } from "@/lib/api";
+import { formatDateTime, formatRelative } from "@/lib/utils/format";
+
+/* ---------- Query keys ---------- */
+
+const configKeys = {
+  all: ["config"] as const,
+  users: () => [...configKeys.all, "users"] as const,
+  integrations: () => [...configKeys.all, "integrations"] as const,
+  company: () => [...configKeys.all, "company"] as const,
+};
+
+/* ---------- Zod schemas ---------- */
+
+const companySchema = z.object({
+  name: z.string().min(1, "Nombre de empresa requerido"),
+  rfc: z.string().min(12, "RFC invalido").max(13),
+  address: z.string().optional(),
+  phone: z.string().optional(),
+});
+
+type CompanyForm = z.infer<typeof companySchema>;
+
+const inviteSchema = z.object({
+  email: z.string().email("Email invalido"),
+  name: z.string().min(1, "Nombre requerido"),
+  role: z.string().min(1, "Selecciona un rol"),
+});
+
+type InviteForm = z.infer<typeof inviteSchema>;
+
+const preferencesSchema = z.object({
+  currency: z.string(),
+  timezone: z.string(),
+  date_format: z.string(),
+  notify_payments: z.boolean(),
+  notify_approvals: z.boolean(),
+  notify_overdue: z.boolean(),
+  auto_validate_sat: z.boolean(),
+  auto_sync_frequency: z.string(),
+});
+
+type PreferencesForm = z.infer<typeof preferencesSchema>;
+
+/* ---------- User type ---------- */
+
+interface UserRecord {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  status: string;
+  created_at?: string;
 }
 
-function defaultSettings(tenantName: string, tenantRfc: string): Settings {
-  return {
-    odoo: { url: "", database: "", user: "", password: "" },
-    fintoc: { secretKey: "", publicKey: "", webhookSecret: "", accountId: "", linkToken: "" },
-    sat: { rfcEmisor: "", keyPassword: "", pac: "" },
-    general: { companyName: tenantName, rfc: tenantRfc, plan: "Pro", notificationEmail: "", slackWebhook: "", smtpHost: "", smtpPort: "587", smtpUser: "", smtpPassword: "" },
-  };
+/* ---------- User Columns ---------- */
+
+function useUserColumns(
+  onChangeRole: (id: string, role: string) => void,
+  onDeactivate: (id: string) => void
+): ColumnDef<UserRecord, any>[] {
+  return useMemo(
+    () => [
+      {
+        accessorKey: "name",
+        header: "Nombre",
+        cell: ({ getValue }) => (
+          <span className="font-medium">{getValue<string>()}</span>
+        ),
+      },
+      {
+        accessorKey: "email",
+        header: "Email",
+        cell: ({ getValue }) => (
+          <span className="text-muted-foreground">{getValue<string>()}</span>
+        ),
+      },
+      {
+        accessorKey: "role",
+        header: "Rol",
+        cell: ({ row }) => {
+          const user = row.original;
+          return (
+            <Select
+              value={user.role}
+              onValueChange={(v) => onChangeRole(user.id, v)}
+            >
+              <SelectTrigger className="w-[140px] h-8">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="admin">Admin</SelectItem>
+                <SelectItem value="accountant">Contador</SelectItem>
+                <SelectItem value="viewer">Visor</SelectItem>
+              </SelectContent>
+            </Select>
+          );
+        },
+      },
+      {
+        accessorKey: "status",
+        header: "Estado",
+        cell: ({ getValue }) => <StatusBadge status={getValue<string>()} />,
+      },
+      {
+        id: "actions",
+        header: () => <span className="text-right block">Acciones</span>,
+        cell: ({ row }) => (
+          <div className="flex justify-end">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="sm">
+                  <MoreHorizontal className="size-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem
+                  className="text-destructive"
+                  onClick={() => onDeactivate(row.original.id)}
+                >
+                  Desactivar
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        ),
+      },
+    ],
+    [onChangeRole, onDeactivate]
+  );
 }
 
-// ---------------------------------------------------------------------------
-// API helpers (SAT file upload needs raw fetch — everything else uses api.ts)
-// ---------------------------------------------------------------------------
+/* ---------- InviteDialog ---------- */
 
-function authHeadersNoContentType(): Record<string, string> {
-  const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
-  return token ? { Authorization: `Bearer ${token}` } : {};
-}
+function InviteDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+}) {
+  const queryClient = useQueryClient();
 
-// ---------------------------------------------------------------------------
-// Page
-// ---------------------------------------------------------------------------
+  const inviteMutation = useMutation({
+    mutationFn: (data: any) => api.users.invite(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: configKeys.users() });
+      toast.success("Invitacion enviada");
+      onOpenChange(false);
+    },
+    onError: (err: Error) => {
+      toast.error(err.message || "Error al enviar invitacion");
+    },
+  });
 
-export default function ConfiguracionPage() {
-  const tenantName = useAuthStore((s) => s.tenantName);
-  const tenantId = useAuthStore((s) => s.tenantId);
+  const form = useForm<InviteForm>({
+    resolver: zodResolver(inviteSchema),
+    defaultValues: { email: "", name: "", role: "viewer" },
+  });
 
-  const [settings, setSettings] = useState<Settings>(() => defaultSettings("", ""));
-  const [odooStatus, setOdooStatus] = useState<"idle" | "testing" | "syncing" | "success" | "error">("idle");
-  const [fintocStatus, setFintocStatus] = useState<"idle" | "testing" | "syncing" | "success" | "error">("idle");
-  const [satStatus, setSatStatus] = useState<"idle" | "validating" | "syncing" | "success" | "error">("idle");
-  const [lastSync, setLastSync] = useState<Record<string, string>>({});
-
-  // Sync log tracking
-  const [odooSyncLogId, setOdooSyncLogId] = useState<number | undefined>();
-  const [fintocSyncLogId, setFintocSyncLogId] = useState<number | undefined>();
-  const [satSyncLogId, setSatSyncLogId] = useState<number | undefined>();
-
-  // SAT file upload state
-  const [satCerFile, setSatCerFile] = useState<File | null>(null);
-  const [satKeyFile, setSatKeyFile] = useState<File | null>(null);
-  const [satCerName, setSatCerName] = useState<string>("");
-  const [satKeyName, setSatKeyName] = useState<string>("");
-  const [satUploading, setSatUploading] = useState(false);
-  const cerInputRef = useRef<HTMLInputElement>(null);
-  const keyInputRef = useRef<HTMLInputElement>(null);
-
-  // Load from DB on mount
-  useEffect(() => {
-    const base = defaultSettings(tenantName, tenantId);
-    api.onboarding.status().then((data) => {
-      const integrations = data.integrations || { odoo: null, fintoc: null, sat: null };
-      const syncInfo: Record<string, string> = {};
-      for (const provider of ["odoo", "fintoc", "sat"] as const) {
-        const integration = integrations[provider] as { is_connected?: boolean; last_sync_at?: string; last_sync_message?: string; cert_uploaded_at?: string; config?: Record<string, string> } | null;
-        if (integration?.config) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          (base as any)[provider] = { ...base[provider], ...integration.config };
-        }
-        if (integration?.is_connected) {
-          if (provider === "odoo") setOdooStatus("success");
-          if (provider === "fintoc") setFintocStatus("success");
-          if (provider === "sat") setSatStatus("success");
-        }
-        if (integration?.last_sync_at) {
-          syncInfo[provider] = integration.last_sync_message
-            ? `${new Date(integration.last_sync_at).toLocaleString("es-MX")} — ${integration.last_sync_message}`
-            : new Date(integration.last_sync_at).toLocaleString("es-MX");
-        }
-        if (provider === "sat" && integration?.config) {
-          if (integration.config.certFileName) setSatCerName(integration.config.certFileName);
-          if (integration.config.keyFileName) setSatKeyName(integration.config.keyFileName);
-        }
-      }
-      setLastSync(syncInfo);
-      setSettings(base);
-    }).catch(() => {});
-  }, [tenantName, tenantId]);
-
-  function update<K extends keyof Settings>(section: K, field: keyof Settings[K], value: string) {
-    setSettings((prev) => ({ ...prev, [section]: { ...prev[section], [field]: value } }));
+  function onSubmit(data: InviteForm) {
+    inviteMutation.mutate(data);
   }
-
-  // ------ Save handlers ------
-
-  async function handleSaveOdoo() {
-    await api.onboarding.save("odoo", settings.odoo);
-    toast.success("Configuracion de Odoo guardada");
-  }
-
-  async function handleSaveFintoc() {
-    await api.onboarding.save("fintoc", settings.fintoc);
-    toast.success("Configuracion de Fintoc guardada");
-  }
-
-  async function handleSaveSat() {
-    await api.onboarding.save("sat", settings.sat);
-    toast.success("Configuracion de SAT guardada");
-  }
-
-  async function handleSaveGeneral() {
-    try {
-      await api.onboarding.save("general", {
-        companyName: settings.general.companyName,
-        notificationEmail: settings.general.notificationEmail,
-        slackWebhook: settings.general.slackWebhook,
-        smtpHost: settings.general.smtpHost,
-        smtpPort: settings.general.smtpPort,
-        smtpUser: settings.general.smtpUser,
-        smtpPassword: settings.general.smtpPassword,
-      });
-      toast.success("Configuracion general guardada");
-    } catch {
-      toast.error("Error al guardar configuracion general");
-    }
-  }
-
-  // ------ Test handlers ------
-
-  async function handleTestOdoo() {
-    setOdooStatus("testing");
-    try {
-      const res = await api.onboarding.test("odoo", settings.odoo);
-      if (res.success) {
-        setOdooStatus("success");
-        toast.success(res.message || "Conexion a Odoo exitosa");
-      } else {
-        setOdooStatus("error");
-        toast.error(res.message || "No se pudo conectar a Odoo");
-      }
-    } catch {
-      setOdooStatus("error");
-      toast.error("Error de conexion");
-    }
-  }
-
-  async function handleTestFintoc() {
-    setFintocStatus("testing");
-    try {
-      const res = await api.onboarding.test("fintoc", settings.fintoc);
-      if (res.success) {
-        setFintocStatus("success");
-        toast.success(res.message || "Conexion a Fintoc exitosa");
-      } else {
-        setFintocStatus("error");
-        toast.error(res.message || "No se pudo conectar a Fintoc");
-      }
-    } catch {
-      setFintocStatus("error");
-      toast.error("Error de conexion");
-    }
-  }
-
-  async function handleValidateSat() {
-    setSatStatus("validating");
-    try {
-      const res = await api.onboarding.test("sat", settings.sat);
-      if (res.success) {
-        setSatStatus("success");
-        toast.success(res.message || "Certificado SAT validado correctamente");
-      } else {
-        setSatStatus("error");
-        toast.error(res.message || "No se pudo validar el certificado");
-      }
-    } catch {
-      setSatStatus("error");
-      toast.error("Error de validacion");
-    }
-  }
-
-  // ------ Sync handlers (use dedicated /api/sync route) ------
-
-  async function handleSyncOdoo() {
-    setOdooStatus("syncing");
-    setOdooSyncLogId(undefined);
-    try {
-      const res = await api.sync.trigger("odoo");
-      if (res.sync_log_id) setOdooSyncLogId(res.sync_log_id);
-      if (res.success) {
-        setOdooStatus("success");
-        toast.success(res.message || "Sincronizacion de Odoo completada");
-        setLastSync(prev => ({ ...prev, odoo: `${new Date().toLocaleString("es-MX")} — ${res.message}` }));
-      } else {
-        setOdooStatus("error");
-        toast.error(res.message || "Error en sincronizacion de Odoo");
-      }
-    } catch {
-      setOdooStatus("error");
-      toast.error("Error de conexion durante sincronizacion");
-    }
-  }
-
-  async function handleSyncFintoc() {
-    setFintocStatus("syncing");
-    setFintocSyncLogId(undefined);
-    try {
-      const res = await api.sync.trigger("fintoc");
-      if (res.sync_log_id) setFintocSyncLogId(res.sync_log_id);
-      if (res.success) {
-        setFintocStatus("success");
-        toast.success(res.message || "Sincronizacion de Fintoc completada");
-        setLastSync(prev => ({ ...prev, fintoc: `${new Date().toLocaleString("es-MX")} — ${res.message}` }));
-      } else {
-        setFintocStatus("error");
-        toast.error(res.message || "Error en sincronizacion de Fintoc");
-      }
-    } catch {
-      setFintocStatus("error");
-      toast.error("Error de conexion durante sincronizacion");
-    }
-  }
-
-  async function handleSyncSat() {
-    setSatStatus("syncing");
-    setSatSyncLogId(undefined);
-    try {
-      const res = await api.sync.trigger("sat");
-      if (res.sync_log_id) setSatSyncLogId(res.sync_log_id);
-      if (res.success) {
-        setSatStatus("success");
-        toast.success(res.message || "Validacion SAT completada");
-        setLastSync(prev => ({ ...prev, sat: `${new Date().toLocaleString("es-MX")} — ${res.message}` }));
-      } else {
-        setSatStatus("error");
-        toast.error(res.message || "Error en validacion SAT");
-      }
-    } catch {
-      setSatStatus("error");
-      toast.error("Error de conexion durante validacion");
-    }
-  }
-
-  // ------ SAT file upload handler ------
-
-  async function handleUploadSatFiles() {
-    if (!satCerFile && !satKeyFile) {
-      toast.error("Selecciona al menos un archivo (.cer o .key)");
-      return;
-    }
-
-    setSatUploading(true);
-    try {
-      const formData = new FormData();
-      if (satCerFile) formData.append("cer", satCerFile);
-      if (satKeyFile) formData.append("key", satKeyFile);
-      if (settings.sat.keyPassword) formData.append("keyPassword", settings.sat.keyPassword);
-      if (settings.sat.rfcEmisor) formData.append("rfcEmisor", settings.sat.rfcEmisor);
-
-      const res = await fetch("/api/sat/upload", {
-        method: "POST",
-        headers: authHeadersNoContentType(),
-        body: formData,
-      });
-
-      const data = await res.json();
-      if (data.success) {
-        toast.success(data.message || "Archivos subidos exitosamente");
-        if (data.files?.cer) setSatCerName(data.files.cer.name);
-        if (data.files?.key) setSatKeyName(data.files.key.name);
-        setSatCerFile(null);
-        setSatKeyFile(null);
-        if (cerInputRef.current) cerInputRef.current.value = "";
-        if (keyInputRef.current) keyInputRef.current.value = "";
-      } else {
-        toast.error(data.message || data.detail || "Error al subir archivos");
-      }
-    } catch {
-      toast.error("Error de conexion al subir archivos");
-    } finally {
-      setSatUploading(false);
-    }
-  }
-
-  // ------ Status badge helper ------
-
-  function connectionBadge(status: "idle" | "testing" | "syncing" | "success" | "error" | "validating") {
-    switch (status) {
-      case "testing":
-      case "validating":
-        return <Badge variant="secondary">Probando...</Badge>;
-      case "syncing":
-        return <Badge variant="secondary" className="animate-pulse">Sincronizando...</Badge>;
-      case "success":
-        return <Badge variant="default">Conectado</Badge>;
-      case "error":
-        return <Badge variant="destructive">Error</Badge>;
-      default:
-        return null;
-    }
-  }
-
-  // ------ Render ------
 
   return (
-    <div className="p-6 space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold">Configuracion</h1>
-        <p className="text-muted-foreground">
-          Administra las integraciones y preferencias de tu empresa.
-        </p>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Invitar Usuario</DialogTitle>
+          <DialogDescription>
+            Envia una invitacion por email para unirse a la empresa.
+          </DialogDescription>
+        </DialogHeader>
+
+        <form onSubmit={form.handleSubmit(onSubmit)} className="grid gap-4 py-2">
+          <div className="grid gap-2">
+            <Label htmlFor="invite-name">Nombre *</Label>
+            <Input
+              id="invite-name"
+              placeholder="Nombre completo"
+              {...form.register("name")}
+            />
+            {form.formState.errors.name && (
+              <p className="text-xs text-destructive">
+                {form.formState.errors.name.message}
+              </p>
+            )}
+          </div>
+
+          <div className="grid gap-2">
+            <Label htmlFor="invite-email">Email *</Label>
+            <Input
+              id="invite-email"
+              type="email"
+              placeholder="usuario@empresa.com"
+              {...form.register("email")}
+            />
+            {form.formState.errors.email && (
+              <p className="text-xs text-destructive">
+                {form.formState.errors.email.message}
+              </p>
+            )}
+          </div>
+
+          <div className="grid gap-2">
+            <Label htmlFor="invite-role">Rol *</Label>
+            <Controller
+              control={form.control}
+              name="role"
+              render={({ field }) => (
+                <Select value={field.value} onValueChange={field.onChange}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="admin">Admin</SelectItem>
+                    <SelectItem value="accountant">Contador</SelectItem>
+                    <SelectItem value="viewer">Visor</SelectItem>
+                  </SelectContent>
+                </Select>
+              )}
+            />
+          </div>
+
+          <DialogFooter className="pt-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+              disabled={inviteMutation.isPending}
+            >
+              Cancelar
+            </Button>
+            <Button type="submit" disabled={inviteMutation.isPending}>
+              {inviteMutation.isPending && (
+                <Loader2 className="mr-2 size-4 animate-spin" />
+              )}
+              Invitar
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ---------- Integration Status Card ---------- */
+
+function IntegrationCard({
+  name,
+  provider,
+  isConnected,
+  lastSync,
+  onTest,
+  onSync,
+  onDisconnect,
+  isTesting,
+  isSyncing,
+}: {
+  name: string;
+  provider: string;
+  isConnected: boolean;
+  lastSync?: string;
+  onTest: () => void;
+  onSync: () => void;
+  onDisconnect: () => void;
+  isTesting: boolean;
+  isSyncing: boolean;
+}) {
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-base">{name}</CardTitle>
+          {isConnected ? (
+            <Badge className="bg-green-600 text-white">Conectado</Badge>
+          ) : (
+            <Badge variant="secondary">Desconectado</Badge>
+          )}
+        </div>
+        {lastSync && (
+          <CardDescription>
+            Ultima sincronizacion: {lastSync}
+          </CardDescription>
+        )}
+      </CardHeader>
+      <CardContent>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onTest}
+            disabled={isTesting || isSyncing}
+          >
+            {isTesting ? (
+              <Loader2 className="size-3.5 animate-spin mr-1" />
+            ) : (
+              <CheckCircle2 className="size-3.5 mr-1" />
+            )}
+            Probar
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onSync}
+            disabled={isTesting || isSyncing}
+          >
+            {isSyncing ? (
+              <Loader2 className="size-3.5 animate-spin mr-1" />
+            ) : (
+              <RefreshCw className="size-3.5 mr-1" />
+            )}
+            Sincronizar
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onDisconnect}
+            disabled={isTesting || isSyncing}
+          >
+            <Unplug className="size-3.5 mr-1" />
+            Desconectar
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+/* ---------- Main Page ---------- */
+
+export default function ConfiguracionPage() {
+  const queryClient = useQueryClient();
+  const [inviteDialogOpen, setInviteDialogOpen] = useState(false);
+  const [deactivateId, setDeactivateId] = useState<string | null>(null);
+  const [integrationAction, setIntegrationAction] = useState<{
+    provider: string;
+    action: "test" | "sync";
+  } | null>(null);
+
+  /* ----- Queries ----- */
+
+  const { data: usersData, isLoading: usersLoading } = useQuery({
+    queryKey: configKeys.users(),
+    queryFn: () => api.users.list(),
+    staleTime: 30_000,
+  });
+
+  const { data: onboardingStatus } = useQuery({
+    queryKey: configKeys.integrations(),
+    queryFn: () => api.onboarding.status(),
+    staleTime: 30_000,
+  });
+
+  const users: UserRecord[] = useMemo(
+    () => (Array.isArray(usersData) ? usersData : []),
+    [usersData]
+  );
+
+  const integrations = onboardingStatus?.integrations ?? {
+    odoo: null,
+    fintoc: null,
+    sat: null,
+  };
+
+  /* ----- Mutations ----- */
+
+  const changeRoleMutation = useMutation({
+    mutationFn: ({ id, role }: { id: string; role: string }) =>
+      api.users.updateRole(id, role),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: configKeys.users() });
+      toast.success("Rol actualizado");
+    },
+    onError: (err: Error) => {
+      toast.error(err.message || "Error al cambiar rol");
+    },
+  });
+
+  const deactivateMutation = useMutation({
+    mutationFn: (id: string) => api.users.deactivate(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: configKeys.users() });
+      toast.success("Usuario desactivado");
+      setDeactivateId(null);
+    },
+    onError: (err: Error) => {
+      toast.error(err.message || "Error al desactivar usuario");
+    },
+  });
+
+  const testMutation = useMutation({
+    mutationFn: (provider: string) =>
+      api.onboarding.test(provider, {}),
+    onSuccess: (data) => {
+      if (data.success) {
+        toast.success(data.message || "Conexion exitosa");
+      } else {
+        toast.error(data.message || "Error de conexion");
+      }
+      setIntegrationAction(null);
+    },
+    onError: () => {
+      toast.error("Error de conexion");
+      setIntegrationAction(null);
+    },
+  });
+
+  const syncMutation = useMutation({
+    mutationFn: (provider: string) => api.sync.trigger(provider),
+    onSuccess: (data) => {
+      if (data.success) {
+        toast.success(data.message || "Sincronizacion completada");
+        queryClient.invalidateQueries({ queryKey: configKeys.integrations() });
+      } else {
+        toast.error(data.message || "Error de sincronizacion");
+      }
+      setIntegrationAction(null);
+    },
+    onError: () => {
+      toast.error("Error de sincronizacion");
+      setIntegrationAction(null);
+    },
+  });
+
+  /* ----- Company Form ----- */
+
+  const companyForm = useForm<CompanyForm>({
+    resolver: zodResolver(companySchema),
+    defaultValues: { name: "", rfc: "", address: "", phone: "" },
+  });
+
+  const saveCompanyMutation = useMutation({
+    mutationFn: (data: CompanyForm) =>
+      api.onboarding.save("general", {
+        companyName: data.name,
+        rfc: data.rfc,
+        address: data.address || "",
+        phone: data.phone || "",
+      }),
+    onSuccess: () => {
+      toast.success("Datos de empresa guardados");
+    },
+    onError: (err: Error) => {
+      toast.error(err.message || "Error al guardar");
+    },
+  });
+
+  /* ----- Preferences Form ----- */
+
+  const preferencesForm = useForm<PreferencesForm>({
+    resolver: zodResolver(preferencesSchema),
+    defaultValues: {
+      currency: "MXN",
+      timezone: "America/Mexico_City",
+      date_format: "dd/MM/yyyy",
+      notify_payments: true,
+      notify_approvals: true,
+      notify_overdue: true,
+      auto_validate_sat: false,
+      auto_sync_frequency: "daily",
+    },
+  });
+
+  const savePreferencesMutation = useMutation({
+    mutationFn: (data: PreferencesForm) =>
+      api.onboarding.save("general", data as any),
+    onSuccess: () => {
+      toast.success("Preferencias guardadas");
+    },
+    onError: (err: Error) => {
+      toast.error(err.message || "Error al guardar preferencias");
+    },
+  });
+
+  /* ----- User table helpers ----- */
+
+  const handleChangeRole = (id: string, role: string) => {
+    changeRoleMutation.mutate({ id, role });
+  };
+
+  const handleDeactivate = (id: string) => {
+    setDeactivateId(id);
+  };
+
+  const userColumns = useUserColumns(handleChangeRole, handleDeactivate);
+
+  return (
+    <PermissionGate
+      permission="config:write"
+      fallback={
+        <EmptyState
+          icon={Settings}
+          title="Acceso restringido"
+          description="Solo administradores pueden acceder a la configuracion."
+        />
+      }
+    >
+      <div className="flex flex-col gap-6">
+        {/* Header */}
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Configuracion</h1>
+          <p className="text-muted-foreground text-sm">
+            Administra tu empresa, usuarios, integraciones y preferencias.
+          </p>
+        </div>
+
+        {/* Vertical Tabs */}
+        <Tabs defaultValue="empresa" orientation="vertical" className="flex gap-6">
+          <TabsList className="flex flex-col h-auto w-[200px] shrink-0">
+            <TabsTrigger value="empresa" className="w-full justify-start">
+              <Building2 className="size-4 mr-2" />
+              Empresa
+            </TabsTrigger>
+            <TabsTrigger value="usuarios" className="w-full justify-start">
+              <Users className="size-4 mr-2" />
+              Usuarios y Roles
+            </TabsTrigger>
+            <TabsTrigger value="integraciones" className="w-full justify-start">
+              <Link2 className="size-4 mr-2" />
+              Integraciones
+            </TabsTrigger>
+            <TabsTrigger value="preferencias" className="w-full justify-start">
+              <Settings className="size-4 mr-2" />
+              Preferencias
+            </TabsTrigger>
+          </TabsList>
+
+          <div className="flex-1 min-w-0">
+            {/* ---- Tab 1: Empresa ---- */}
+            <TabsContent value="empresa" className="mt-0">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Datos de la Empresa</CardTitle>
+                  <CardDescription>
+                    Informacion general de tu empresa.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <form
+                    onSubmit={companyForm.handleSubmit((data) =>
+                      saveCompanyMutation.mutate(data)
+                    )}
+                    className="space-y-4"
+                  >
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div className="space-y-2">
+                        <Label htmlFor="company-name">Nombre *</Label>
+                        <Input
+                          id="company-name"
+                          placeholder="Mi Empresa S.A. de C.V."
+                          {...companyForm.register("name")}
+                        />
+                        {companyForm.formState.errors.name && (
+                          <p className="text-xs text-destructive">
+                            {companyForm.formState.errors.name.message}
+                          </p>
+                        )}
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="company-rfc">RFC *</Label>
+                        <Input
+                          id="company-rfc"
+                          placeholder="XAXX010101000"
+                          maxLength={13}
+                          {...companyForm.register("rfc")}
+                        />
+                        {companyForm.formState.errors.rfc && (
+                          <p className="text-xs text-destructive">
+                            {companyForm.formState.errors.rfc.message}
+                          </p>
+                        )}
+                      </div>
+                      <div className="space-y-2 sm:col-span-2">
+                        <Label htmlFor="company-address">Direccion</Label>
+                        <Input
+                          id="company-address"
+                          placeholder="Calle, Colonia, Ciudad, CP"
+                          {...companyForm.register("address")}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="company-phone">Telefono</Label>
+                        <Input
+                          id="company-phone"
+                          placeholder="+52 55 1234 5678"
+                          {...companyForm.register("phone")}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Logo</Label>
+                        <Input type="file" accept="image/*" />
+                      </div>
+                    </div>
+                    <Separator />
+                    <div className="flex justify-end">
+                      <Button
+                        type="submit"
+                        disabled={saveCompanyMutation.isPending}
+                      >
+                        {saveCompanyMutation.isPending && (
+                          <Loader2 className="mr-2 size-4 animate-spin" />
+                        )}
+                        Guardar
+                      </Button>
+                    </div>
+                  </form>
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            {/* ---- Tab 2: Usuarios y Roles ---- */}
+            <TabsContent value="usuarios" className="mt-0">
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between">
+                  <div>
+                    <CardTitle>Usuarios y Roles</CardTitle>
+                    <CardDescription>
+                      Gestiona los usuarios de tu empresa y sus permisos.
+                    </CardDescription>
+                  </div>
+                  <Button onClick={() => setInviteDialogOpen(true)}>
+                    <UserPlus className="mr-2 size-4" />
+                    Invitar
+                  </Button>
+                </CardHeader>
+                <CardContent>
+                  <DataTable
+                    columns={userColumns}
+                    data={users}
+                    isLoading={usersLoading}
+                    emptyState={
+                      <EmptyState
+                        icon={Users}
+                        title="Sin usuarios"
+                        description="Invita a tu equipo para empezar."
+                        action={{
+                          label: "Invitar usuario",
+                          onClick: () => setInviteDialogOpen(true),
+                        }}
+                      />
+                    }
+                  />
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            {/* ---- Tab 3: Integraciones ---- */}
+            <TabsContent value="integraciones" className="mt-0">
+              <div className="grid gap-4">
+                <IntegrationCard
+                  name="Odoo ERP"
+                  provider="odoo"
+                  isConnected={integrations.odoo?.is_connected === true}
+                  lastSync={
+                    integrations.odoo?.last_sync_at
+                      ? formatRelative(integrations.odoo.last_sync_at)
+                      : undefined
+                  }
+                  onTest={() => {
+                    setIntegrationAction({ provider: "odoo", action: "test" });
+                    testMutation.mutate("odoo");
+                  }}
+                  onSync={() => {
+                    setIntegrationAction({ provider: "odoo", action: "sync" });
+                    syncMutation.mutate("odoo");
+                  }}
+                  onDisconnect={() =>
+                    toast.info("Desconectar desde la pagina de onboarding")
+                  }
+                  isTesting={
+                    integrationAction?.provider === "odoo" &&
+                    integrationAction?.action === "test" &&
+                    testMutation.isPending
+                  }
+                  isSyncing={
+                    integrationAction?.provider === "odoo" &&
+                    integrationAction?.action === "sync" &&
+                    syncMutation.isPending
+                  }
+                />
+                <IntegrationCard
+                  name="Fintoc / Banco"
+                  provider="fintoc"
+                  isConnected={integrations.fintoc?.is_connected === true}
+                  lastSync={
+                    integrations.fintoc?.last_sync_at
+                      ? formatRelative(integrations.fintoc.last_sync_at)
+                      : undefined
+                  }
+                  onTest={() => {
+                    setIntegrationAction({
+                      provider: "fintoc",
+                      action: "test",
+                    });
+                    testMutation.mutate("fintoc");
+                  }}
+                  onSync={() => {
+                    setIntegrationAction({
+                      provider: "fintoc",
+                      action: "sync",
+                    });
+                    syncMutation.mutate("fintoc");
+                  }}
+                  onDisconnect={() =>
+                    toast.info("Desconectar desde la pagina de onboarding")
+                  }
+                  isTesting={
+                    integrationAction?.provider === "fintoc" &&
+                    integrationAction?.action === "test" &&
+                    testMutation.isPending
+                  }
+                  isSyncing={
+                    integrationAction?.provider === "fintoc" &&
+                    integrationAction?.action === "sync" &&
+                    syncMutation.isPending
+                  }
+                />
+                <IntegrationCard
+                  name="SAT"
+                  provider="sat"
+                  isConnected={integrations.sat?.is_connected === true}
+                  lastSync={
+                    integrations.sat?.last_sync_at
+                      ? formatRelative(integrations.sat.last_sync_at)
+                      : undefined
+                  }
+                  onTest={() => {
+                    setIntegrationAction({ provider: "sat", action: "test" });
+                    testMutation.mutate("sat");
+                  }}
+                  onSync={() => {
+                    setIntegrationAction({ provider: "sat", action: "sync" });
+                    syncMutation.mutate("sat");
+                  }}
+                  onDisconnect={() =>
+                    toast.info("Desconectar desde la pagina de onboarding")
+                  }
+                  isTesting={
+                    integrationAction?.provider === "sat" &&
+                    integrationAction?.action === "test" &&
+                    testMutation.isPending
+                  }
+                  isSyncing={
+                    integrationAction?.provider === "sat" &&
+                    integrationAction?.action === "sync" &&
+                    syncMutation.isPending
+                  }
+                />
+              </div>
+            </TabsContent>
+
+            {/* ---- Tab 4: Preferencias ---- */}
+            <TabsContent value="preferencias" className="mt-0">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Preferencias</CardTitle>
+                  <CardDescription>
+                    Configura moneda, zona horaria, notificaciones y
+                    automatizaciones.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <form
+                    onSubmit={preferencesForm.handleSubmit((data) =>
+                      savePreferencesMutation.mutate(data)
+                    )}
+                    className="space-y-6"
+                  >
+                    {/* Regional */}
+                    <div>
+                      <p className="text-sm font-medium mb-4">Regional</p>
+                      <div className="grid gap-4 sm:grid-cols-3">
+                        <div className="space-y-2">
+                          <Label>Moneda</Label>
+                          <Controller
+                            control={preferencesForm.control}
+                            name="currency"
+                            render={({ field }) => (
+                              <Select
+                                value={field.value}
+                                onValueChange={field.onChange}
+                              >
+                                <SelectTrigger>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="MXN">MXN</SelectItem>
+                                  <SelectItem value="USD">USD</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            )}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Zona horaria</Label>
+                          <Controller
+                            control={preferencesForm.control}
+                            name="timezone"
+                            render={({ field }) => (
+                              <Select
+                                value={field.value}
+                                onValueChange={field.onChange}
+                              >
+                                <SelectTrigger>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="America/Mexico_City">
+                                    Ciudad de Mexico
+                                  </SelectItem>
+                                  <SelectItem value="America/Monterrey">
+                                    Monterrey
+                                  </SelectItem>
+                                  <SelectItem value="America/Tijuana">
+                                    Tijuana
+                                  </SelectItem>
+                                  <SelectItem value="America/Cancun">
+                                    Cancun
+                                  </SelectItem>
+                                </SelectContent>
+                              </Select>
+                            )}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Formato de fecha</Label>
+                          <Controller
+                            control={preferencesForm.control}
+                            name="date_format"
+                            render={({ field }) => (
+                              <Select
+                                value={field.value}
+                                onValueChange={field.onChange}
+                              >
+                                <SelectTrigger>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="dd/MM/yyyy">
+                                    dd/MM/yyyy
+                                  </SelectItem>
+                                  <SelectItem value="MM/dd/yyyy">
+                                    MM/dd/yyyy
+                                  </SelectItem>
+                                  <SelectItem value="yyyy-MM-dd">
+                                    yyyy-MM-dd
+                                  </SelectItem>
+                                </SelectContent>
+                              </Select>
+                            )}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <Separator />
+
+                    {/* Notifications */}
+                    <div>
+                      <p className="text-sm font-medium mb-4">Notificaciones</p>
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="text-sm">Pagos ejecutados</p>
+                            <p className="text-xs text-muted-foreground">
+                              Recibir notificacion cuando se ejecuta un pago.
+                            </p>
+                          </div>
+                          <Controller
+                            control={preferencesForm.control}
+                            name="notify_payments"
+                            render={({ field }) => (
+                              <Switch
+                                checked={field.value}
+                                onCheckedChange={field.onChange}
+                              />
+                            )}
+                          />
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="text-sm">Aprobaciones pendientes</p>
+                            <p className="text-xs text-muted-foreground">
+                              Notificar cuando hay aprobaciones pendientes.
+                            </p>
+                          </div>
+                          <Controller
+                            control={preferencesForm.control}
+                            name="notify_approvals"
+                            render={({ field }) => (
+                              <Switch
+                                checked={field.value}
+                                onCheckedChange={field.onChange}
+                              />
+                            )}
+                          />
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="text-sm">Facturas vencidas</p>
+                            <p className="text-xs text-muted-foreground">
+                              Notificar sobre facturas vencidas.
+                            </p>
+                          </div>
+                          <Controller
+                            control={preferencesForm.control}
+                            name="notify_overdue"
+                            render={({ field }) => (
+                              <Switch
+                                checked={field.value}
+                                onCheckedChange={field.onChange}
+                              />
+                            )}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <Separator />
+
+                    {/* Automation */}
+                    <div>
+                      <p className="text-sm font-medium mb-4">Automatizacion</p>
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="text-sm">
+                              Validacion automatica SAT
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              Validar automaticamente CFDIs nuevos contra el
+                              SAT.
+                            </p>
+                          </div>
+                          <Controller
+                            control={preferencesForm.control}
+                            name="auto_validate_sat"
+                            render={({ field }) => (
+                              <Switch
+                                checked={field.value}
+                                onCheckedChange={field.onChange}
+                              />
+                            )}
+                          />
+                        </div>
+                        <div className="flex items-center gap-4">
+                          <div className="flex-1">
+                            <p className="text-sm">
+                              Frecuencia de sincronizacion
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              Cada cuanto sincronizar datos automaticamente.
+                            </p>
+                          </div>
+                          <Controller
+                            control={preferencesForm.control}
+                            name="auto_sync_frequency"
+                            render={({ field }) => (
+                              <Select
+                                value={field.value}
+                                onValueChange={field.onChange}
+                              >
+                                <SelectTrigger className="w-[160px]">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="hourly">
+                                    Cada hora
+                                  </SelectItem>
+                                  <SelectItem value="daily">Diario</SelectItem>
+                                  <SelectItem value="weekly">
+                                    Semanal
+                                  </SelectItem>
+                                  <SelectItem value="manual">Manual</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            )}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <Separator />
+
+                    <div className="flex justify-end">
+                      <Button
+                        type="submit"
+                        disabled={savePreferencesMutation.isPending}
+                      >
+                        {savePreferencesMutation.isPending && (
+                          <Loader2 className="mr-2 size-4 animate-spin" />
+                        )}
+                        Guardar Preferencias
+                      </Button>
+                    </div>
+                  </form>
+                </CardContent>
+              </Card>
+            </TabsContent>
+          </div>
+        </Tabs>
+
+        {/* Invite Dialog */}
+        <InviteDialog
+          open={inviteDialogOpen}
+          onOpenChange={setInviteDialogOpen}
+        />
+
+        {/* Deactivate Confirm */}
+        <ConfirmDialog
+          open={!!deactivateId}
+          onOpenChange={(open) => {
+            if (!open) setDeactivateId(null);
+          }}
+          title="Desactivar Usuario"
+          description="Este usuario perdera acceso a la plataforma. Puedes reactivarlo despues."
+          confirmLabel="Desactivar"
+          variant="destructive"
+          onConfirm={() => {
+            if (deactivateId) deactivateMutation.mutate(deactivateId);
+          }}
+          loading={deactivateMutation.isPending}
+        />
       </div>
-
-      <Tabs defaultValue="odoo">
-        <TabsList>
-          <TabsTrigger value="odoo">Odoo</TabsTrigger>
-          <TabsTrigger value="fintoc">Fintoc / Banco</TabsTrigger>
-          <TabsTrigger value="sat">SAT</TabsTrigger>
-          <TabsTrigger value="general">General</TabsTrigger>
-        </TabsList>
-
-        {/* Odoo Tab */}
-        <TabsContent value="odoo">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-3">
-                Odoo ERP {connectionBadge(odooStatus)}
-              </CardTitle>
-              <CardDescription>
-                Configura la conexion a tu instancia de Odoo para sincronizar facturas, pagos y contactos.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="odoo-url">URL del servidor</Label>
-                  <Input id="odoo-url" placeholder="https://mi-empresa.odoo.com" value={settings.odoo.url} onChange={(e) => update("odoo", "url", e.target.value)} />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="odoo-db">Base de datos</Label>
-                  <Input id="odoo-db" placeholder="mi_empresa_db" value={settings.odoo.database} onChange={(e) => update("odoo", "database", e.target.value)} />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="odoo-user">Usuario</Label>
-                  <Input id="odoo-user" placeholder="admin@mi-empresa.com" value={settings.odoo.user} onChange={(e) => update("odoo", "user", e.target.value)} />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="odoo-password">Contrasena</Label>
-                  <Input id="odoo-password" type="password" placeholder="••••••••" value={settings.odoo.password} onChange={(e) => update("odoo", "password", e.target.value)} />
-                </div>
-              </div>
-              <Separator />
-              <div className="flex gap-3">
-                <Button variant="outline" onClick={handleTestOdoo} disabled={odooStatus === "testing" || odooStatus === "syncing"}>
-                  {odooStatus === "testing" ? "Probando..." : "Probar conexion"}
-                </Button>
-                <Button variant="outline" onClick={handleSyncOdoo} disabled={odooStatus === "syncing" || odooStatus === "testing"}>
-                  {odooStatus === "syncing" ? "Sincronizando..." : "Sincronizar"}
-                </Button>
-                <Button onClick={handleSaveOdoo}>Guardar</Button>
-              </div>
-              {lastSync.odoo && (
-                <p className="text-xs text-muted-foreground mt-3">Ultima sincronizacion: {lastSync.odoo}</p>
-              )}
-              <SyncStatus provider="odoo" syncLogId={odooSyncLogId} isRunning={odooStatus === "syncing"} />
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* Fintoc / Banco Tab */}
-        <TabsContent value="fintoc">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-3">
-                Fintoc / Banco {connectionBadge(fintocStatus)}
-              </CardTitle>
-              <CardDescription>
-                Credenciales de Fintoc para ejecutar pagos y consultar movimientos bancarios.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="fintoc-secret">Secret Key</Label>
-                  <Input id="fintoc-secret" type="password" placeholder="sk_live_..." value={settings.fintoc.secretKey} onChange={(e) => update("fintoc", "secretKey", e.target.value)} />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="fintoc-public">Public Key</Label>
-                  <Input id="fintoc-public" placeholder="pk_live_..." value={settings.fintoc.publicKey} onChange={(e) => update("fintoc", "publicKey", e.target.value)} />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="fintoc-webhook">Webhook Secret</Label>
-                  <Input id="fintoc-webhook" type="password" placeholder="whsec_..." value={settings.fintoc.webhookSecret} onChange={(e) => update("fintoc", "webhookSecret", e.target.value)} />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="fintoc-account">Account ID</Label>
-                  <Input id="fintoc-account" placeholder="acc_..." value={settings.fintoc.accountId} onChange={(e) => update("fintoc", "accountId", e.target.value)} />
-                </div>
-                <div className="space-y-2 sm:col-span-2">
-                  <Label htmlFor="fintoc-link-token">Link Token (Fiscal Links)</Label>
-                  <div className="flex gap-2">
-                    <Input id="fintoc-link-token" placeholder="link_token del widget Fintoc para facturas SAT" value={settings.fintoc.linkToken} onChange={(e) => update("fintoc", "linkToken", e.target.value)} className="flex-1" />
-                    <FintocWidget
-                      publicKey={settings.fintoc.publicKey}
-                      onLinkToken={(token) => update("fintoc", "linkToken", token)}
-                    />
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    Conecta tu cuenta fiscal via el widget o pega el token manualmente. Permite sincronizar facturas del SAT.
-                  </p>
-                </div>
-              </div>
-              <Separator />
-              <div className="flex gap-3">
-                <Button variant="outline" onClick={handleTestFintoc} disabled={fintocStatus === "testing" || fintocStatus === "syncing"}>
-                  {fintocStatus === "testing" ? "Probando..." : "Probar conexion"}
-                </Button>
-                <Button variant="outline" onClick={handleSyncFintoc} disabled={fintocStatus === "syncing" || fintocStatus === "testing"}>
-                  {fintocStatus === "syncing" ? "Sincronizando..." : "Sincronizar"}
-                </Button>
-                <Button onClick={handleSaveFintoc}>Guardar</Button>
-              </div>
-              {lastSync.fintoc && (
-                <p className="text-xs text-muted-foreground mt-3">Ultima sincronizacion: {lastSync.fintoc}</p>
-              )}
-              <SyncStatus provider="fintoc" syncLogId={fintocSyncLogId} isRunning={fintocStatus === "syncing"} />
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* SAT Tab */}
-        <TabsContent value="sat">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-3">
-                SAT {connectionBadge(satStatus)}
-              </CardTitle>
-              <CardDescription>
-                Certificados de sello digital y proveedor PAC para timbrado de CFDI.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="sat-rfc">RFC Emisor</Label>
-                  <Input id="sat-rfc" placeholder="XAXX010101000" value={settings.sat.rfcEmisor} onChange={(e) => update("sat", "rfcEmisor", e.target.value.toUpperCase())} maxLength={13} />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="sat-key-password">Contrasena de llave privada</Label>
-                  <Input id="sat-key-password" type="password" placeholder="••••••••" value={settings.sat.keyPassword} onChange={(e) => update("sat", "keyPassword", e.target.value)} />
-                </div>
-                <div className="space-y-2 sm:col-span-2">
-                  <Label htmlFor="sat-pac">Proveedor PAC</Label>
-                  <Select value={settings.sat.pac} onValueChange={(v) => update("sat", "pac", v)}>
-                    <SelectTrigger id="sat-pac" className="w-full">
-                      <SelectValue placeholder="Selecciona un PAC" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="finkok">Finkok</SelectItem>
-                      <SelectItem value="sw_sapien">SW Sapien</SelectItem>
-                      <SelectItem value="digicel">Digicel</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
-              <Separator />
-
-              {/* Certificate file uploads */}
-              <div>
-                <p className="text-sm font-medium mb-4">Certificados de Sello Digital (CSD)</p>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="sat-cer-file">Certificado (.cer)</Label>
-                    <Input
-                      ref={cerInputRef}
-                      id="sat-cer-file"
-                      type="file"
-                      accept=".cer"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) {
-                          if (!file.name.toLowerCase().endsWith(".cer")) {
-                            toast.error("Solo se aceptan archivos .cer");
-                            e.target.value = "";
-                            return;
-                          }
-                          setSatCerFile(file);
-                        }
-                      }}
-                    />
-                    {satCerName && !satCerFile && (
-                      <p className="text-xs text-muted-foreground flex items-center gap-1">
-                        <span className="inline-block w-2 h-2 rounded-full bg-green-500" />
-                        Archivo cargado: {satCerName}
-                      </p>
-                    )}
-                    {satCerFile && (
-                      <p className="text-xs text-blue-600">
-                        Nuevo archivo seleccionado: {satCerFile.name} ({(satCerFile.size / 1024).toFixed(1)} KB)
-                      </p>
-                    )}
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="sat-key-file">Llave privada (.key)</Label>
-                    <Input
-                      ref={keyInputRef}
-                      id="sat-key-file"
-                      type="file"
-                      accept=".key"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) {
-                          if (!file.name.toLowerCase().endsWith(".key")) {
-                            toast.error("Solo se aceptan archivos .key");
-                            e.target.value = "";
-                            return;
-                          }
-                          setSatKeyFile(file);
-                        }
-                      }}
-                    />
-                    {satKeyName && !satKeyFile && (
-                      <p className="text-xs text-muted-foreground flex items-center gap-1">
-                        <span className="inline-block w-2 h-2 rounded-full bg-green-500" />
-                        Archivo cargado: {satKeyName}
-                      </p>
-                    )}
-                    {satKeyFile && (
-                      <p className="text-xs text-blue-600">
-                        Nuevo archivo seleccionado: {satKeyFile.name} ({(satKeyFile.size / 1024).toFixed(1)} KB)
-                      </p>
-                    )}
-                  </div>
-                </div>
-                {(satCerFile || satKeyFile) && (
-                  <div className="mt-3">
-                    <Button
-                      variant="outline"
-                      onClick={handleUploadSatFiles}
-                      disabled={satUploading}
-                    >
-                      {satUploading ? "Subiendo archivos..." : "Subir certificados"}
-                    </Button>
-                  </div>
-                )}
-              </div>
-
-              <Separator />
-              <div className="flex gap-3">
-                <Button variant="outline" onClick={handleValidateSat} disabled={satStatus === "validating" || satStatus === "syncing"}>
-                  {satStatus === "validating" ? "Validando..." : "Validar certificado"}
-                </Button>
-                <Button variant="outline" onClick={handleSyncSat} disabled={satStatus === "syncing" || satStatus === "validating"}>
-                  {satStatus === "syncing" ? "Validando CFDIs..." : "Revalidar CFDIs"}
-                </Button>
-                <Button onClick={handleSaveSat}>Guardar</Button>
-              </div>
-              {lastSync.sat && (
-                <p className="text-xs text-muted-foreground mt-3">Ultima validacion: {lastSync.sat}</p>
-              )}
-              <SyncStatus provider="sat" syncLogId={satSyncLogId} isRunning={satStatus === "syncing"} />
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* General Tab */}
-        <TabsContent value="general">
-          <Card>
-            <CardHeader>
-              <CardTitle>General</CardTitle>
-              <CardDescription>
-                Datos de la empresa y preferencias de notificaciones.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="gen-company">Nombre de empresa</Label>
-                  <Input id="gen-company" value={settings.general.companyName} onChange={(e) => update("general", "companyName", e.target.value)} />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="gen-rfc">RFC</Label>
-                  <Input id="gen-rfc" value={settings.general.rfc} disabled />
-                </div>
-                <div className="space-y-2">
-                  <Label>Plan</Label>
-                  <div className="flex items-center h-9">
-                    <Badge variant="default">{settings.general.plan}</Badge>
-                  </div>
-                </div>
-              </div>
-              <Separator />
-              <div>
-                <p className="text-sm font-medium mb-4">Notificaciones</p>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="gen-email">Email notificaciones</Label>
-                    <Input id="gen-email" type="email" placeholder="alertas@mi-empresa.com" value={settings.general.notificationEmail} onChange={(e) => update("general", "notificationEmail", e.target.value)} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="gen-slack">Slack webhook URL</Label>
-                    <Input id="gen-slack" placeholder="https://hooks.slack.com/services/..." value={settings.general.slackWebhook} onChange={(e) => update("general", "slackWebhook", e.target.value)} />
-                  </div>
-                </div>
-              </div>
-              <Separator />
-              <div>
-                <p className="text-sm font-medium mb-4">Configuracion SMTP</p>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="smtp-host">Host</Label>
-                    <Input id="smtp-host" placeholder="smtp.gmail.com" value={settings.general.smtpHost} onChange={(e) => update("general", "smtpHost", e.target.value)} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="smtp-port">Puerto</Label>
-                    <Input id="smtp-port" placeholder="587" value={settings.general.smtpPort} onChange={(e) => update("general", "smtpPort", e.target.value)} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="smtp-user">Usuario</Label>
-                    <Input id="smtp-user" placeholder="noreply@mi-empresa.com" value={settings.general.smtpUser} onChange={(e) => update("general", "smtpUser", e.target.value)} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="smtp-password">Contrasena</Label>
-                    <Input id="smtp-password" type="password" placeholder="••••••••" value={settings.general.smtpPassword} onChange={(e) => update("general", "smtpPassword", e.target.value)} />
-                  </div>
-                </div>
-              </div>
-              <Separator />
-              <div className="flex gap-3">
-                <Button onClick={handleSaveGeneral}>Guardar</Button>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
-    </div>
+    </PermissionGate>
   );
 }

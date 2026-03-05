@@ -1,31 +1,40 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { api } from "@/lib/api";
-import { Invoice } from "@/types";
+import { useState, useMemo } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { type ColumnDef } from "@tanstack/react-table";
 import { toast } from "sonner";
 import {
-  Plus,
-  RefreshCw,
-  Loader2,
-  Link2,
+  Receipt,
   Clock,
   AlertTriangle,
   BarChart3,
+  Link2,
+  Mail,
+  CreditCard,
+  Eye,
   Copy,
+  Loader2,
+  RefreshCw,
+  Plus,
+  Timer,
 } from "lucide-react";
+
+import { api } from "@/lib/api";
+import { formatMoney, formatDate } from "@/lib/utils/format";
+import type { Invoice } from "@/types";
+
+import { DataTable } from "@/components/shared/data-table";
+import { EmptyState } from "@/components/shared/empty-state";
+import { StatusBadge } from "@/components/shared/status-badge";
+import { KpiCard } from "@/components/shared/kpi-card";
+import { SearchInput } from "@/components/shared/search-input";
+import { ConfirmDialog } from "@/components/shared/confirm-dialog";
+import { PermissionGate } from "@/components/shared/permission-gate";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
   DialogContent,
@@ -36,32 +45,36 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 /* ---------- helpers ---------- */
-
-function formatMXN(amount: number): string {
-  return new Intl.NumberFormat("es-MX", {
-    style: "currency",
-    currency: "MXN",
-  }).format(amount);
-}
-
-function formatDate(dateStr?: string): string {
-  if (!dateStr) return "-";
-  return new Date(dateStr).toLocaleDateString("es-MX", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
-}
 
 function daysOverdue(dateStr?: string): number {
   if (!dateStr) return 0;
   const due = new Date(dateStr);
   const now = new Date();
-  const diff = Math.floor((now.getTime() - due.getTime()) / (1000 * 60 * 60 * 24));
+  const diff = Math.floor(
+    (now.getTime() - due.getTime()) / (1000 * 60 * 60 * 24)
+  );
   return diff > 0 ? diff : 0;
+}
+
+function agingBucket(days: number): string {
+  if (days <= 30) return "0-30";
+  if (days <= 60) return "31-60";
+  if (days <= 90) return "61-90";
+  return "90+";
 }
 
 /* ---------- Aging bucket type ---------- */
@@ -74,42 +87,35 @@ interface AgingBucket {
 
 /* ---------- PaymentLinkDialog ---------- */
 
-interface PaymentLinkDialogProps {
+function PaymentLinkDialog({
+  open,
+  onOpenChange,
+  invoice,
+}: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-}
-
-function PaymentLinkDialog({ open, onOpenChange }: PaymentLinkDialogProps) {
-  const [partnerId, setPartnerId] = useState("");
-  const [amount, setAmount] = useState("");
-  const [submitting, setSubmitting] = useState(false);
+  invoice: Invoice | null;
+}) {
   const [generatedUrl, setGeneratedUrl] = useState("");
 
-  function resetForm() {
-    setPartnerId("");
-    setAmount("");
-    setGeneratedUrl("");
-  }
-
-  async function handleGenerate(e: React.FormEvent) {
-    e.preventDefault();
-    if (!partnerId || !amount) {
-      toast.error("Completa los campos requeridos");
-      return;
-    }
-    setSubmitting(true);
-    try {
-      const result = await api.collections.paymentLink({
-        partner_id: parseInt(partnerId),
-        amount: parseFloat(amount),
-      });
-      setGeneratedUrl(result.payment_url || result.url || JSON.stringify(result));
+  const generateMutation = useMutation({
+    mutationFn: (data: { partner_id: number; amount: number }) =>
+      api.collections.paymentLink(data),
+    onSuccess: (result: any) => {
+      setGeneratedUrl(result.payment_url || result.url || "");
       toast.success("Link de pago generado");
-    } catch (err: any) {
+    },
+    onError: (err: Error) => {
       toast.error(err.message || "Error al generar link de pago");
-    } finally {
-      setSubmitting(false);
-    }
+    },
+  });
+
+  function handleGenerate() {
+    if (!invoice) return;
+    generateMutation.mutate({
+      partner_id: invoice.id,
+      amount: invoice.amount_residual ?? invoice.amount_total ?? 0,
+    });
   }
 
   function handleCopy() {
@@ -117,19 +123,20 @@ function PaymentLinkDialog({ open, onOpenChange }: PaymentLinkDialogProps) {
     toast.success("URL copiada al portapapeles");
   }
 
+  function handleClose() {
+    setGeneratedUrl("");
+    onOpenChange(false);
+  }
+
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(val) => {
-        if (!val) resetForm();
-        onOpenChange(val);
-      }}
-    >
+    <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Generar Link de Pago</DialogTitle>
           <DialogDescription>
-            Crea un link de pago para enviar a tu cliente.
+            {invoice
+              ? `Link de pago para ${invoice.partner_name || "cliente"} - ${invoice.name}`
+              : "Crea un link de pago para enviar a tu cliente."}
           </DialogDescription>
         </DialogHeader>
 
@@ -138,60 +145,149 @@ function PaymentLinkDialog({ open, onOpenChange }: PaymentLinkDialogProps) {
             <div className="grid gap-2">
               <Label>URL de pago</Label>
               <div className="flex items-center gap-2">
-                <Input value={generatedUrl} readOnly className="font-mono text-sm" />
-                <Button type="button" variant="outline" size="icon" onClick={handleCopy}>
+                <Input
+                  value={generatedUrl}
+                  readOnly
+                  className="font-mono text-sm"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  onClick={handleCopy}
+                >
                   <Copy className="size-4" />
                 </Button>
               </div>
             </div>
-            <DialogFooter className="pt-2">
-              <Button variant="outline" onClick={() => onOpenChange(false)}>
+            <DialogFooter>
+              <Button variant="outline" onClick={handleClose}>
                 Cerrar
               </Button>
             </DialogFooter>
           </div>
         ) : (
-          <form onSubmit={handleGenerate} className="grid gap-4 py-2">
-            <div className="grid gap-2">
-              <Label htmlFor="partner_id">ID del Cliente</Label>
-              <Input
-                id="partner_id"
-                type="number"
-                placeholder="Ej. 42"
-                value={partnerId}
-                onChange={(e) => setPartnerId(e.target.value)}
-              />
-            </div>
-
-            <div className="grid gap-2">
-              <Label htmlFor="link_amount">Monto (MXN)</Label>
-              <Input
-                id="link_amount"
-                type="number"
-                step="0.01"
-                min="0"
-                placeholder="0.00"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-              />
-            </div>
-
-            <DialogFooter className="pt-2">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => onOpenChange(false)}
-                disabled={submitting}
-              >
+          <div className="grid gap-4 py-2">
+            {invoice && (
+              <div className="rounded-md border p-3 text-sm space-y-1">
+                <p>
+                  <span className="text-muted-foreground">Cliente:</span>{" "}
+                  {invoice.partner_name}
+                </p>
+                <p>
+                  <span className="text-muted-foreground">Factura:</span>{" "}
+                  {invoice.name}
+                </p>
+                <p>
+                  <span className="text-muted-foreground">Monto:</span>{" "}
+                  {formatMoney(invoice.amount_residual ?? invoice.amount_total ?? 0)}
+                </p>
+              </div>
+            )}
+            <DialogFooter>
+              <Button variant="outline" onClick={handleClose}>
                 Cancelar
               </Button>
-              <Button type="submit" disabled={submitting}>
-                {submitting && <Loader2 className="mr-2 size-4 animate-spin" />}
+              <Button
+                onClick={handleGenerate}
+                disabled={generateMutation.isPending}
+              >
+                {generateMutation.isPending && (
+                  <Loader2 className="mr-2 size-4 animate-spin" />
+                )}
                 Generar Link
               </Button>
             </DialogFooter>
-          </form>
+          </div>
         )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ---------- ManualPaymentDialog ---------- */
+
+function ManualPaymentDialog({
+  open,
+  onOpenChange,
+  invoice,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  invoice: Invoice | null;
+}) {
+  const [amount, setAmount] = useState("");
+  const [reference, setReference] = useState("");
+
+  const registerMutation = useMutation({
+    mutationFn: (data: any) => api.payments.create(data),
+    onSuccess: () => {
+      toast.success("Pago registrado exitosamente");
+      setAmount("");
+      setReference("");
+      onOpenChange(false);
+    },
+    onError: (err: Error) => {
+      toast.error(err.message || "Error al registrar pago");
+    },
+  });
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!invoice || !amount) return;
+    registerMutation.mutate({
+      invoice_id: invoice.id,
+      amount: parseFloat(amount),
+      reference,
+      direction: "inbound",
+    });
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Registrar Pago Manual</DialogTitle>
+          <DialogDescription>
+            Registra un pago recibido para {invoice?.name || "esta factura"}.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="grid gap-4 py-2">
+          <div className="grid gap-2">
+            <Label>Monto (MXN)</Label>
+            <Input
+              type="number"
+              step="0.01"
+              min="0"
+              placeholder="0.00"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+            />
+          </div>
+          <div className="grid gap-2">
+            <Label>Referencia</Label>
+            <Input
+              placeholder="Referencia del pago"
+              value={reference}
+              onChange={(e) => setReference(e.target.value)}
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+            >
+              Cancelar
+            </Button>
+            <Button type="submit" disabled={registerMutation.isPending || !amount}>
+              {registerMutation.isPending && (
+                <Loader2 className="mr-2 size-4 animate-spin" />
+              )}
+              Registrar Pago
+            </Button>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );
@@ -200,76 +296,390 @@ function PaymentLinkDialog({ open, onOpenChange }: PaymentLinkDialogProps) {
 /* ---------- Main Page ---------- */
 
 export default function CobranzaPage() {
-  const [pending, setPending] = useState<Invoice[]>([]);
-  const [overdue, setOverdue] = useState<Invoice[]>([]);
-  const [aging, setAging] = useState<AgingBucket[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [setupLoading, setSetupLoading] = useState(false);
-  const [syncLoading, setSyncLoading] = useState(false);
+  const [search, setSearch] = useState("");
   const [linkDialogOpen, setLinkDialogOpen] = useState(false);
+  const [manualPayDialogOpen, setManualPayDialogOpen] = useState(false);
+  const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
+  const [activeTab, setActiveTab] = useState("pendientes");
 
-  async function fetchCollections() {
-    setLoading(true);
-    try {
-      const [pendingData, overdueData, agingData] = await Promise.all([
-        api.collections.pending(),
-        api.collections.overdue(),
-        api.collections.aging(),
-      ]);
-      setPending(pendingData);
-      setOverdue(overdueData);
-      // aging may come as an object with buckets or as an array
-      if (Array.isArray(agingData)) {
-        setAging(agingData);
-      } else if (agingData && typeof agingData === "object") {
-        // Convert object buckets to array
-        const buckets: AgingBucket[] = Object.entries(agingData).map(
-          ([bucket, value]: [string, any]) => ({
-            bucket,
-            count: value?.count ?? 0,
-            total: value?.total ?? value ?? 0,
-          })
-        );
-        setAging(buckets);
+  // TanStack Query
+  const pendingQuery = useQuery({
+    queryKey: ["collections", "pending"],
+    queryFn: () => api.collections.pending(),
+    staleTime: 30_000,
+  });
+
+  const overdueQuery = useQuery({
+    queryKey: ["collections", "overdue"],
+    queryFn: () => api.collections.overdue(),
+    staleTime: 30_000,
+  });
+
+  const agingQuery = useQuery({
+    queryKey: ["collections", "aging"],
+    queryFn: () => api.collections.aging(),
+    staleTime: 30_000,
+  });
+
+  const sendReminderMutation = useMutation({
+    mutationFn: (data: { invoice_id: number }) =>
+      api.collections.sendReminder(data),
+    onSuccess: () => toast.success("Recordatorio enviado"),
+    onError: (err: Error) =>
+      toast.error(err.message || "Error al enviar recordatorio"),
+  });
+
+  // Filtered data
+  const filteredPending = useMemo(() => {
+    const data = (pendingQuery.data ?? []) as Invoice[];
+    if (!search) return data;
+    const q = search.toLowerCase();
+    return data.filter(
+      (inv) =>
+        inv.partner_name?.toLowerCase().includes(q) ||
+        inv.name?.toLowerCase().includes(q) ||
+        inv.partner_rfc?.toLowerCase().includes(q)
+    );
+  }, [pendingQuery.data, search]);
+
+  const filteredOverdue = useMemo(() => {
+    const data = (overdueQuery.data ?? []) as Invoice[];
+    if (!search) return data;
+    const q = search.toLowerCase();
+    return data.filter(
+      (inv) =>
+        inv.partner_name?.toLowerCase().includes(q) ||
+        inv.name?.toLowerCase().includes(q) ||
+        inv.partner_rfc?.toLowerCase().includes(q)
+    );
+  }, [overdueQuery.data, search]);
+
+  // Aging buckets
+  const agingBuckets = useMemo((): AgingBucket[] => {
+    const raw = agingQuery.data;
+    if (Array.isArray(raw)) return raw;
+    if (raw && typeof raw === "object") {
+      return Object.entries(raw).map(([bucket, value]: [string, any]) => ({
+        bucket,
+        count: value?.count ?? 0,
+        total: value?.total ?? value ?? 0,
+      }));
+    }
+    // Compute from overdue data if API returns nothing structured
+    const overdue = (overdueQuery.data ?? []) as Invoice[];
+    const bucketMap: Record<string, AgingBucket> = {
+      "0-30 dias": { bucket: "0-30 dias", count: 0, total: 0 },
+      "31-60 dias": { bucket: "31-60 dias", count: 0, total: 0 },
+      "61-90 dias": { bucket: "61-90 dias", count: 0, total: 0 },
+      "90+ dias": { bucket: "90+ dias", count: 0, total: 0 },
+    };
+    overdue.forEach((inv) => {
+      const days = daysOverdue(inv.date_due);
+      const key = agingBucket(days) + " dias";
+      const b = bucketMap[key];
+      if (b) {
+        b.count += 1;
+        b.total += inv.amount_residual ?? inv.amount_total ?? 0;
       }
-    } catch (err: any) {
-      toast.error(err.message || "Error al cargar cobranza");
-    } finally {
-      setLoading(false);
-    }
+    });
+    return Object.values(bucketMap);
+  }, [agingQuery.data, overdueQuery.data]);
+
+  // Actions
+  function handlePaymentLink(invoice: Invoice) {
+    setSelectedInvoice(invoice);
+    setLinkDialogOpen(true);
   }
 
-  useEffect(() => {
-    fetchCollections();
-  }, []);
-
-  async function handleSetupAll() {
-    setSetupLoading(true);
-    try {
-      await api.collections.setupAll();
-      toast.success("CLABEs creadas exitosamente");
-      fetchCollections();
-    } catch (err: any) {
-      toast.error(err.message || "Error al crear CLABEs");
-    } finally {
-      setSetupLoading(false);
-    }
+  function handleReminder(invoice: Invoice) {
+    sendReminderMutation.mutate({ invoice_id: invoice.id });
   }
 
-  async function handleSync() {
-    setSyncLoading(true);
-    try {
-      await api.collections.sync();
-      toast.success("Sincronización completada");
-      fetchCollections();
-    } catch (err: any) {
-      toast.error(err.message || "Error al sincronizar");
-    } finally {
-      setSyncLoading(false);
-    }
+  function handleManualPayment(invoice: Invoice) {
+    setSelectedInvoice(invoice);
+    setManualPayDialogOpen(true);
   }
 
-  /* ---------- render ---------- */
+  // Actions column renderer
+  function ActionsCell({ invoice }: { invoice: Invoice }) {
+    return (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="sm">
+            Acciones
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem onClick={() => handlePaymentLink(invoice)}>
+            <Link2 className="mr-2 size-4" />
+            Generar Link de Pago
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => handleReminder(invoice)}>
+            <Mail className="mr-2 size-4" />
+            Enviar Recordatorio
+          </DropdownMenuItem>
+          <PermissionGate permission="payments:create">
+            <DropdownMenuItem onClick={() => handleManualPayment(invoice)}>
+              <CreditCard className="mr-2 size-4" />
+              Registrar Pago Manual
+            </DropdownMenuItem>
+          </PermissionGate>
+          <DropdownMenuItem>
+            <Eye className="mr-2 size-4" />
+            Ver Detalle
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    );
+  }
+
+  // Columns for Pendientes
+  const pendingColumns: ColumnDef<Invoice>[] = useMemo(
+    () => [
+      {
+        accessorKey: "partner_name",
+        header: "Cliente",
+        cell: ({ row }) => (
+          <span className="font-medium">
+            {row.original.partner_name || "-"}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "partner_rfc",
+        header: "RFC",
+        cell: ({ row }) => (
+          <span className="font-mono text-sm">
+            {row.original.partner_rfc || "-"}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "name",
+        header: "Factura #",
+        cell: ({ row }) => (
+          <span className="font-medium">{row.original.name}</span>
+        ),
+      },
+      {
+        accessorKey: "amount_total",
+        header: "Monto Total",
+        cell: ({ row }) => (
+          <span className="font-mono text-right">
+            {formatMoney(row.original.amount_total ?? 0)}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "amount_residual",
+        header: "Saldo Pendiente",
+        cell: ({ row }) => (
+          <span className="font-mono font-semibold">
+            {formatMoney(row.original.amount_residual ?? 0)}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "date_invoice",
+        header: "Fecha Emision",
+        cell: ({ row }) => (
+          <span className="text-muted-foreground">
+            {row.original.date_invoice
+              ? formatDate(row.original.date_invoice)
+              : "-"}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "date_due",
+        header: "Vencimiento",
+        cell: ({ row }) => (
+          <span className="text-muted-foreground">
+            {row.original.date_due ? formatDate(row.original.date_due) : "-"}
+          </span>
+        ),
+      },
+      {
+        id: "estado",
+        header: "Estado",
+        cell: ({ row }) => {
+          const status = row.original.payment_state || row.original.status || "pending";
+          return <StatusBadge status={status} />;
+        },
+      },
+      {
+        id: "acciones",
+        header: "Acciones",
+        enableSorting: false,
+        cell: ({ row }) => <ActionsCell invoice={row.original} />,
+      },
+    ],
+    []
+  );
+
+  // Columns for Vencidas (adds Dias Vencido column)
+  const overdueColumns: ColumnDef<Invoice>[] = useMemo(
+    () => [
+      {
+        accessorKey: "partner_name",
+        header: "Cliente",
+        cell: ({ row }) => (
+          <span className="font-medium">
+            {row.original.partner_name || "-"}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "partner_rfc",
+        header: "RFC",
+        cell: ({ row }) => (
+          <span className="font-mono text-sm">
+            {row.original.partner_rfc || "-"}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "name",
+        header: "Factura #",
+        cell: ({ row }) => (
+          <span className="font-medium">{row.original.name}</span>
+        ),
+      },
+      {
+        accessorKey: "amount_total",
+        header: "Monto Total",
+        cell: ({ row }) => (
+          <span className="font-mono">
+            {formatMoney(row.original.amount_total ?? 0)}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "amount_residual",
+        header: "Saldo Pendiente",
+        cell: ({ row }) => (
+          <span className="font-mono font-semibold">
+            {formatMoney(row.original.amount_residual ?? 0)}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "date_invoice",
+        header: "Fecha Emision",
+        cell: ({ row }) => (
+          <span className="text-muted-foreground">
+            {row.original.date_invoice
+              ? formatDate(row.original.date_invoice)
+              : "-"}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "date_due",
+        header: "Vencimiento",
+        cell: ({ row }) => (
+          <span className="text-muted-foreground">
+            {row.original.date_due ? formatDate(row.original.date_due) : "-"}
+          </span>
+        ),
+      },
+      {
+        id: "dias_vencido",
+        header: "Dias Vencido",
+        cell: ({ row }) => {
+          const days = daysOverdue(row.original.date_due);
+          return (
+            <Badge
+              variant="destructive"
+              className="font-mono"
+            >
+              {days} dias
+            </Badge>
+          );
+        },
+      },
+      {
+        id: "estado",
+        header: "Estado",
+        cell: ({ row }) => {
+          const status = row.original.payment_state || row.original.status || "overdue";
+          return <StatusBadge status={status} />;
+        },
+      },
+      {
+        id: "acciones",
+        header: "Acciones",
+        enableSorting: false,
+        cell: ({ row }) => <ActionsCell invoice={row.original} />,
+      },
+    ],
+    []
+  );
+
+  // Aging grouped columns
+  const agingTableColumns: ColumnDef<AgingBucket>[] = useMemo(
+    () => [
+      {
+        accessorKey: "bucket",
+        header: "Periodo",
+        cell: ({ row }) => (
+          <span className="font-medium">{row.original.bucket}</span>
+        ),
+      },
+      {
+        accessorKey: "count",
+        header: "Facturas",
+        cell: ({ row }) => <span>{row.original.count}</span>,
+      },
+      {
+        accessorKey: "total",
+        header: "Total",
+        cell: ({ row }) => (
+          <span className="font-mono font-semibold">
+            {formatMoney(row.original.total)}
+          </span>
+        ),
+      },
+    ],
+    []
+  );
+
+  const isLoading =
+    pendingQuery.isLoading || overdueQuery.isLoading || agingQuery.isLoading;
+
+  // Aging KPI data
+  const agingKpis = useMemo(() => {
+    const icons = [Clock, Timer, AlertTriangle, AlertTriangle] as const;
+    const colors = [
+      "border-green-200 dark:border-green-900",
+      "border-yellow-200 dark:border-yellow-900",
+      "border-orange-200 dark:border-orange-900",
+      "border-red-200 dark:border-red-900",
+    ];
+    return agingBuckets.map((b, i) => ({
+      ...b,
+      icon: icons[i] ?? AlertTriangle,
+      className: colors[i] ?? "",
+      destructive: i >= 3,
+    }));
+  }, [agingBuckets]);
+
+  // Aging bar chart (simple CSS bars)
+  const maxAgingTotal = useMemo(
+    () => Math.max(...agingBuckets.map((b) => b.total), 1),
+    [agingBuckets]
+  );
+
+  const toolbar = (
+    <div className="flex items-center gap-4">
+      <SearchInput
+        value={search}
+        onChange={setSearch}
+        placeholder="Buscar por cliente, RFC o factura..."
+        className="w-full max-w-sm"
+      />
+    </div>
+  );
 
   return (
     <div className="flex flex-col gap-6">
@@ -282,35 +692,41 @@ export default function CobranzaPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={handleSetupAll} disabled={setupLoading}>
-            {setupLoading ? (
-              <Loader2 className="mr-2 size-4 animate-spin" />
-            ) : (
-              <Plus className="mr-2 size-4" />
-            )}
-            Crear CLABEs
-          </Button>
-          <Button variant="outline" onClick={handleSync} disabled={syncLoading}>
-            {syncLoading ? (
-              <Loader2 className="mr-2 size-4 animate-spin" />
-            ) : (
-              <RefreshCw className="mr-2 size-4" />
-            )}
-            Sincronizar
-          </Button>
+          <PermissionGate permission="payments:create">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setSelectedInvoice(null);
+                setLinkDialogOpen(true);
+              }}
+            >
+              <Link2 className="mr-2 size-4" />
+              Generar Link de Pago
+            </Button>
+          </PermissionGate>
         </div>
       </div>
 
       {/* Tabs */}
-      <Tabs defaultValue="pendientes">
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList>
           <TabsTrigger value="pendientes">
             <Clock className="mr-1.5 size-4" />
             Pendientes
+            {pendingQuery.data && (
+              <Badge variant="secondary" className="ml-1.5">
+                {(pendingQuery.data as Invoice[]).length}
+              </Badge>
+            )}
           </TabsTrigger>
           <TabsTrigger value="vencidas">
             <AlertTriangle className="mr-1.5 size-4" />
             Vencidas
+            {overdueQuery.data && (
+              <Badge variant="destructive" className="ml-1.5">
+                {(overdueQuery.data as Invoice[]).length}
+              </Badge>
+            )}
           </TabsTrigger>
           <TabsTrigger value="aging">
             <BarChart3 className="mr-1.5 size-4" />
@@ -318,213 +734,117 @@ export default function CobranzaPage() {
           </TabsTrigger>
         </TabsList>
 
-        {/* ---- Tab: Pendientes ---- */}
+        {/* Tab: Pendientes */}
         <TabsContent value="pendientes">
-          <Card>
-            <CardHeader>
-              <CardTitle>Facturas pendientes de cobro</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {loading ? (
-                <div className="flex items-center justify-center py-12">
-                  <Loader2 className="size-6 animate-spin text-muted-foreground" />
-                </div>
-              ) : pending.length === 0 ? (
-                <p className="py-8 text-center text-sm text-muted-foreground">
-                  No hay facturas pendientes de cobro.
-                </p>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Cliente</TableHead>
-                      <TableHead>Factura</TableHead>
-                      <TableHead className="text-right">Monto</TableHead>
-                      <TableHead>Vencimiento</TableHead>
-                      <TableHead className="text-right">Acciones</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {pending.map((inv) => (
-                      <TableRow key={inv.id}>
-                        <TableCell>{inv.partner_name || "-"}</TableCell>
-                        <TableCell className="font-medium">{inv.name}</TableCell>
-                        <TableCell className="text-right font-mono">
-                          {formatMXN(
-                            inv.amount_residual ?? inv.amount_total ?? 0
-                          )}
-                        </TableCell>
-                        <TableCell className="text-muted-foreground">
-                          {formatDate(inv.date_due)}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => setLinkDialogOpen(true)}
-                          >
-                            <Link2 className="mr-1.5 size-3.5" />
-                            Link de pago
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
-            </CardContent>
-          </Card>
+          <DataTable
+            columns={pendingColumns}
+            data={filteredPending}
+            isLoading={pendingQuery.isLoading}
+            toolbar={toolbar}
+            emptyState={
+              <EmptyState
+                icon={Receipt}
+                title="Sin facturas pendientes"
+                description="No hay facturas pendientes de cobro en este momento."
+              />
+            }
+          />
         </TabsContent>
 
-        {/* ---- Tab: Vencidas ---- */}
+        {/* Tab: Vencidas */}
         <TabsContent value="vencidas">
-          <Card>
-            <CardHeader>
-              <CardTitle>Facturas vencidas</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {loading ? (
-                <div className="flex items-center justify-center py-12">
-                  <Loader2 className="size-6 animate-spin text-muted-foreground" />
-                </div>
-              ) : overdue.length === 0 ? (
-                <p className="py-8 text-center text-sm text-muted-foreground">
-                  No hay facturas vencidas.
-                </p>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Cliente</TableHead>
-                      <TableHead>Factura</TableHead>
-                      <TableHead className="text-right">Monto</TableHead>
-                      <TableHead>Vencimiento</TableHead>
-                      <TableHead>Dias vencida</TableHead>
-                      <TableHead className="text-right">Acciones</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {overdue.map((inv) => {
-                      const days = daysOverdue(inv.date_due);
-                      return (
-                        <TableRow key={inv.id}>
-                          <TableCell>{inv.partner_name || "-"}</TableCell>
-                          <TableCell className="font-medium">{inv.name}</TableCell>
-                          <TableCell className="text-right font-mono">
-                            {formatMXN(
-                              inv.amount_residual ?? inv.amount_total ?? 0
-                            )}
-                          </TableCell>
-                          <TableCell className="text-muted-foreground">
-                            {formatDate(inv.date_due)}
-                          </TableCell>
-                          <TableCell>
-                            <Badge
-                              variant={
-                                days > 60
-                                  ? "destructive"
-                                  : days > 30
-                                    ? "outline"
-                                    : "secondary"
-                              }
-                            >
-                              {days} dias
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-right">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => setLinkDialogOpen(true)}
-                            >
-                              <Link2 className="mr-1.5 size-3.5" />
-                              Link de pago
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              )}
-            </CardContent>
-          </Card>
+          <DataTable
+            columns={overdueColumns}
+            data={filteredOverdue}
+            isLoading={overdueQuery.isLoading}
+            toolbar={toolbar}
+            emptyState={
+              <EmptyState
+                icon={Receipt}
+                title="Sin facturas vencidas"
+                description="No hay facturas vencidas. Tu cartera esta al dia."
+              />
+            }
+          />
         </TabsContent>
 
-        {/* ---- Tab: Aging ---- */}
+        {/* Tab: Aging */}
         <TabsContent value="aging">
-          <Card>
-            <CardHeader>
-              <CardTitle>Resumen de antiguedad de saldos</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {loading ? (
-                <div className="flex items-center justify-center py-12">
-                  <Loader2 className="size-6 animate-spin text-muted-foreground" />
-                </div>
-              ) : aging.length === 0 ? (
-                <p className="py-8 text-center text-sm text-muted-foreground">
-                  No hay datos de aging disponibles.
-                </p>
-              ) : (
-                <div className="grid gap-4">
-                  {/* Summary cards */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                    {aging.map((bucket) => (
-                      <Card key={bucket.bucket}>
-                        <CardHeader className="pb-2">
-                          <CardTitle className="text-sm font-medium text-muted-foreground">
-                            {bucket.bucket}
-                          </CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                          <div className="text-2xl font-bold">
-                            {formatMXN(bucket.total)}
-                          </div>
-                          <p className="text-xs text-muted-foreground mt-1">
-                            {bucket.count} factura{bucket.count !== 1 ? "s" : ""}
-                          </p>
-                        </CardContent>
-                      </Card>
-                    ))}
-                  </div>
+          <div className="space-y-6">
+            {/* KPI Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              {agingKpis.map((kpi) => (
+                <KpiCard
+                  key={kpi.bucket}
+                  title={kpi.bucket}
+                  value={formatMoney(kpi.total)}
+                  icon={kpi.icon}
+                  description={`${kpi.count} factura${kpi.count !== 1 ? "s" : ""}`}
+                  destructive={kpi.destructive}
+                  className={kpi.className}
+                />
+              ))}
+            </div>
 
-                  {/* Aging table */}
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Periodo</TableHead>
-                        <TableHead className="text-right">Facturas</TableHead>
-                        <TableHead className="text-right">Total</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {aging.map((bucket) => (
-                        <TableRow key={bucket.bucket}>
-                          <TableCell className="font-medium">
-                            {bucket.bucket}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            {bucket.count}
-                          </TableCell>
-                          <TableCell className="text-right font-mono">
-                            {formatMXN(bucket.total)}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+            {/* Simple bar chart */}
+            <div className="rounded-md border p-4 space-y-3">
+              <h3 className="text-sm font-semibold text-muted-foreground">
+                Distribucion por antiguedad
+              </h3>
+              {agingBuckets.map((b, i) => {
+                const pct = (b.total / maxAgingTotal) * 100;
+                const barColors = [
+                  "bg-green-500",
+                  "bg-yellow-500",
+                  "bg-orange-500",
+                  "bg-red-500",
+                ];
+                return (
+                  <div key={b.bucket} className="flex items-center gap-3">
+                    <span className="w-24 text-sm text-muted-foreground shrink-0">
+                      {b.bucket}
+                    </span>
+                    <div className="flex-1 h-6 bg-muted rounded overflow-hidden">
+                      <div
+                        className={`h-full ${barColors[i] ?? "bg-gray-500"} rounded transition-all`}
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                    <span className="w-28 text-sm font-mono text-right shrink-0">
+                      {formatMoney(b.total)}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Aging grouped DataTable */}
+            <DataTable
+              columns={agingTableColumns}
+              data={agingBuckets}
+              isLoading={agingQuery.isLoading}
+              emptyState={
+                <EmptyState
+                  icon={BarChart3}
+                  title="Sin datos de aging"
+                  description="No hay datos de antiguedad de saldos disponibles."
+                />
+              }
+            />
+          </div>
         </TabsContent>
       </Tabs>
 
-      {/* Payment Link Dialog */}
+      {/* Dialogs */}
       <PaymentLinkDialog
         open={linkDialogOpen}
         onOpenChange={setLinkDialogOpen}
+        invoice={selectedInvoice}
+      />
+      <ManualPaymentDialog
+        open={manualPayDialogOpen}
+        onOpenChange={setManualPayDialogOpen}
+        invoice={selectedInvoice}
       />
     </div>
   );

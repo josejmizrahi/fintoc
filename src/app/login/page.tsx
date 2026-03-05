@@ -1,296 +1,407 @@
-"use client";
+'use client';
 
-import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
-import { toast } from "sonner";
-import { api } from "@/lib/api";
-import { useAuthStore } from "@/lib/store";
+import { useState, useEffect, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { toast } from 'sonner';
+import { Loader2, Eye, EyeOff, CreditCard, Shield, BarChart3, GitCompare } from 'lucide-react';
+import { z } from 'zod';
+import { api } from '@/lib/api';
+import { useAuthStore } from '@/lib/store';
+import { loginSchema, registerSchema, resetPasswordSchema } from '@/lib/utils/validation';
 import {
   Card,
   CardHeader,
   CardTitle,
   CardDescription,
   CardContent,
-} from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
-import { Separator } from "@/components/ui/separator";
+  CardFooter,
+} from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
+import { Label } from '@/components/ui/label';
+import { Separator } from '@/components/ui/separator';
 import {
   Tabs,
   TabsContent,
   TabsList,
   TabsTrigger,
-} from "@/components/ui/tabs";
+} from '@/components/ui/tabs';
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from '@/components/ui/form';
+
+type LoginValues = z.infer<typeof loginSchema>;
+type RegisterValues = z.infer<typeof registerSchema>;
+type ResetValues = z.infer<typeof resetPasswordSchema>;
+
+type View = 'auth' | 'reset' | 'new-password';
 
 export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginPageInner />
+    </Suspense>
+  );
+}
+
+function LoginPageInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const loginWithToken = useAuthStore((s) => s.loginWithToken);
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const [view, setView] = useState<View>(searchParams.get('reset') === 'true' ? 'new-password' : 'auth');
+  const [showPassword, setShowPassword] = useState(false);
 
-  // Redirect to dashboard if already authenticated
   useEffect(() => {
     if (isAuthenticated) {
-      router.replace("/");
+      router.replace('/');
     }
   }, [isAuthenticated, router]);
 
-  // Login state
-  const [loginEmail, setLoginEmail] = useState("");
-  const [loginPassword, setLoginPassword] = useState("");
-  const [loginLoading, setLoginLoading] = useState(false);
+  // Login form
+  const loginForm = useForm<LoginValues>({
+    resolver: zodResolver(loginSchema),
+    defaultValues: { email: '', password: '' },
+  });
 
-  // Register state
-  const [regEmail, setRegEmail] = useState("");
-  const [regPassword, setRegPassword] = useState("");
-  const [regName, setRegName] = useState("");
-  const [regCompanyName, setRegCompanyName] = useState("");
-  const [regRfc, setRegRfc] = useState("");
-  const [regLoading, setRegLoading] = useState(false);
+  // Register form
+  const registerForm = useForm<RegisterValues>({
+    resolver: zodResolver(registerSchema),
+    defaultValues: {
+      company_name: '',
+      rfc: '',
+      email: '',
+      password: '',
+      confirm_password: '',
+    },
+  });
 
-  // Demo
-  const [demoLoading, setDemoLoading] = useState(false);
+  // Reset form
+  const resetForm = useForm<ResetValues>({
+    resolver: zodResolver(resetPasswordSchema),
+    defaultValues: { email: '' },
+  });
 
-  async function handleLogin(e: React.FormEvent) {
-    e.preventDefault();
-    if (!loginEmail.trim() || !loginPassword.trim()) {
-      toast.error("Ingresa tu correo y contraseña");
-      return;
-    }
-    setLoginLoading(true);
+  async function onLogin(data: LoginValues) {
     try {
-      const res = await api.auth.login({
-        email: loginEmail.trim(),
-        password: loginPassword,
-      });
-      loginWithToken(res.access_token, res.user, res.tenant);
-      toast.success("Sesión iniciada correctamente");
-      router.push("/");
-    } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "Error al iniciar sesión"
+      const res = await api.auth.login(data);
+      loginWithToken(
+        res.access_token,
+        res.user,
+        { id: res.tenant?.id || res.company?.id, name: res.tenant?.name || res.company?.name, rfc: res.tenant?.rfc || res.company?.rfc },
+        res.role || res.user?.role || 'admin',
       );
-    } finally {
-      setLoginLoading(false);
+      toast.success('Sesion iniciada correctamente');
+      if (res.onboarding_completed === false) {
+        router.push('/onboarding');
+      } else {
+        router.push('/');
+      }
+    } catch (error) {
+      toast.error('Credenciales invalidas');
     }
   }
 
-  async function handleRegister(e: React.FormEvent) {
-    e.preventDefault();
-    if (
-      !regEmail.trim() ||
-      !regPassword.trim() ||
-      !regName.trim() ||
-      !regCompanyName.trim() ||
-      !regRfc.trim()
-    ) {
-      toast.error("Completa todos los campos");
-      return;
-    }
-    if (regPassword.length < 8) {
-      toast.error("La contraseña debe tener al menos 8 caracteres");
-      return;
-    }
-    setRegLoading(true);
+  async function onRegister(data: RegisterValues) {
     try {
       const res = await api.auth.register({
-        email: regEmail.trim(),
-        password: regPassword,
-        name: regName.trim(),
-        company_name: regCompanyName.trim(),
-        rfc: regRfc.trim().toUpperCase(),
+        email: data.email,
+        password: data.password,
+        company_name: data.company_name,
+        rfc: data.rfc,
       });
-      loginWithToken(res.access_token, res.user, res.tenant);
-      toast.success(`Empresa ${regCompanyName} registrada correctamente`);
-      router.push("/onboarding");
-    } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "Error al registrar"
+      loginWithToken(
+        res.access_token,
+        res.user,
+        { id: res.tenant?.id || res.company?.id, name: res.tenant?.name || res.company?.name, rfc: data.rfc },
+        'admin',
       );
-    } finally {
-      setRegLoading(false);
+      toast.success('Cuenta creada. Configura tus integraciones.');
+      router.push('/onboarding');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Error al registrar');
     }
   }
 
-  async function handleQuickStart() {
-    setDemoLoading(true);
+  async function onReset(data: ResetValues) {
     try {
-      // Generate unique demo account per session
-      const uid = crypto.randomUUID().slice(0, 8);
-      const demoEmail = `demo-${uid}@payana.demo`;
-      const demoPassword = crypto.randomUUID();
-      const res = await api.auth.register({
-        email: demoEmail,
-        password: demoPassword,
-        name: "Admin Demo",
-        company_name: `Demo Corp ${uid}`,
-        rfc: `XAXX010101${uid.slice(0, 3).toUpperCase()}`,
-      });
-      loginWithToken(res.access_token, res.user, res.tenant);
-      toast.success("Empresa demo creada. Bienvenido a Payana.");
-      router.push("/");
-    } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "Error al crear empresa demo"
-      );
-    } finally {
-      setDemoLoading(false);
+      await api.auth.resetPassword(data);
+      toast.success('Si el email existe, recibiras un link de recuperacion');
+      setView('auth');
+    } catch {
+      toast.success('Si el email existe, recibiras un link de recuperacion');
+      setView('auth');
     }
+  }
+
+  if (view === 'reset') {
+    return (
+      <div className="flex min-h-screen">
+        <BrandingPanel />
+        <div className="flex flex-1 items-center justify-center px-4 py-12">
+          <Card className="w-full max-w-md">
+            <CardHeader>
+              <CardTitle>Recuperar contrasena</CardTitle>
+              <CardDescription>
+                Ingresa tu email para recibir un link de recuperacion.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Form {...resetForm}>
+                <form onSubmit={resetForm.handleSubmit(onReset)} className="space-y-4">
+                  <FormField
+                    control={resetForm.control}
+                    name="email"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Email</FormLabel>
+                        <FormControl>
+                          <Input placeholder="tu@empresa.com" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <Button type="submit" className="w-full" disabled={resetForm.formState.isSubmitting}>
+                    {resetForm.formState.isSubmitting && <Loader2 className="mr-2 size-4 animate-spin" />}
+                    Enviar link de recuperacion
+                  </Button>
+                </form>
+              </Form>
+            </CardContent>
+            <CardFooter>
+              <Button variant="link" className="w-full" onClick={() => setView('auth')}>
+                Volver a iniciar sesion
+              </Button>
+            </CardFooter>
+          </Card>
+        </div>
+      </div>
+    );
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 px-4 dark:bg-zinc-950">
-      <div className="w-full max-w-md space-y-6">
-        {/* Branding */}
-        <div className="text-center space-y-2">
-          <h1 className="text-3xl font-bold tracking-tight">Payana</h1>
-          <p className="text-muted-foreground">
-            Plataforma de pagos y cobranza para empresas en México
-          </p>
-        </div>
-
-        <Card>
+    <div className="flex min-h-screen">
+      <BrandingPanel />
+      <div className="flex flex-1 items-center justify-center px-4 py-12">
+        <Card className="w-full max-w-md">
           <CardHeader>
             <CardTitle>Bienvenido</CardTitle>
             <CardDescription>
-              Inicia sesión o crea una cuenta para comenzar.
+              Inicia sesion o crea una cuenta para comenzar.
             </CardDescription>
           </CardHeader>
           <CardContent>
             <Tabs defaultValue="login" className="w-full">
               <TabsList className="grid w-full grid-cols-2">
-                <TabsTrigger value="login">Iniciar sesión</TabsTrigger>
+                <TabsTrigger value="login">Iniciar sesion</TabsTrigger>
                 <TabsTrigger value="register">Registrarse</TabsTrigger>
               </TabsList>
 
               {/* Login Tab */}
               <TabsContent value="login">
-                <form onSubmit={handleLogin} className="space-y-4 pt-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="login-email">Correo electrónico</Label>
-                    <Input
-                      id="login-email"
-                      type="email"
-                      placeholder="tu@empresa.com"
-                      value={loginEmail}
-                      onChange={(e) => setLoginEmail(e.target.value)}
-                      autoComplete="email"
+                <Form {...loginForm}>
+                  <form onSubmit={loginForm.handleSubmit(onLogin)} className="space-y-4 pt-2">
+                    <FormField
+                      control={loginForm.control}
+                      name="email"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Email</FormLabel>
+                          <FormControl>
+                            <Input placeholder="tu@empresa.com" autoComplete="email" {...field} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
                     />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="login-password">Contraseña</Label>
-                    <Input
-                      id="login-password"
-                      type="password"
-                      placeholder="••••••••"
-                      value={loginPassword}
-                      onChange={(e) => setLoginPassword(e.target.value)}
-                      autoComplete="current-password"
+                    <FormField
+                      control={loginForm.control}
+                      name="password"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Contrasena</FormLabel>
+                          <FormControl>
+                            <div className="relative">
+                              <Input
+                                type={showPassword ? 'text' : 'password'}
+                                placeholder="••••••••"
+                                autoComplete="current-password"
+                                {...field}
+                              />
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="absolute right-0 top-0 h-full px-3"
+                                onClick={() => setShowPassword(!showPassword)}
+                              >
+                                {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                              </Button>
+                            </div>
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
                     />
-                  </div>
-                  <Button type="submit" className="w-full" disabled={loginLoading}>
-                    {loginLoading ? "Iniciando sesión..." : "Iniciar sesión"}
-                  </Button>
-                </form>
+                    <div className="flex justify-end">
+                      <Button
+                        type="button"
+                        variant="link"
+                        className="px-0 text-sm"
+                        onClick={() => setView('reset')}
+                      >
+                        Olvidaste tu contrasena?
+                      </Button>
+                    </div>
+                    <Button type="submit" className="w-full" disabled={loginForm.formState.isSubmitting}>
+                      {loginForm.formState.isSubmitting && <Loader2 className="mr-2 size-4 animate-spin" />}
+                      Iniciar sesion
+                    </Button>
+                  </form>
+                </Form>
               </TabsContent>
 
               {/* Register Tab */}
               <TabsContent value="register">
-                <form onSubmit={handleRegister} className="space-y-4 pt-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="reg-name">Nombre completo</Label>
-                    <Input
-                      id="reg-name"
-                      placeholder="Juan Pérez"
-                      value={regName}
-                      onChange={(e) => setRegName(e.target.value)}
+                <Form {...registerForm}>
+                  <form onSubmit={registerForm.handleSubmit(onRegister)} className="space-y-4 pt-2">
+                    <FormField
+                      control={registerForm.control}
+                      name="company_name"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Nombre de la empresa</FormLabel>
+                          <FormControl>
+                            <Input placeholder="Mi Empresa SA de CV" {...field} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
                     />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="reg-email">Correo electrónico</Label>
-                    <Input
-                      id="reg-email"
-                      type="email"
-                      placeholder="tu@empresa.com"
-                      value={regEmail}
-                      onChange={(e) => setRegEmail(e.target.value)}
-                      autoComplete="email"
+                    <FormField
+                      control={registerForm.control}
+                      name="rfc"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>RFC</FormLabel>
+                          <FormControl>
+                            <Input
+                              placeholder="XAXX010101000"
+                              maxLength={13}
+                              {...field}
+                              onChange={(e) => field.onChange(e.target.value.toUpperCase())}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
                     />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="reg-password">Contraseña</Label>
-                    <Input
-                      id="reg-password"
-                      type="password"
-                      placeholder="Mínimo 8 caracteres"
-                      value={regPassword}
-                      onChange={(e) => setRegPassword(e.target.value)}
-                      autoComplete="new-password"
+                    <FormField
+                      control={registerForm.control}
+                      name="email"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Email</FormLabel>
+                          <FormControl>
+                            <Input placeholder="tu@empresa.com" autoComplete="email" {...field} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
                     />
-                  </div>
-
-                  <Separator />
-
-                  <div className="space-y-1">
-                    <p className="text-sm font-medium">Datos de la empresa</p>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="reg-company">Nombre de la empresa</Label>
-                    <Input
-                      id="reg-company"
-                      placeholder="Mi Empresa SA de CV"
-                      value={regCompanyName}
-                      onChange={(e) => setRegCompanyName(e.target.value)}
+                    <FormField
+                      control={registerForm.control}
+                      name="password"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Contrasena</FormLabel>
+                          <FormControl>
+                            <Input
+                              type="password"
+                              placeholder="Min 8 chars, 1 mayuscula, 1 numero"
+                              autoComplete="new-password"
+                              {...field}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
                     />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="reg-rfc">RFC</Label>
-                    <Input
-                      id="reg-rfc"
-                      placeholder="XAXX010101000"
-                      value={regRfc}
-                      onChange={(e) => setRegRfc(e.target.value.toUpperCase())}
-                      maxLength={13}
+                    <FormField
+                      control={registerForm.control}
+                      name="confirm_password"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Confirmar contrasena</FormLabel>
+                          <FormControl>
+                            <Input
+                              type="password"
+                              placeholder="Repite tu contrasena"
+                              autoComplete="new-password"
+                              {...field}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
                     />
-                  </div>
-
-                  <Button type="submit" className="w-full" disabled={regLoading}>
-                    {regLoading ? "Registrando..." : "Crear cuenta"}
-                  </Button>
-                </form>
+                    <Button type="submit" className="w-full" disabled={registerForm.formState.isSubmitting}>
+                      {registerForm.formState.isSubmitting && <Loader2 className="mr-2 size-4 animate-spin" />}
+                      Crear cuenta
+                    </Button>
+                  </form>
+                </Form>
               </TabsContent>
             </Tabs>
-
-            <div className="relative my-6">
-              <div className="absolute inset-0 flex items-center">
-                <Separator />
-              </div>
-              <div className="relative flex justify-center text-xs uppercase">
-                <span className="bg-card px-2 text-muted-foreground">
-                  o bien
-                </span>
-              </div>
-            </div>
-
-            <Button
-              variant="outline"
-              className="w-full"
-              onClick={handleQuickStart}
-              disabled={demoLoading}
-            >
-              {demoLoading
-                ? "Creando demo..."
-                : "Inicio rápido con empresa demo"}
-            </Button>
-
-            <p className="mt-4 text-center text-xs text-muted-foreground">
-              Al continuar, aceptas los términos de servicio y la política de
-              privacidad de Payana.
-            </p>
           </CardContent>
         </Card>
       </div>
+    </div>
+  );
+}
+
+function BrandingPanel() {
+  return (
+    <div className="hidden lg:flex lg:w-1/2 bg-primary text-primary-foreground flex-col justify-center px-12 py-16">
+      <div className="max-w-md">
+        <div className="flex items-center gap-3 mb-8">
+          <div className="flex size-12 items-center justify-center rounded-xl bg-primary-foreground/20 font-bold text-xl">
+            Q
+          </div>
+          <span className="text-3xl font-bold">Quimibond</span>
+        </div>
+        <h2 className="text-2xl font-semibold mb-4">
+          Plataforma financiera para empresas en Mexico
+        </h2>
+        <p className="text-primary-foreground/80 mb-8">
+          Gestiona pagos SPEI, facturas CFDI, cobranza y conciliacion fiscal en un solo lugar.
+        </p>
+        <div className="space-y-4">
+          <Feature icon={CreditCard} text="Pagos SPEI instantaneos via Fintoc" />
+          <Feature icon={Shield} text="Validacion CFDI y compliance SAT" />
+          <Feature icon={GitCompare} text="Conciliacion automatica SAT-Odoo" />
+          <Feature icon={BarChart3} text="Reportes financieros en tiempo real" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Feature({ icon: Icon, text }: { icon: any; text: string }) {
+  return (
+    <div className="flex items-center gap-3">
+      <div className="flex size-8 items-center justify-center rounded-lg bg-primary-foreground/20">
+        <Icon className="size-4" />
+      </div>
+      <span className="text-sm">{text}</span>
     </div>
   );
 }

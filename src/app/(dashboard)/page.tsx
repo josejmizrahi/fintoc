@@ -1,20 +1,26 @@
-"use client";
+'use client';
 
-import { useEffect, useState } from "react";
-import Link from "next/link";
+import { useState } from 'react';
+import Link from 'next/link';
+import { useQuery } from '@tanstack/react-query';
 import {
   DollarSign,
   TrendingUp,
   TrendingDown,
-  Activity,
-  FileText,
   AlertTriangle,
-  CheckCircle,
-  Shield,
+  CreditCard,
+  ArrowRight,
   Plug,
-} from "lucide-react";
-import { api } from "@/lib/api";
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+} from 'lucide-react';
+import { api } from '@/lib/api';
+import { formatMoney, formatDate, formatRelative } from '@/lib/utils/format';
+import { StatusBadge } from '@/components/shared/status-badge';
+import { KpiCard } from '@/components/shared/kpi-card';
+import { EmptyState } from '@/components/shared/empty-state';
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table,
   TableHeader,
@@ -22,175 +28,66 @@ import {
   TableHead,
   TableBody,
   TableCell,
-} from "@/components/ui/table";
-import { Badge } from "@/components/ui/badge";
-import type { DashboardData } from "@/types";
-
-function formatCurrency(amount: number): string {
-  return new Intl.NumberFormat("es-MX", {
-    style: "currency",
-    currency: "MXN",
-  }).format(amount);
-}
-
-function statusBadgeVariant(
-  status: string
-): "default" | "secondary" | "destructive" {
-  const s = status.toLowerCase();
-  if (s === "completed" || s === "paid") return "default";
-  if (s === "pending") return "secondary";
-  if (s === "failed") return "destructive";
-  return "secondary";
-}
-
-function KPISkeleton() {
-  return (
-    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-      {Array.from({ length: 8 }).map((_, i) => (
-        <Card key={i}>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <div className="h-4 w-24 bg-muted animate-pulse rounded" />
-            <div className="h-4 w-4 bg-muted animate-pulse rounded" />
-          </CardHeader>
-          <CardContent>
-            <div className="h-7 w-32 bg-muted animate-pulse rounded" />
-          </CardContent>
-        </Card>
-      ))}
-    </div>
-  );
-}
-
-function TableSkeleton() {
-  return (
-    <div className="space-y-2">
-      {Array.from({ length: 4 }).map((_, i) => (
-        <div key={i} className="h-10 w-full bg-muted animate-pulse rounded" />
-      ))}
-    </div>
-  );
-}
+} from '@/components/ui/table';
+import {
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip as RechartsTooltip,
+  ResponsiveContainer,
+} from 'recharts';
 
 export default function DashboardPage() {
-  const [data, setData] = useState<DashboardData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [period, setPeriod] = useState<'7d' | '30d' | '90d' | '12m'>('30d');
 
-  useEffect(() => {
-    api
-      .dashboard()
-      .then((res: DashboardData) => {
-        setData(res);
-      })
-      .catch((err: Error) => {
-        setError(err.message || "Error al cargar el dashboard");
-      })
-      .finally(() => {
-        setLoading(false);
-      });
-    // Check onboarding status
-    api.onboarding.status().then((res) => {
-      if (!res.onboarding_completed) setShowOnboarding(true);
-    }).catch(() => {});
-  }, []);
+  const { data: dashboard, isLoading } = useQuery({
+    queryKey: ['dashboard'],
+    queryFn: () => api.dashboard(),
+    staleTime: 30_000,
+  });
 
-  if (error) {
+  const { data: cashFlow, isLoading: cashFlowLoading } = useQuery({
+    queryKey: ['dashboard', 'cash-flow', period],
+    queryFn: () => api.reports.cashFlow({ period }),
+    staleTime: 60_000,
+  });
+
+  const { data: onboarding } = useQuery({
+    queryKey: ['onboarding', 'status'],
+    queryFn: () => api.onboarding.status(),
+    staleTime: 300_000,
+  });
+
+  const showOnboarding = onboarding && !onboarding.onboarding_completed;
+
+  if (isLoading) {
     return (
-      <div className="p-6">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-destructive">Error</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-muted-foreground">{error}</p>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
-
-  if (loading || !data) {
-    return (
-      <div className="p-6 space-y-6">
-        <h1 className="text-3xl font-bold">Dashboard</h1>
-        <KPISkeleton />
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Pagos Recientes</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <TableSkeleton />
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader>
-              <CardTitle>Facturas Vencidas</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <TableSkeleton />
-            </CardContent>
-          </Card>
+      <div className="space-y-6">
+        <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Card key={i}>
+              <CardHeader className="pb-2">
+                <Skeleton className="h-4 w-24" />
+              </CardHeader>
+              <CardContent>
+                <Skeleton className="h-8 w-32" />
+              </CardContent>
+            </Card>
+          ))}
         </div>
+        <Skeleton className="h-64 w-full" />
       </div>
     );
   }
 
-  const kpis = [
-    {
-      title: "Saldo Total",
-      value: formatCurrency(data.total_balance),
-      icon: DollarSign,
-      destructive: false,
-    },
-    {
-      title: "Cuentas por Cobrar",
-      value: formatCurrency(data.accounts_receivable),
-      icon: TrendingUp,
-      destructive: false,
-    },
-    {
-      title: "Cuentas por Pagar",
-      value: formatCurrency(data.accounts_payable),
-      icon: TrendingDown,
-      destructive: false,
-    },
-    {
-      title: "Posición Neta",
-      value: formatCurrency(data.net_position),
-      icon: Activity,
-      destructive: false,
-    },
-    {
-      title: "Facturas Pendientes",
-      value: data.pending_invoices_count.toString(),
-      icon: FileText,
-      destructive: false,
-    },
-    {
-      title: "Facturas Vencidas",
-      value: data.overdue_invoices.toString(),
-      icon: AlertTriangle,
-      destructive: data.overdue_invoices > 0,
-    },
-    {
-      title: "Aprobaciones Pendientes",
-      value: data.pending_approvals.toString(),
-      icon: CheckCircle,
-      destructive: false,
-    },
-    {
-      title: "Alertas SAT",
-      value: data.sat_issues.toString(),
-      icon: Shield,
-      destructive: false,
-    },
-  ];
+  const data = dashboard || {};
 
   return (
-    <div className="p-6 space-y-6">
-      <h1 className="text-3xl font-bold">Dashboard</h1>
+    <div className="space-y-6">
+      <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
 
       {showOnboarding && (
         <Link href="/onboarding">
@@ -211,144 +108,160 @@ export default function DashboardPage() {
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-        {kpis.map((kpi) => {
-          const Icon = kpi.icon;
-          return (
-            <Card key={kpi.title}>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">
-                  {kpi.title}
-                </CardTitle>
-                <Icon
-                  className={`h-4 w-4 ${
-                    kpi.destructive
-                      ? "text-destructive"
-                      : "text-muted-foreground"
-                  }`}
-                />
-              </CardHeader>
-              <CardContent>
-                <div
-                  className={`text-2xl font-bold ${
-                    kpi.destructive ? "text-destructive" : ""
-                  }`}
-                >
-                  {kpi.value}
-                </div>
-              </CardContent>
-            </Card>
-          );
-        })}
+        <KpiCard
+          title="Saldo Actual"
+          value={formatMoney(data.total_balance ?? 0)}
+          icon={DollarSign}
+          trend={(data.total_balance ?? 0) >= 0 ? 'up' : 'down'}
+        />
+        <KpiCard
+          title="Por Cobrar"
+          value={formatMoney(data.accounts_receivable ?? 0)}
+          icon={TrendingUp}
+          description={`${data.pending_invoices_count ?? 0} facturas`}
+        />
+        <KpiCard
+          title="Por Pagar"
+          value={formatMoney(data.accounts_payable ?? 0)}
+          icon={TrendingDown}
+          description={`${data.pending_bills_count ?? 0} facturas`}
+        />
+        <KpiCard
+          title="Vencidas"
+          value={formatMoney(data.overdue_amount ?? 0)}
+          icon={AlertTriangle}
+          description={`${data.overdue_invoices ?? 0} facturas`}
+          destructive={(data.overdue_invoices ?? 0) > 0}
+        />
       </div>
 
-      {/* Tables Section */}
+      {/* Cash Flow Chart */}
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <CardTitle>Flujo de Caja</CardTitle>
+          <div className="flex gap-1">
+            {(['7d', '30d', '90d', '12m'] as const).map((p) => (
+              <Button
+                key={p}
+                variant={period === p ? 'default' : 'ghost'}
+                size="sm"
+                onClick={() => setPeriod(p)}
+              >
+                {p}
+              </Button>
+            ))}
+          </div>
+        </CardHeader>
+        <CardContent>
+          {cashFlowLoading ? (
+            <Skeleton className="h-64 w-full" />
+          ) : cashFlow?.data?.length > 0 ? (
+            <ResponsiveContainer width="100%" height={280}>
+              <AreaChart data={cashFlow.data}>
+                <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                <XAxis dataKey="date" className="text-xs" />
+                <YAxis className="text-xs" tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
+                <RechartsTooltip formatter={(value) => formatMoney(Number(value))} />
+                <Area type="monotone" dataKey="ingresos" stroke="#22c55e" fill="#22c55e" fillOpacity={0.1} name="Ingresos" />
+                <Area type="monotone" dataKey="egresos" stroke="#ef4444" fill="#ef4444" fillOpacity={0.1} name="Egresos" />
+              </AreaChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="flex items-center justify-center h-64 text-muted-foreground text-sm">
+              Sin datos de flujo de caja para este periodo
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Recent Payments + Overdue Invoices */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Pagos Recientes */}
         <Card>
-          <CardHeader>
+          <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle>Pagos Recientes</CardTitle>
+            <Link href="/pagos">
+              <Button variant="ghost" size="sm">
+                Ver todos <ArrowRight className="ml-1 size-4" />
+              </Button>
+            </Link>
           </CardHeader>
           <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Referencia</TableHead>
-                  <TableHead>Monto</TableHead>
-                  <TableHead>Estado</TableHead>
-                  <TableHead>Fecha</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {data.recent_payments && data.recent_payments.length > 0 ? (
-                  data.recent_payments.map((payment) => (
-                    <TableRow key={payment.id}>
-                      <TableCell className="font-medium">
-                        {payment.reference_id || `PAY-${payment.id}`}
-                      </TableCell>
-                      <TableCell>{formatCurrency(payment.amount)}</TableCell>
+            {data.recent_payments?.length > 0 ? (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Concepto</TableHead>
+                    <TableHead className="text-right">Monto</TableHead>
+                    <TableHead>Estado</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {data.recent_payments.slice(0, 5).map((p: any) => (
+                    <TableRow key={p.id}>
                       <TableCell>
-                        <Badge variant={statusBadgeVariant(payment.status)}>
-                          {payment.status}
-                        </Badge>
+                        <div className="font-medium text-sm">{p.partner_name || p.reference_id || `PAY-${p.id}`}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {p.executed_at ? formatDate(p.executed_at) : p.created_at ? formatDate(p.created_at) : ''}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-sm">
+                        {formatMoney(p.amount)}
                       </TableCell>
                       <TableCell>
-                        {payment.executed_at
-                          ? new Date(payment.executed_at).toLocaleDateString(
-                              "es-MX"
-                            )
-                          : payment.created_at
-                            ? new Date(payment.created_at).toLocaleDateString(
-                                "es-MX"
-                              )
-                            : "—"}
+                        <StatusBadge status={p.status} />
                       </TableCell>
                     </TableRow>
-                  ))
-                ) : (
-                  <TableRow>
-                    <TableCell
-                      colSpan={4}
-                      className="text-center text-muted-foreground"
-                    >
-                      No hay pagos recientes
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
+                  ))}
+                </TableBody>
+              </Table>
+            ) : (
+              <EmptyState
+                icon={CreditCard}
+                title="No hay pagos recientes"
+                description="Los pagos apareceran aqui al crearlos."
+              />
+            )}
           </CardContent>
         </Card>
 
-        {/* Facturas Vencidas */}
         <Card>
-          <CardHeader>
+          <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle>Facturas Vencidas</CardTitle>
+            <Link href="/facturas?status=overdue">
+              <Button variant="ghost" size="sm">
+                Ver todas <ArrowRight className="ml-1 size-4" />
+              </Button>
+            </Link>
           </CardHeader>
           <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Factura</TableHead>
-                  <TableHead>Cliente</TableHead>
-                  <TableHead>Monto</TableHead>
-                  <TableHead>Vencimiento</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {data.overdue_invoice_list &&
-                data.overdue_invoice_list.length > 0 ? (
-                  data.overdue_invoice_list.map((invoice) => (
-                    <TableRow key={invoice.id}>
-                      <TableCell className="font-medium">
-                        {invoice.name}
-                      </TableCell>
-                      <TableCell>{invoice.partner_name || invoice.partner || "—"}</TableCell>
-                      <TableCell>
-                        {formatCurrency(
-                          invoice.amount_residual ??
-                            invoice.amount_total ??
-                            0
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        {invoice.date_due
-                          ? new Date(invoice.date_due).toLocaleDateString("es-MX")
-                          : "—"}
-                      </TableCell>
-                    </TableRow>
-                  ))
-                ) : (
-                  <TableRow>
-                    <TableCell
-                      colSpan={4}
-                      className="text-center text-muted-foreground"
-                    >
-                      No hay facturas vencidas
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
+            {data.overdue_invoice_list?.length > 0 ? (
+              <div className="space-y-3">
+                {data.overdue_invoice_list.slice(0, 5).map((inv: any) => (
+                  <div key={inv.id} className="flex items-center justify-between py-2 border-b last:border-0">
+                    <div>
+                      <div className="font-medium text-sm">{inv.partner_name || inv.name}</div>
+                      <div className="text-xs text-muted-foreground">{inv.name}</div>
+                    </div>
+                    <div className="text-right">
+                      <div className="font-mono text-sm">
+                        {formatMoney(inv.amount_residual ?? inv.amount_total ?? 0)}
+                      </div>
+                      {inv.date_due && (
+                        <Badge variant="destructive" className="text-[10px]">
+                          {Math.max(0, Math.ceil((Date.now() - new Date(inv.date_due).getTime()) / 86400000))} dias
+                        </Badge>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <EmptyState
+                icon={AlertTriangle}
+                title="Sin facturas vencidas"
+                description="No hay facturas vencidas por el momento."
+              />
+            )}
           </CardContent>
         </Card>
       </div>

@@ -1,50 +1,69 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { api } from "@/lib/api";
+import { useState, useMemo, useCallback } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { type ColumnDef } from "@tanstack/react-table";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { type z } from "zod";
 import { toast } from "sonner";
 import {
-  TIPO_COMPROBANTE,
-  FORMA_PAGO,
-  EFOS_CODES,
-} from "@/lib/sat";
-import {
-  FileText,
   Search,
+  FileText,
   Upload,
-  RefreshCw,
-  Loader2,
   CheckCircle2,
   XCircle,
   AlertTriangle,
   ShieldAlert,
-  Download,
-  Ban,
   Shield,
+  Loader2,
+  Download,
+  RefreshCw,
+  Link as LinkIcon,
+  Eye,
 } from "lucide-react";
+
+import { api } from "@/lib/api";
+import { formatMoney, formatDate } from "@/lib/utils/format";
+import { satValidateSchema } from "@/lib/utils/validation";
+import { TIPO_COMPROBANTE } from "@/lib/sat";
+import type { CfdiDocument } from "@/types";
+
+import { DataTable } from "@/components/shared/data-table";
+import { EmptyState } from "@/components/shared/empty-state";
+import { SearchInput } from "@/components/shared/search-input";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
+  CardDescription,
 } from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Progress } from "@/components/ui/progress";
+import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form";
 import {
   Select,
   SelectContent,
@@ -52,374 +71,1147 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
-/* ---------- helpers ---------- */
+/* ------------------------------------------------------------------ */
+/* Types                                                               */
+/* ------------------------------------------------------------------ */
 
-function formatMXN(amount: number): string {
-  return new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN" }).format(amount);
+type SatValidateInput = z.infer<typeof satValidateSchema>;
+
+interface ValidationResult {
+  estado?: string;
+  esCancelable?: string;
+  estatusCancelacion?: string;
+  fechaTimbrado?: string;
+  efosStatus?: string;
+  efosCode?: string;
+  hasEfosIssue?: boolean;
+  isValid?: boolean;
 }
 
-function formatDate(dateStr?: string) {
-  if (!dateStr) return "-";
-  return new Date(dateStr).toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+interface BulkValidationResult {
+  uuid: string;
+  emisor?: string;
+  estado_anterior?: string;
+  estado_nuevo?: string;
+  efos_status?: string;
+  changed?: boolean;
 }
 
-function satStatusBadge(status: string) {
-  const n = status?.toLowerCase() || "";
-  if (n === "vigente") return <Badge variant="default" className="bg-green-600 hover:bg-green-700 text-white">Vigente</Badge>;
-  if (n === "cancelado") return <Badge variant="destructive">Cancelado</Badge>;
-  if (n === "no encontrado") return <Badge variant="secondary" className="bg-yellow-500 hover:bg-yellow-600 text-white">No encontrado</Badge>;
+/* ------------------------------------------------------------------ */
+/* Semaforo helper: green / yellow / red                               */
+/* ------------------------------------------------------------------ */
+
+type SemaforoColor = "green" | "yellow" | "red";
+
+function getSemaforoColor(result: ValidationResult): SemaforoColor {
+  const estado = result.estado?.toLowerCase() ?? "";
+  const efos = result.efosStatus?.toLowerCase() ?? "";
+
+  if (estado === "cancelado") return "red";
+  if (efos === "definitive" || efos === "definitivo" || efos === "203")
+    return "red";
+  if (efos === "presumed" || efos === "201") return "yellow";
+  if (estado === "vigente") return "green";
+  return "yellow";
+}
+
+const SEMAFORO_STYLES: Record<SemaforoColor, string> = {
+  green:
+    "border-green-300 bg-green-50 dark:border-green-800 dark:bg-green-950",
+  yellow:
+    "border-yellow-300 bg-yellow-50 dark:border-yellow-800 dark:bg-yellow-950",
+  red: "border-red-300 bg-red-50 dark:border-red-800 dark:bg-red-950",
+};
+
+const SEMAFORO_RING: Record<SemaforoColor, string> = {
+  green: "ring-green-500",
+  yellow: "ring-yellow-500",
+  red: "ring-red-500",
+};
+
+const SEMAFORO_BG: Record<SemaforoColor, string> = {
+  green: "bg-green-500",
+  yellow: "bg-yellow-500",
+  red: "bg-red-500",
+};
+
+/* ------------------------------------------------------------------ */
+/* SAT Status Badge                                                    */
+/* ------------------------------------------------------------------ */
+
+function SatStatusBadge({ status }: { status?: string }) {
+  const s = status?.toLowerCase() ?? "";
+  if (s === "vigente")
+    return (
+      <Badge className="bg-green-600 hover:bg-green-700 text-white">
+        Vigente
+      </Badge>
+    );
+  if (s === "cancelado") return <Badge variant="destructive">Cancelado</Badge>;
+  if (s === "no encontrado")
+    return (
+      <Badge className="bg-yellow-500 hover:bg-yellow-600 text-white">
+        No encontrado
+      </Badge>
+    );
   return <Badge variant="outline">{status || "Desconocido"}</Badge>;
 }
 
-function efosStatusBadge(status: string) {
-  if (!status || status === "unknown") return <Badge variant="outline">Sin verificar</Badge>;
-  if (status === "clean") return <Badge variant="default" className="bg-green-600 text-white">Limpio</Badge>;
-  if (status === "presumed") return <Badge variant="secondary" className="bg-yellow-500 text-white">Presunto</Badge>;
-  if (status === "definitive") return <Badge variant="destructive">Definitivo</Badge>;
-  if (status === "disproved") return <Badge variant="default" className="bg-blue-600 text-white">Desvirtuado</Badge>;
-  if (status === "favorable") return <Badge variant="default" className="bg-blue-600 text-white">Favorable</Badge>;
+/* ------------------------------------------------------------------ */
+/* EFOS Badge                                                          */
+/* ------------------------------------------------------------------ */
+
+function EfosBadge({ status }: { status?: string }) {
+  if (!status || status === "unknown")
+    return <Badge variant="outline">Sin verificar</Badge>;
+  if (status === "clean" || status === "200")
+    return (
+      <Badge className="bg-green-600 text-white">
+        <Shield className="mr-1 size-3" />
+        Limpio
+      </Badge>
+    );
+  if (status === "presumed" || status === "201")
+    return (
+      <Badge className="bg-yellow-500 text-white">
+        <ShieldAlert className="mr-1 size-3" />
+        Presunto
+      </Badge>
+    );
+  if (status === "definitive" || status === "definitivo" || status === "203")
+    return (
+      <Badge variant="destructive">
+        <ShieldAlert className="mr-1 size-3" />
+        Definitivo
+      </Badge>
+    );
+  if (status === "disproved" || status === "202")
+    return <Badge className="bg-blue-600 text-white">Desvirtuado</Badge>;
+  if (status === "favorable" || status === "204")
+    return <Badge className="bg-blue-600 text-white">Favorable</Badge>;
   return <Badge variant="outline">{status}</Badge>;
 }
 
-function tipoComprobanteBadge(tipo: string) {
-  const label = TIPO_COMPROBANTE[tipo] || tipo;
-  const colors: Record<string, string> = { I: "bg-blue-100 text-blue-800", E: "bg-orange-100 text-orange-800", P: "bg-purple-100 text-purple-800", N: "bg-gray-100 text-gray-800", T: "bg-cyan-100 text-cyan-800" };
-  return <Badge variant="outline" className={colors[tipo] || ""}>{tipo} - {label}</Badge>;
-}
+/* ------------------------------------------------------------------ */
+/* Upload XML Dialog                                                   */
+/* ------------------------------------------------------------------ */
 
-/* ---------- Main Page ---------- */
-
-export default function SATPage() {
-  const [documents, setDocuments] = useState<any[]>([]);
-  const [docsLoading, setDocsLoading] = useState(true);
-  const [revalidating, setRevalidating] = useState(false);
-  const [valUuid, setValUuid] = useState("");
-  const [valRfcEmisor, setValRfcEmisor] = useState("");
-  const [valRfcReceptor, setValRfcReceptor] = useState("");
-  const [valTotal, setValTotal] = useState("");
-  const [validating, setValidating] = useState(false);
-  const [validationResult, setValidationResult] = useState<any | null>(null);
-  const [bulkUuids, setBulkUuids] = useState("");
-  const [bulkValidating, setBulkValidating] = useState(false);
-  const [bulkResults, setBulkResults] = useState<any | null>(null);
+function UploadXmlDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const queryClient = useQueryClient();
   const [xmlContent, setXmlContent] = useState("");
-  const [uploading, setUploading] = useState(false);
-  const [uploadResult, setUploadResult] = useState<any | null>(null);
-  const [efosData, setEfosData] = useState<any | null>(null);
-  const [efosLoading, setEfosLoading] = useState(false);
-  const [rfcInput, setRfcInput] = useState("");
-  const [rfcValidating, setRfcValidating] = useState(false);
-  const [rfcResult, setRfcResult] = useState<any | null>(null);
-  const [descargaFechaInicio, setDescargaFechaInicio] = useState("");
-  const [descargaFechaFin, setDescargaFechaFin] = useState("");
-  const [descargaTipo, setDescargaTipo] = useState("recibidos");
-  const [descargaSolicitud, setDescargaSolicitud] = useState("CFDI");
-  const [descargaTipoComp, setDescargaTipoComp] = useState("");
-  const [descargaLoading, setDescargaLoading] = useState(false);
-  const [descargaRequests, setDescargaRequests] = useState<any[]>([]);
-  const [cancelUuid, setCancelUuid] = useState("");
-  const [cancelMotivo, setCancelMotivo] = useState("");
-  const [cancelUuidSust, setCancelUuidSust] = useState("");
-  const [cancelling, setCancelling] = useState(false);
 
-  async function fetchDocuments() {
-    setDocsLoading(true);
-    try { setDocuments(await api.sat.documents()); } catch (err: any) { toast.error(err.message || "Error al cargar documentos SAT"); } finally { setDocsLoading(false); }
-  }
-  async function fetchEfosRisk() {
-    setEfosLoading(true);
-    try { setEfosData(await api.sat.efosRisk()); } catch { /* might not be available */ } finally { setEfosLoading(false); }
-  }
-  async function fetchDescargaRequests() {
-    try { setDescargaRequests(await api.sat.descargaRequests()); } catch { /* might not be available */ }
-  }
+  const uploadMutation = useMutation({
+    mutationFn: (data: { xml_content: string }) => api.sat.uploadXml(data),
+    onSuccess: () => {
+      toast.success("XML procesado exitosamente");
+      queryClient.invalidateQueries({ queryKey: ["sat", "documents"] });
+      setXmlContent("");
+      onOpenChange(false);
+    },
+    onError: (err: Error) => {
+      toast.error(err.message || "Error al subir XML");
+    },
+  });
 
-  useEffect(() => { fetchDocuments(); fetchEfosRisk(); fetchDescargaRequests(); }, []);
-
-  async function handleRevalidateAll() {
-    setRevalidating(true);
-    try {
-      const r = await api.sat.revalidateAll();
-      toast.success(`Revalidacion: ${r.vigentes || 0} vigentes, ${r.cancelados || 0} cancelados, ${r.efos_issues || 0} EFOS`);
-      fetchDocuments(); fetchEfosRisk();
-    } catch (err: any) { toast.error(err.message || "Error al revalidar"); } finally { setRevalidating(false); }
-  }
-
-  async function handleValidate(e: React.FormEvent) {
-    e.preventDefault();
-    if (!valUuid || !valRfcEmisor || !valRfcReceptor || !valTotal) { toast.error("Completa todos los campos"); return; }
-    setValidating(true); setValidationResult(null);
-    try { const r = await api.sat.validateFull({ uuid: valUuid, rfc_emisor: valRfcEmisor, rfc_receptor: valRfcReceptor, total: parseFloat(valTotal) }); setValidationResult(r); toast.success("Validacion completada"); }
-    catch (err: any) { toast.error(err.message || "Error al validar CFDI"); } finally { setValidating(false); }
-  }
-
-  async function handleBulkValidate() {
-    const uuids = bulkUuids.split("\n").map(u => u.trim()).filter(Boolean);
-    if (uuids.length === 0) { toast.error("Ingresa al menos un UUID"); return; }
-    setBulkValidating(true); setBulkResults(null);
-    try { const r = await api.sat.validateBulk({ uuids }); setBulkResults(r); toast.success(`Validacion masiva: ${uuids.length} UUID(s)`); }
-    catch (err: any) { toast.error(err.message || "Error en validacion masiva"); } finally { setBulkValidating(false); }
-  }
-
-  async function handleUploadXml() {
-    if (!xmlContent.trim()) { toast.error("Ingresa el contenido XML"); return; }
-    setUploading(true); setUploadResult(null);
-    try { const r = await api.sat.uploadXml({ xml_content: xmlContent }); setUploadResult(r); toast.success("XML procesado exitosamente"); fetchDocuments(); }
-    catch (err: any) { toast.error(err.message || "Error al subir XML"); } finally { setUploading(false); }
-  }
-
-  async function handleValidateRfc() {
-    if (!rfcInput.trim()) { toast.error("Ingresa un RFC"); return; }
-    setRfcValidating(true); setRfcResult(null);
-    try { const r = await api.sat.validateRfc({ rfc: rfcInput.trim() }); setRfcResult(r); toast.success(r.valid ? "RFC valido" : "RFC invalido"); }
-    catch (err: any) { toast.error(err.message || "Error al validar RFC"); } finally { setRfcValidating(false); }
-  }
-
-  async function handleDescargaSolicitud_() {
-    if (!descargaFechaInicio || !descargaFechaFin) { toast.error("Selecciona fechas"); return; }
-    setDescargaLoading(true);
-    try {
-      const r = await api.sat.descargaSolicitud({ request_type: descargaTipo, solicitud_type: descargaSolicitud, fecha_inicio: `${descargaFechaInicio}T00:00:00`, fecha_fin: `${descargaFechaFin}T23:59:59`, tipo_comprobante: descargaTipoComp || undefined });
-      toast.success(r.message || "Solicitud creada"); fetchDescargaRequests();
-    } catch (err: any) { toast.error(err.message || "Error al crear solicitud"); } finally { setDescargaLoading(false); }
-  }
-
-  async function handleCancelar() {
-    if (!cancelUuid || !cancelMotivo) { toast.error("UUID y motivo son requeridos"); return; }
-    setCancelling(true);
-    try {
-      const r = await api.sat.cancelar({ uuid: cancelUuid, motivo: cancelMotivo, uuid_sustitucion: cancelUuidSust || undefined });
-      toast.success(r.message || "Solicitud creada"); setCancelUuid(""); setCancelMotivo(""); setCancelUuidSust("");
-    } catch (err: any) { toast.error(err.message || "Error al cancelar"); } finally { setCancelling(false); }
+  function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith(".xml")) {
+      toast.error("Solo se aceptan archivos .xml");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (ev) => setXmlContent((ev.target?.result as string) || "");
+    reader.readAsText(file);
   }
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">SAT / CFDI</h1>
-          <p className="text-muted-foreground text-sm">Gestion completa: validacion, EFOS, descarga masiva y cancelacion.</p>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Subir XML CFDI</DialogTitle>
+          <DialogDescription>
+            Sube un archivo XML para procesar y registrar el CFDI.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-4 py-2">
+          <div className="grid gap-2">
+            <Label>Selecciona un archivo XML</Label>
+            <Input type="file" accept=".xml" onChange={handleFileUpload} />
+          </div>
+          {xmlContent && (
+            <div className="rounded-md border p-2 max-h-32 overflow-y-auto">
+              <pre className="text-xs font-mono text-muted-foreground whitespace-pre-wrap">
+                {xmlContent.slice(0, 500)}
+                {xmlContent.length > 500 ? "..." : ""}
+              </pre>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => onOpenChange(false)}>
+              Cancelar
+            </Button>
+            <Button
+              onClick={() => uploadMutation.mutate({ xml_content: xmlContent })}
+              disabled={!xmlContent || uploadMutation.isPending}
+            >
+              {uploadMutation.isPending && (
+                <Loader2 className="mr-2 size-4 animate-spin" />
+              )}
+              <Upload className="mr-2 size-4" />
+              Subir XML
+            </Button>
+          </DialogFooter>
         </div>
-        <Button onClick={handleRevalidateAll} disabled={revalidating}>
-          {revalidating ? <Loader2 className="mr-2 size-4 animate-spin" /> : <RefreshCw className="mr-2 size-4" />}
-          Revalidar Todo
-        </Button>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Descarga Masiva Dialog (3-step wizard)                              */
+/* ------------------------------------------------------------------ */
+
+function DescargaMasivaDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const [step, setStep] = useState(1);
+  const [fechaInicio, setFechaInicio] = useState("");
+  const [fechaFin, setFechaFin] = useState("");
+  const [tipo, setTipo] = useState("recibidos");
+  const [formato, setFormato] = useState("CFDI");
+  const [tipoComp, setTipoComp] = useState("");
+
+  const solicitudMutation = useMutation({
+    mutationFn: (data: {
+      request_type: string;
+      solicitud_type: string;
+      fecha_inicio: string;
+      fecha_fin: string;
+      tipo_comprobante?: string;
+    }) => api.sat.descargaSolicitud(data),
+    onSuccess: (result: { message?: string }) => {
+      toast.success(result.message || "Solicitud creada exitosamente");
+      setStep(3);
+    },
+    onError: (err: Error) => {
+      toast.error(err.message || "Error al crear solicitud");
+    },
+  });
+
+  function handleSubmit() {
+    solicitudMutation.mutate({
+      request_type: tipo,
+      solicitud_type: formato,
+      fecha_inicio: `${fechaInicio}T00:00:00`,
+      fecha_fin: `${fechaFin}T23:59:59`,
+      tipo_comprobante: tipoComp || undefined,
+    });
+  }
+
+  function handleClose() {
+    setStep(1);
+    setFechaInicio("");
+    setFechaFin("");
+    onOpenChange(false);
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={handleClose}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>
+            <Download className="inline mr-2 size-5" />
+            Descarga Masiva SAT
+          </DialogTitle>
+          <DialogDescription>
+            Paso {step} de 3 &mdash; Requiere certificado FIEL configurado.
+          </DialogDescription>
+        </DialogHeader>
+
+        {step === 1 && (
+          <div className="grid gap-4 py-2">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="grid gap-2">
+                <Label>Fecha Inicio</Label>
+                <Input
+                  type="date"
+                  value={fechaInicio}
+                  onChange={(e) => setFechaInicio(e.target.value)}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label>Fecha Fin</Label>
+                <Input
+                  type="date"
+                  value={fechaFin}
+                  onChange={(e) => setFechaFin(e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="grid gap-2">
+              <Label>Tipo</Label>
+              <Select value={tipo} onValueChange={setTipo}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="recibidos">Recibidos</SelectItem>
+                  <SelectItem value="emitidos">Emitidos</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={handleClose}>
+                Cancelar
+              </Button>
+              <Button
+                onClick={() => setStep(2)}
+                disabled={!fechaInicio || !fechaFin}
+              >
+                Siguiente
+              </Button>
+            </DialogFooter>
+          </div>
+        )}
+
+        {step === 2 && (
+          <div className="grid gap-4 py-2">
+            <div className="grid gap-2">
+              <Label>Formato</Label>
+              <Select value={formato} onValueChange={setFormato}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="CFDI">XML Completo</SelectItem>
+                  <SelectItem value="Metadata">Solo Metadata</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-2">
+              <Label>Tipo de Comprobante</Label>
+              <Select value={tipoComp} onValueChange={setTipoComp}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Todos" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">Todos</SelectItem>
+                  <SelectItem value="I">Ingreso</SelectItem>
+                  <SelectItem value="E">Egreso</SelectItem>
+                  <SelectItem value="P">Pago</SelectItem>
+                  <SelectItem value="N">Nomina</SelectItem>
+                  <SelectItem value="T">Traslado</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="rounded-md border p-3 text-sm text-muted-foreground">
+              <p>
+                <strong>Resumen:</strong> {tipo} del {fechaInicio} al{" "}
+                {fechaFin}, formato {formato}
+                {tipoComp ? `, tipo ${tipoComp}` : ", todos los tipos"}.
+              </p>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setStep(1)}>
+                Atras
+              </Button>
+              <Button
+                onClick={handleSubmit}
+                disabled={solicitudMutation.isPending}
+              >
+                {solicitudMutation.isPending && (
+                  <Loader2 className="mr-2 size-4 animate-spin" />
+                )}
+                Solicitar Descarga
+              </Button>
+            </DialogFooter>
+          </div>
+        )}
+
+        {step === 3 && (
+          <div className="py-4 text-center space-y-4">
+            <CheckCircle2 className="size-12 text-green-600 mx-auto" />
+            <p className="text-sm text-muted-foreground">
+              Solicitud enviada al SAT. El proceso puede tardar varios minutos.
+              Revisa el estado en la tabla de documentos.
+            </p>
+            <Button onClick={handleClose}>Cerrar</Button>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Link / Vincular Dialog                                              */
+/* ------------------------------------------------------------------ */
+
+function VincularDialog({
+  open,
+  onOpenChange,
+  document,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  document: CfdiDocument | null;
+}) {
+  const queryClient = useQueryClient();
+  const [invoiceId, setInvoiceId] = useState("");
+
+  const linkMutation = useMutation({
+    mutationFn: (data: { uuid: string; invoice_id: string }) =>
+      api.sat.validate(data as any),
+    onSuccess: () => {
+      toast.success("CFDI vinculado exitosamente");
+      queryClient.invalidateQueries({ queryKey: ["sat", "documents"] });
+      setInvoiceId("");
+      onOpenChange(false);
+    },
+    onError: (err: Error) => {
+      toast.error(err.message || "Error al vincular CFDI");
+    },
+  });
+
+  if (!document) return null;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Vincular CFDI</DialogTitle>
+          <DialogDescription>
+            Asocia el CFDI <span className="font-mono">{document.uuid}</span>{" "}
+            con una factura del sistema.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-4 py-2">
+          <div className="grid gap-2">
+            <Label>ID de Factura</Label>
+            <Input
+              placeholder="Ingresa el ID de la factura"
+              value={invoiceId}
+              onChange={(e) => setInvoiceId(e.target.value)}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => onOpenChange(false)}>
+              Cancelar
+            </Button>
+            <Button
+              onClick={() =>
+                linkMutation.mutate({
+                  uuid: document.uuid,
+                  invoice_id: invoiceId,
+                })
+              }
+              disabled={!invoiceId || linkMutation.isPending}
+            >
+              {linkMutation.isPending && (
+                <Loader2 className="mr-2 size-4 animate-spin" />
+              )}
+              <LinkIcon className="mr-2 size-4" />
+              Vincular
+            </Button>
+          </DialogFooter>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ================================================================== */
+/* Main Page                                                           */
+/* ================================================================== */
+
+export default function SATPage() {
+  const queryClient = useQueryClient();
+
+  /* ---- UI state ---- */
+  const [activeTab, setActiveTab] = useState("validar");
+  const [search, setSearch] = useState("");
+  const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
+  const [descargaDialogOpen, setDescargaDialogOpen] = useState(false);
+  const [showOnlyChanges, setShowOnlyChanges] = useState(false);
+  const [vincularOpen, setVincularOpen] = useState(false);
+  const [vincularDoc, setVincularDoc] = useState<CfdiDocument | null>(null);
+
+  /* ---- Validation result ---- */
+  const [validationResult, setValidationResult] =
+    useState<ValidationResult | null>(null);
+
+  /* ---- Bulk validation ---- */
+  const [bulkResults, setBulkResults] = useState<BulkValidationResult[]>([]);
+  const [bulkProgress, setBulkProgress] = useState(0);
+
+  /* ================================================================ */
+  /* Tab 1 - Validar CFDI                                             */
+  /* ================================================================ */
+
+  const validateForm = useForm<SatValidateInput>({
+    resolver: zodResolver(satValidateSchema),
+    defaultValues: { uuid: "", rfc_emisor: "", rfc_receptor: "", total: 0 },
+  });
+
+  const validateMutation = useMutation({
+    mutationFn: (data: SatValidateInput) => api.sat.validate(data),
+    onSuccess: (result: ValidationResult) => {
+      setValidationResult(result);
+      toast.success("Validacion completada");
+    },
+    onError: (err: Error) => {
+      toast.error(err.message || "Error al validar CFDI");
+    },
+  });
+
+  const onValidateSubmit = useCallback(
+    (data: SatValidateInput) => {
+      setValidationResult(null);
+      validateMutation.mutate(data);
+    },
+    [validateMutation],
+  );
+
+  /* ================================================================ */
+  /* Tab 2 - Validacion Masiva                                        */
+  /* ================================================================ */
+
+  const bulkValidateMutation = useMutation({
+    mutationFn: () => api.sat.validateBulk(),
+    onMutate: () => {
+      setBulkProgress(10);
+      setBulkResults([]);
+    },
+    onSuccess: (result: { results?: BulkValidationResult[]; total?: number }) => {
+      setBulkProgress(100);
+      const results = (result as any).results ?? result ?? [];
+      setBulkResults(Array.isArray(results) ? results : []);
+      toast.success("Validacion masiva completada");
+    },
+    onError: (err: Error) => {
+      setBulkProgress(0);
+      toast.error(err.message || "Error en validacion masiva");
+    },
+  });
+
+  const filteredBulkResults = useMemo(() => {
+    if (!showOnlyChanges) return bulkResults;
+    return bulkResults.filter((r) => r.changed);
+  }, [bulkResults, showOnlyChanges]);
+
+  const bulkColumns: ColumnDef<BulkValidationResult>[] = useMemo(
+    () => [
+      {
+        accessorKey: "uuid",
+        header: "UUID",
+        cell: ({ row }) => (
+          <span className="font-mono text-xs max-w-[160px] truncate block">
+            {row.original.uuid}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "emisor",
+        header: "Emisor",
+        cell: ({ row }) => (
+          <span className="text-sm">{row.original.emisor || "-"}</span>
+        ),
+      },
+      {
+        accessorKey: "estado_anterior",
+        header: "Estado Anterior",
+        cell: ({ row }) => (
+          <SatStatusBadge status={row.original.estado_anterior} />
+        ),
+      },
+      {
+        accessorKey: "estado_nuevo",
+        header: "Estado Nuevo",
+        cell: ({ row }) => (
+          <SatStatusBadge status={row.original.estado_nuevo} />
+        ),
+      },
+      {
+        accessorKey: "efos_status",
+        header: "EFOS",
+        cell: ({ row }) => <EfosBadge status={row.original.efos_status} />,
+      },
+      {
+        id: "cambio",
+        header: "Cambio?",
+        cell: ({ row }) =>
+          row.original.changed ? (
+            <Badge variant="destructive">Si</Badge>
+          ) : (
+            <Badge variant="outline">No</Badge>
+          ),
+      },
+    ],
+    [],
+  );
+
+  /* ================================================================ */
+  /* Tab 3 - Documentos CFDI                                          */
+  /* ================================================================ */
+
+  const documentsQuery = useQuery({
+    queryKey: ["sat", "documents", search],
+    queryFn: () => api.sat.documents(search ? { search } : undefined),
+    staleTime: 30_000,
+  });
+
+  const documents = (documentsQuery.data ?? []) as CfdiDocument[];
+
+  const documentColumns: ColumnDef<CfdiDocument>[] = useMemo(
+    () => [
+      {
+        accessorKey: "uuid",
+        header: "UUID",
+        cell: ({ row }) => (
+          <span className="font-mono text-xs max-w-[160px] truncate block">
+            {row.original.uuid || "-"}
+          </span>
+        ),
+      },
+      {
+        id: "emisor",
+        header: "Emisor",
+        cell: ({ row }) => (
+          <div>
+            <p className="text-sm truncate max-w-[150px]">
+              {row.original.nombre_emisor || "-"}
+            </p>
+            <p className="font-mono text-xs text-muted-foreground">
+              {row.original.rfc_emisor || ""}
+            </p>
+          </div>
+        ),
+      },
+      {
+        id: "receptor",
+        header: "Receptor",
+        cell: ({ row }) => (
+          <div>
+            <p className="text-sm truncate max-w-[150px]">
+              {row.original.nombre_receptor || "-"}
+            </p>
+            <p className="font-mono text-xs text-muted-foreground">
+              {row.original.rfc_receptor || ""}
+            </p>
+          </div>
+        ),
+      },
+      {
+        accessorKey: "tipo_comprobante",
+        header: "Tipo",
+        cell: ({ row }) => {
+          const tipo = row.original.tipo_comprobante;
+          const label = tipo ? TIPO_COMPROBANTE[tipo] || tipo : "-";
+          const colors: Record<string, string> = {
+            I: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
+            E: "bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200",
+            P: "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200",
+            N: "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200",
+            T: "bg-cyan-100 text-cyan-800 dark:bg-cyan-900 dark:text-cyan-200",
+          };
+          return tipo ? (
+            <Badge variant="outline" className={colors[tipo] || ""}>
+              {tipo} - {label}
+            </Badge>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          );
+        },
+      },
+      {
+        accessorKey: "total",
+        header: "Total",
+        cell: ({ row }) => (
+          <span className="font-mono text-sm">
+            {row.original.total != null
+              ? formatMoney(row.original.total)
+              : "-"}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "fecha_emision",
+        header: "Fecha",
+        cell: ({ row }) => (
+          <span className="text-muted-foreground text-sm">
+            {row.original.fecha_emision
+              ? formatDate(row.original.fecha_emision)
+              : row.original.fecha_timbrado
+                ? formatDate(row.original.fecha_timbrado)
+                : "-"}
+          </span>
+        ),
+      },
+      {
+        id: "vinculado",
+        header: "Vinculado?",
+        cell: ({ row }) =>
+          row.original.invoice_id ? (
+            <Badge
+              variant="outline"
+              className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+            >
+              <LinkIcon className="mr-1 size-3" />
+              Si
+            </Badge>
+          ) : (
+            <Badge variant="outline" className="text-muted-foreground">
+              No
+            </Badge>
+          ),
+      },
+      {
+        id: "acciones",
+        header: "Acciones",
+        enableSorting: false,
+        cell: ({ row }) => (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="sm">
+                Acciones
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem>
+                <Eye className="mr-2 size-4" />
+                Ver Detalle
+              </DropdownMenuItem>
+              <DropdownMenuItem>
+                <Download className="mr-2 size-4" />
+                Descargar XML
+              </DropdownMenuItem>
+              {!row.original.invoice_id && (
+                <DropdownMenuItem
+                  onClick={() => {
+                    setVincularDoc(row.original);
+                    setVincularOpen(true);
+                  }}
+                >
+                  <LinkIcon className="mr-2 size-4" />
+                  Vincular
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ),
+      },
+    ],
+    [],
+  );
+
+  /* ---- Semaforo visual helpers ---- */
+
+  function renderSemaforoIcon() {
+    if (!validationResult) return null;
+    const color = getSemaforoColor(validationResult);
+    return (
+      <div className="flex flex-col items-center gap-1.5">
+        <div
+          className={`size-14 rounded-full ${SEMAFORO_BG[color]} ring-4 ${SEMAFORO_RING[color]} ring-offset-2 ring-offset-background flex items-center justify-center`}
+        >
+          {color === "green" && (
+            <CheckCircle2 className="size-8 text-white" />
+          )}
+          {color === "yellow" && (
+            <AlertTriangle className="size-8 text-white" />
+          )}
+          {color === "red" && <XCircle className="size-8 text-white" />}
+        </div>
+        <span className="text-xs font-medium capitalize">{color === "green" ? "Valido" : color === "yellow" ? "Alerta" : "Invalido"}</span>
+      </div>
+    );
+  }
+
+  /* ================================================================ */
+  /* Render                                                            */
+  /* ================================================================ */
+
+  return (
+    <div className="flex flex-col gap-6">
+      {/* Header */}
+      <div>
+        <h1 className="text-2xl font-bold tracking-tight">SAT / CFDI</h1>
+        <p className="text-muted-foreground text-sm">
+          Validacion de CFDI, verificacion masiva y gestion de documentos
+          fiscales.
+        </p>
       </div>
 
-      {efosData && (efosData.vendors_at_risk > 0 || efosData.invoices_at_risk > 0) && (
-        <Card className="border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base flex items-center gap-2 text-red-700 dark:text-red-400">
-              <ShieldAlert className="size-5" /> Alerta EFOS - Riesgo de Facturacion Simulada
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-              <div><p className="text-muted-foreground">Proveedores en riesgo</p><p className="text-2xl font-bold text-red-600">{efosData.vendors_at_risk}</p></div>
-              <div><p className="text-muted-foreground">Facturas en riesgo</p><p className="text-2xl font-bold text-red-600">{efosData.invoices_at_risk}</p></div>
-              <div><p className="text-muted-foreground">Monto NO deducible</p><p className="text-2xl font-bold text-red-600">{formatMXN(efosData.non_deductible_amount || 0)}</p><p className="text-xs text-muted-foreground">EFOS 203</p></div>
-              <div><p className="text-muted-foreground">Monto en riesgo</p><p className="text-2xl font-bold text-yellow-600">{formatMXN(efosData.at_risk_amount || 0)}</p><p className="text-xs text-muted-foreground">EFOS 201</p></div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      <Tabs defaultValue="documentos">
-        <TabsList className="flex-wrap">
-          <TabsTrigger value="documentos"><FileText className="mr-1.5 size-4" />Documentos</TabsTrigger>
-          <TabsTrigger value="validar"><Search className="mr-1.5 size-4" />Validar</TabsTrigger>
-          <TabsTrigger value="subir"><Upload className="mr-1.5 size-4" />Subir XML</TabsTrigger>
-          <TabsTrigger value="efos"><Shield className="mr-1.5 size-4" />EFOS</TabsTrigger>
-          <TabsTrigger value="descarga"><Download className="mr-1.5 size-4" />Descarga Masiva</TabsTrigger>
-          <TabsTrigger value="cancelacion"><Ban className="mr-1.5 size-4" />Cancelacion</TabsTrigger>
+      {/* Tabs */}
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <TabsList>
+          <TabsTrigger value="validar">
+            <Search className="mr-1.5 size-4" />
+            Validar CFDI
+          </TabsTrigger>
+          <TabsTrigger value="masiva">
+            <RefreshCw className="mr-1.5 size-4" />
+            Validacion Masiva
+          </TabsTrigger>
+          <TabsTrigger value="documentos">
+            <FileText className="mr-1.5 size-4" />
+            Documentos CFDI
+          </TabsTrigger>
         </TabsList>
 
-        {/* Documents */}
-        <TabsContent value="documentos">
-          <Card>
-            <CardHeader><CardTitle>Documentos CFDI</CardTitle><CardDescription>Comprobantes fiscales con estado SAT y EFOS.</CardDescription></CardHeader>
-            <CardContent>
-              {docsLoading ? <div className="flex items-center justify-center py-12"><Loader2 className="size-6 animate-spin text-muted-foreground" /></div>
-              : documents.length === 0 ? <p className="py-8 text-center text-sm text-muted-foreground">No hay documentos CFDI registrados.</p>
-              : <div className="overflow-x-auto"><Table><TableHeader><TableRow>
-                <TableHead>UUID</TableHead><TableHead>Tipo</TableHead><TableHead>RFC Emisor</TableHead><TableHead>Emisor</TableHead>
-                <TableHead className="text-right">Total</TableHead><TableHead>Moneda</TableHead><TableHead>Estado SAT</TableHead>
-                <TableHead>EFOS</TableHead><TableHead>Metodo</TableHead><TableHead>Fecha</TableHead>
-              </TableRow></TableHeader><TableBody>
-                {documents.map((doc, idx) => (
-                  <TableRow key={doc.uuid || idx}>
-                    <TableCell className="font-mono text-xs max-w-[160px] truncate">{doc.uuid || "-"}</TableCell>
-                    <TableCell>{doc.tipo_comprobante ? tipoComprobanteBadge(doc.tipo_comprobante) : "-"}</TableCell>
-                    <TableCell className="font-mono text-sm">{doc.rfc_emisor || "-"}</TableCell>
-                    <TableCell className="max-w-[150px] truncate">{doc.nombre_emisor || "-"}</TableCell>
-                    <TableCell className="text-right font-mono">{doc.total != null ? formatMXN(doc.total) : "-"}</TableCell>
-                    <TableCell className="text-sm">{doc.moneda || "MXN"}</TableCell>
-                    <TableCell>{satStatusBadge(doc.sat_status || doc.estado || "")}</TableCell>
-                    <TableCell>{efosStatusBadge(doc.efos_status || "")}</TableCell>
-                    <TableCell className="text-sm">{doc.metodo_pago || "-"}</TableCell>
-                    <TableCell className="text-muted-foreground text-sm">{formatDate(doc.fecha_emision || doc.fecha_timbrado)}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody></Table></div>}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* Validar */}
+        {/* ============================================================ */}
+        {/* Tab 1: Validar CFDI                                          */}
+        {/* ============================================================ */}
         <TabsContent value="validar">
           <div className="grid gap-6">
             <Card>
-              <CardHeader><CardTitle>Validacion Individual (con EFOS)</CardTitle><CardDescription>Verifica estado CFDI incluyendo Lista 69-B.</CardDescription></CardHeader>
+              <CardHeader>
+                <CardTitle>Validar CFDI Individual</CardTitle>
+                <CardDescription>
+                  Verifica el estado de un CFDI ante el SAT, incluyendo
+                  verificacion EFOS (Lista 69-B).
+                </CardDescription>
+              </CardHeader>
               <CardContent>
-                <form onSubmit={handleValidate} className="grid gap-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="grid gap-2"><Label>UUID</Label><Input placeholder="XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX" value={valUuid} onChange={e => setValUuid(e.target.value)} /></div>
-                    <div className="grid gap-2"><Label>Total</Label><Input type="number" step="0.01" min="0" placeholder="0.00" value={valTotal} onChange={e => setValTotal(e.target.value)} /></div>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="grid gap-2"><Label>RFC Emisor</Label><Input placeholder="XAXX010101000" value={valRfcEmisor} onChange={e => setValRfcEmisor(e.target.value)} /></div>
-                    <div className="grid gap-2"><Label>RFC Receptor</Label><Input placeholder="XAXX010101000" value={valRfcReceptor} onChange={e => setValRfcReceptor(e.target.value)} /></div>
-                  </div>
-                  <div className="flex justify-end"><Button type="submit" disabled={validating}>{validating ? <Loader2 className="mr-2 size-4 animate-spin" /> : <Search className="mr-2 size-4" />}Validar</Button></div>
-                </form>
-                {validationResult && (<><Separator className="my-4" /><Card className="bg-muted/50"><CardHeader className="pb-3"><CardTitle className="text-base flex items-center gap-2">
-                  {validationResult.isValid ? <CheckCircle2 className="size-5 text-green-600" /> : validationResult.estado === "Cancelado" ? <XCircle className="size-5 text-red-600" /> : <AlertTriangle className="size-5 text-yellow-600" />}
-                  Resultado
-                </CardTitle></CardHeader><CardContent><div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                  <div><p className="text-muted-foreground">Estado</p>{satStatusBadge(validationResult.estado || "")}</div>
-                  <div><p className="text-muted-foreground">EFOS</p>{efosStatusBadge(validationResult.efosStatus || "")}{validationResult.efosCode && <p className="text-xs text-muted-foreground mt-1">Codigo: {validationResult.efosCode}</p>}</div>
-                  <div><p className="text-muted-foreground">Cancelable</p><p>{validationResult.esCancelable || "-"}</p></div>
-                  <div><p className="text-muted-foreground">Est. Cancelacion</p><p>{validationResult.estatusCancelacion || "-"}</p></div>
-                </div>
-                {validationResult.hasEfosIssue && <div className="mt-4 p-3 bg-red-100 dark:bg-red-900 rounded-md text-sm text-red-700 dark:text-red-300"><ShieldAlert className="inline size-4 mr-1" />ALERTA: Emisor con estatus EFOS problematico.{validationResult.efosStatus === "definitive" && " Facturas NO deducibles."}</div>}
-                </CardContent></Card></>)}
+                <Form {...validateForm}>
+                  <form
+                    onSubmit={validateForm.handleSubmit(onValidateSubmit)}
+                    className="grid gap-4"
+                  >
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <FormField
+                        control={validateForm.control}
+                        name="uuid"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>UUID</FormLabel>
+                            <FormControl>
+                              <Input
+                                placeholder="XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX"
+                                className="font-mono"
+                                {...field}
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={validateForm.control}
+                        name="total"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Total</FormLabel>
+                            <FormControl>
+                              <Input
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                placeholder="0.00"
+                                {...field}
+                                onChange={(e) =>
+                                  field.onChange(
+                                    parseFloat(e.target.value) || 0,
+                                  )
+                                }
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <FormField
+                        control={validateForm.control}
+                        name="rfc_emisor"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>RFC Emisor</FormLabel>
+                            <FormControl>
+                              <Input
+                                placeholder="XAXX010101000"
+                                className="font-mono uppercase"
+                                {...field}
+                                onChange={(e) =>
+                                  field.onChange(e.target.value.toUpperCase())
+                                }
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={validateForm.control}
+                        name="rfc_receptor"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>RFC Receptor</FormLabel>
+                            <FormControl>
+                              <Input
+                                placeholder="XAXX010101000"
+                                className="font-mono uppercase"
+                                {...field}
+                                onChange={(e) =>
+                                  field.onChange(e.target.value.toUpperCase())
+                                }
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+                    <div className="flex justify-end">
+                      <Button
+                        type="submit"
+                        disabled={validateMutation.isPending}
+                      >
+                        {validateMutation.isPending ? (
+                          <Loader2 className="mr-2 size-4 animate-spin" />
+                        ) : (
+                          <Search className="mr-2 size-4" />
+                        )}
+                        Validar
+                      </Button>
+                    </div>
+                  </form>
+                </Form>
               </CardContent>
             </Card>
 
-            <Card>
-              <CardHeader><CardTitle>Validacion Masiva</CardTitle><CardDescription>Un UUID por linea.</CardDescription></CardHeader>
-              <CardContent><div className="grid gap-4">
-                <Textarea placeholder={"UUID-1\nUUID-2"} value={bulkUuids} onChange={e => setBulkUuids(e.target.value)} rows={6} className="font-mono text-sm" />
-                <div className="flex justify-end"><Button onClick={handleBulkValidate} disabled={bulkValidating}>{bulkValidating ? <Loader2 className="mr-2 size-4 animate-spin" /> : <Search className="mr-2 size-4" />}Validar</Button></div>
-                {bulkResults && (<><Separator /><Table><TableHeader><TableRow><TableHead>UUID</TableHead><TableHead>Estado</TableHead><TableHead>EFOS</TableHead></TableRow></TableHeader><TableBody>
-                  {(bulkResults.results || []).map((r: any, i: number) => <TableRow key={i}><TableCell className="font-mono text-xs">{r.uuid}</TableCell><TableCell>{satStatusBadge(r.estado || "")}</TableCell><TableCell>{efosStatusBadge(r.efos_status || "")}</TableCell></TableRow>)}
-                </TableBody></Table></>)}
-              </div></CardContent>
-            </Card>
+            {/* Validation Result with Semaforo */}
+            {validationResult && (
+              <Card
+                className={
+                  SEMAFORO_STYLES[getSemaforoColor(validationResult)]
+                }
+              >
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base">
+                    Resultado de Validacion
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex items-start gap-6">
+                    {/* Semaforo visual */}
+                    {renderSemaforoIcon()}
 
-            <Card>
-              <CardHeader><CardTitle>Validacion de RFC</CardTitle><CardDescription>Verifica formato RFC.</CardDescription></CardHeader>
-              <CardContent>
-                <div className="flex gap-2">
-                  <Input placeholder="RFC" value={rfcInput} onChange={e => setRfcInput(e.target.value)} className="font-mono" />
-                  <Button onClick={handleValidateRfc} disabled={rfcValidating}>{rfcValidating ? <Loader2 className="size-4 animate-spin" /> : "Validar"}</Button>
-                </div>
-                {rfcResult && <div className={`mt-3 p-3 rounded-md text-sm ${rfcResult.valid ? "bg-green-50 text-green-700 dark:bg-green-900 dark:text-green-300" : "bg-red-50 text-red-700 dark:bg-red-900 dark:text-red-300"}`}>
-                  <p className="font-medium">{rfcResult.rfc}: {rfcResult.valid ? "Valido" : "Invalido"}</p>
-                  {rfcResult.valid && <p className="text-xs mt-1">Tipo: {rfcResult.type === "moral" ? "Persona Moral" : rfcResult.type === "fisica" ? "Persona Fisica" : rfcResult.type}</p>}
-                </div>}
-              </CardContent>
-            </Card>
+                    {/* Details grid */}
+                    <div className="flex-1 grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                      <div>
+                        <p className="text-muted-foreground mb-1">Estado SAT</p>
+                        <SatStatusBadge
+                          status={validationResult.estado || ""}
+                        />
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground mb-1">
+                          Es Cancelable
+                        </p>
+                        <p className="font-medium">
+                          {validationResult.esCancelable || "-"}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground mb-1">EFOS</p>
+                        <EfosBadge
+                          status={validationResult.efosStatus || ""}
+                        />
+                        {validationResult.efosCode && (
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Codigo: {validationResult.efosCode}
+                          </p>
+                        )}
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground mb-1">
+                          Fecha Timbrado
+                        </p>
+                        <p className="font-medium text-xs font-mono">
+                          {validationResult.fechaTimbrado
+                            ? formatDate(validationResult.fechaTimbrado)
+                            : "-"}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {validationResult.hasEfosIssue && (
+                    <div className="mt-4 p-3 bg-red-100 dark:bg-red-900 rounded-md text-sm text-red-700 dark:text-red-300">
+                      <ShieldAlert className="inline size-4 mr-1" />
+                      ALERTA: Emisor con estatus EFOS problematico.
+                      {(validationResult.efosStatus === "definitive" ||
+                        validationResult.efosStatus === "203") &&
+                        " Facturas NO deducibles."}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
           </div>
         </TabsContent>
 
-        {/* Subir XML */}
-        <TabsContent value="subir">
-          <Card>
-            <CardHeader><CardTitle>Subir XML CFDI</CardTitle><CardDescription>Se extraen TODOS los campos del Anexo 20.</CardDescription></CardHeader>
-            <CardContent><div className="grid gap-4">
-              <Textarea placeholder={'<?xml version="1.0"?>\n<cfdi:Comprobante ...>'} value={xmlContent} onChange={e => setXmlContent(e.target.value)} rows={12} className="font-mono text-sm" />
-              <div className="grid gap-2"><Label>O selecciona un archivo</Label><Input type="file" accept=".xml" onChange={e => { const f = e.target.files?.[0]; if (f) { const r = new FileReader(); r.onload = ev => setXmlContent(ev.target?.result as string || ""); r.readAsText(f); } }} /></div>
-              <div className="flex justify-end"><Button onClick={handleUploadXml} disabled={uploading}>{uploading ? <Loader2 className="mr-2 size-4 animate-spin" /> : <Upload className="mr-2 size-4" />}Subir XML</Button></div>
-              {uploadResult && (<><Separator /><Card className="bg-muted/50"><CardHeader className="pb-3"><CardTitle className="text-base flex items-center gap-2"><CheckCircle2 className="size-5 text-green-600" />XML Procesado</CardTitle></CardHeader><CardContent>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                  <div><p className="text-muted-foreground">UUID</p><p className="font-mono text-xs break-all">{uploadResult.uuid || "-"}</p></div>
-                  <div><p className="text-muted-foreground">Tipo</p><p>{uploadResult.tipo_comprobante_label || uploadResult.tipo_comprobante || "-"}</p></div>
-                  <div><p className="text-muted-foreground">Total</p><p className="font-mono">{uploadResult.total != null ? `${formatMXN(uploadResult.total)} ${uploadResult.moneda || "MXN"}` : "-"}</p></div>
-                  <div><p className="text-muted-foreground">SAT</p>{satStatusBadge(uploadResult.estado || "")}</div>
-                  <div><p className="text-muted-foreground">EFOS</p>{efosStatusBadge(uploadResult.efos_status || "")}</div>
-                  <div><p className="text-muted-foreground">Metodo</p><p>{uploadResult.metodo_pago || "-"}</p></div>
-                  <div><p className="text-muted-foreground">Forma</p><p>{FORMA_PAGO[uploadResult.forma_pago] || uploadResult.forma_pago || "-"}</p></div>
-                  <div><p className="text-muted-foreground">Conceptos</p><p>{uploadResult.conceptos_count || 0} lineas</p></div>
+        {/* ============================================================ */}
+        {/* Tab 2: Validacion Masiva                                     */}
+        {/* ============================================================ */}
+        <TabsContent value="masiva">
+          <div className="grid gap-6">
+            <Card>
+              <CardHeader>
+                <CardTitle>Validacion Masiva</CardTitle>
+                <CardDescription>
+                  Valida todas las facturas registradas contra el SAT. Se
+                  verificara el estado CFDI y EFOS de cada una.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="flex items-center justify-between">
+                  <Button
+                    onClick={() => bulkValidateMutation.mutate()}
+                    disabled={bulkValidateMutation.isPending}
+                    size="lg"
+                  >
+                    {bulkValidateMutation.isPending ? (
+                      <Loader2 className="mr-2 size-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="mr-2 size-4" />
+                    )}
+                    Validar Todas las Facturas
+                  </Button>
+
+                  {bulkResults.length > 0 && (
+                    <div className="flex items-center gap-2">
+                      <Label htmlFor="show-changes" className="text-sm">
+                        Solo mostrar cambios
+                      </Label>
+                      <Switch
+                        id="show-changes"
+                        checked={showOnlyChanges}
+                        onCheckedChange={setShowOnlyChanges}
+                      />
+                    </div>
+                  )}
                 </div>
-                {uploadResult.has_complemento_pago && <div className="mt-3 p-2 bg-purple-50 dark:bg-purple-900 rounded text-sm text-purple-700 dark:text-purple-300">Contiene Complemento de Pago</div>}
-                {!uploadResult.efos_safe && <div className="mt-3 p-2 bg-red-50 dark:bg-red-900 rounded text-sm text-red-700 dark:text-red-300"><ShieldAlert className="inline size-4 mr-1" />ALERTA EFOS: Emisor con estatus problematico</div>}
-              </CardContent></Card></>)}
-            </div></CardContent>
-          </Card>
+
+                {bulkValidateMutation.isPending && (
+                  <div className="mt-4 space-y-2">
+                    <Progress value={bulkProgress} />
+                    <p className="text-xs text-muted-foreground text-center">
+                      Validando{" "}
+                      {bulkProgress < 100
+                        ? `${Math.round((bulkProgress / 100) * (bulkResults.length || 1))}/${bulkResults.length || "N"}`
+                        : "completado"}
+                      ...
+                    </p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {bulkResults.length > 0 && (
+              <DataTable
+                columns={bulkColumns}
+                data={filteredBulkResults}
+                isLoading={bulkValidateMutation.isPending}
+                emptyState={
+                  <EmptyState
+                    icon={Search}
+                    title="Sin resultados"
+                    description={
+                      showOnlyChanges
+                        ? "No se detectaron cambios en la validacion."
+                        : "No hay resultados de validacion masiva."
+                    }
+                  />
+                }
+              />
+            )}
+          </div>
         </TabsContent>
 
-        {/* EFOS */}
-        <TabsContent value="efos">
-          <Card>
-            <CardHeader><CardTitle className="flex items-center gap-2"><ShieldAlert className="size-5" />Dashboard EFOS (Lista 69-B)</CardTitle><CardDescription>Monitoreo de riesgo de facturacion simulada.</CardDescription></CardHeader>
-            <CardContent>
-              {efosLoading ? <div className="flex items-center justify-center py-8"><Loader2 className="size-6 animate-spin text-muted-foreground" /></div>
-              : !efosData ? <p className="py-8 text-center text-sm text-muted-foreground">No hay datos EFOS.</p>
-              : <>
-                <div className="mb-6"><h3 className="font-medium mb-2 text-sm">Codigos EFOS del SAT</h3>
-                <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
-                  {Object.entries(EFOS_CODES).map(([code, info]) => <div key={code} className={`p-2 rounded text-xs ${info.safe ? "bg-green-50 dark:bg-green-900/30" : "bg-red-50 dark:bg-red-900/30"}`}><span className="font-mono font-bold">{code}</span> - {info.label}</div>)}
-                </div></div>
-                <Separator className="my-4" />
-                {efosData.risky_vendors?.length > 0 && <div className="mb-6"><h3 className="font-medium mb-2">Proveedores en Lista 69-B</h3><Table><TableHeader><TableRow><TableHead>Proveedor</TableHead><TableHead>RFC</TableHead><TableHead>EFOS</TableHead><TableHead>Verificacion</TableHead></TableRow></TableHeader><TableBody>
-                  {efosData.risky_vendors.map((v: any) => <TableRow key={v.id}><TableCell>{v.name}</TableCell><TableCell className="font-mono">{v.rfc}</TableCell><TableCell>{efosStatusBadge(v.efos_status)}</TableCell><TableCell className="text-muted-foreground">{formatDate(v.efos_checked_at)}</TableCell></TableRow>)}
-                </TableBody></Table></div>}
-                {efosData.risky_invoices?.length > 0 && <div><h3 className="font-medium mb-2">Facturas en riesgo</h3><Table><TableHeader><TableRow><TableHead>UUID</TableHead><TableHead>Proveedor</TableHead><TableHead>RFC</TableHead><TableHead className="text-right">Monto</TableHead><TableHead>EFOS</TableHead></TableRow></TableHeader><TableBody>
-                  {efosData.risky_invoices.map((i: any) => <TableRow key={i.id}><TableCell className="font-mono text-xs max-w-[160px] truncate">{i.cfdi_uuid}</TableCell><TableCell>{i.partner_name}</TableCell><TableCell className="font-mono text-sm">{i.partner_rfc}</TableCell><TableCell className="text-right font-mono">{formatMXN(i.amount_total || 0)}</TableCell><TableCell>{efosStatusBadge(i.efos_status)}</TableCell></TableRow>)}
-                </TableBody></Table></div>}
-                {efosData.vendors_at_risk === 0 && efosData.invoices_at_risk === 0 && <div className="py-8 text-center"><CheckCircle2 className="size-12 text-green-600 mx-auto mb-2" /><p className="text-sm text-muted-foreground">Sin riesgos EFOS detectados.</p></div>}
-              </>}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* Descarga Masiva */}
-        <TabsContent value="descarga">
-          <Card>
-            <CardHeader><CardTitle className="flex items-center gap-2"><Download className="size-5" />Descarga Masiva de CFDI (v1.5)</CardTitle><CardDescription>Requiere certificado FIEL configurado.</CardDescription></CardHeader>
-            <CardContent><div className="grid gap-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="grid gap-2"><Label>Fecha Inicio</Label><Input type="date" value={descargaFechaInicio} onChange={e => setDescargaFechaInicio(e.target.value)} /></div>
-                <div className="grid gap-2"><Label>Fecha Fin</Label><Input type="date" value={descargaFechaFin} onChange={e => setDescargaFechaFin(e.target.value)} /></div>
+        {/* ============================================================ */}
+        {/* Tab 3: Documentos CFDI                                       */}
+        {/* ============================================================ */}
+        <TabsContent value="documentos">
+          <DataTable
+            columns={documentColumns}
+            data={documents}
+            isLoading={documentsQuery.isLoading}
+            toolbar={
+              <div className="flex items-center justify-between gap-4">
+                <SearchInput
+                  value={search}
+                  onChange={setSearch}
+                  placeholder="Buscar por UUID, RFC o emisor..."
+                  className="w-full max-w-sm"
+                />
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => setUploadDialogOpen(true)}
+                  >
+                    <Upload className="mr-2 size-4" />
+                    Subir XML
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => setDescargaDialogOpen(true)}
+                  >
+                    <Download className="mr-2 size-4" />
+                    Descarga Masiva SAT
+                  </Button>
+                </div>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="grid gap-2"><Label>Tipo</Label><Select value={descargaTipo} onValueChange={setDescargaTipo}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="recibidos">Recibidos</SelectItem><SelectItem value="emitidos">Emitidos</SelectItem></SelectContent></Select></div>
-                <div className="grid gap-2"><Label>Formato</Label><Select value={descargaSolicitud} onValueChange={setDescargaSolicitud}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="CFDI">XML Completo</SelectItem><SelectItem value="Metadata">Solo Metadata</SelectItem></SelectContent></Select></div>
-                <div className="grid gap-2"><Label>Tipo Comprobante</Label><Select value={descargaTipoComp} onValueChange={setDescargaTipoComp}><SelectTrigger><SelectValue placeholder="Todos" /></SelectTrigger><SelectContent><SelectItem value="">Todos</SelectItem><SelectItem value="I">Ingreso</SelectItem><SelectItem value="E">Egreso</SelectItem><SelectItem value="P">Pago</SelectItem><SelectItem value="N">Nomina</SelectItem><SelectItem value="T">Traslado</SelectItem></SelectContent></Select></div>
-              </div>
-              <div className="flex justify-end"><Button onClick={handleDescargaSolicitud_} disabled={descargaLoading}>{descargaLoading ? <Loader2 className="mr-2 size-4 animate-spin" /> : <Download className="mr-2 size-4" />}Solicitar</Button></div>
-            </div>
-            {descargaRequests.length > 0 && (<><Separator className="my-4" /><h3 className="font-medium mb-2">Solicitudes</h3><Table><TableHeader><TableRow><TableHead>ID</TableHead><TableHead>Tipo</TableHead><TableHead>Periodo</TableHead><TableHead>Estado</TableHead><TableHead>CFDIs</TableHead><TableHead>Fecha</TableHead></TableRow></TableHeader><TableBody>
-              {descargaRequests.map((r: any) => <TableRow key={r.id}><TableCell>{r.id}</TableCell><TableCell><Badge variant="outline">{r.request_type}/{r.solicitud_type}</Badge></TableCell><TableCell className="text-sm">{formatDate(r.fecha_inicio)} - {formatDate(r.fecha_fin)}</TableCell><TableCell><Badge variant={r.status === "downloaded" ? "default" : r.status === "error" ? "destructive" : "secondary"}>{r.status}</Badge></TableCell><TableCell>{r.num_cfdis || "-"}</TableCell><TableCell className="text-muted-foreground">{formatDate(r.created_at)}</TableCell></TableRow>)}
-            </TableBody></Table></>)}</CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* Cancelacion */}
-        <TabsContent value="cancelacion">
-          <Card>
-            <CardHeader><CardTitle className="flex items-center gap-2"><Ban className="size-5" />Cancelacion de CFDI</CardTitle><CardDescription>Puede requerir aceptacion del receptor.</CardDescription></CardHeader>
-            <CardContent><div className="grid gap-4">
-              <div className="grid gap-2"><Label>UUID del CFDI</Label><Input placeholder="UUID" value={cancelUuid} onChange={e => setCancelUuid(e.target.value)} className="font-mono" /></div>
-              <div className="grid gap-2"><Label>Motivo</Label><Select value={cancelMotivo} onValueChange={setCancelMotivo}><SelectTrigger><SelectValue placeholder="Selecciona" /></SelectTrigger><SelectContent>
-                <SelectItem value="01">01 - Con errores con relacion</SelectItem>
-                <SelectItem value="02">02 - Con errores sin relacion</SelectItem>
-                <SelectItem value="03">03 - No se realizo la operacion</SelectItem>
-                <SelectItem value="04">04 - Nominativa en factura global</SelectItem>
-              </SelectContent></Select></div>
-              {cancelMotivo === "01" && <div className="grid gap-2"><Label>UUID sustituto</Label><Input placeholder="UUID del nuevo CFDI" value={cancelUuidSust} onChange={e => setCancelUuidSust(e.target.value)} className="font-mono" /></div>}
-              <div className="flex justify-end"><Button onClick={handleCancelar} disabled={cancelling} variant="destructive">{cancelling ? <Loader2 className="mr-2 size-4 animate-spin" /> : <Ban className="mr-2 size-4" />}Solicitar Cancelacion</Button></div>
-              <Separator />
-              <div className="text-sm text-muted-foreground space-y-1">
-                <p><strong>Sin aceptacion:</strong> &lt; $1,000 MXN, nomina, egreso, traslado, RFC generico.</p>
-                <p><strong>Con aceptacion:</strong> Ingreso &ge; $1,000. Receptor tiene 72h para responder.</p>
-              </div>
-            </div></CardContent>
-          </Card>
+            }
+            emptyState={
+              <EmptyState
+                icon={FileText}
+                title="Sin documentos CFDI"
+                description="No hay documentos CFDI registrados. Sube un XML o solicita una descarga masiva."
+                action={{
+                  label: "Subir XML",
+                  onClick: () => setUploadDialogOpen(true),
+                }}
+              />
+            }
+          />
         </TabsContent>
       </Tabs>
+
+      {/* Dialogs */}
+      <UploadXmlDialog
+        open={uploadDialogOpen}
+        onOpenChange={setUploadDialogOpen}
+      />
+      <DescargaMasivaDialog
+        open={descargaDialogOpen}
+        onOpenChange={setDescargaDialogOpen}
+      />
+      <VincularDialog
+        open={vincularOpen}
+        onOpenChange={setVincularOpen}
+        document={vincularDoc}
+      />
     </div>
   );
 }

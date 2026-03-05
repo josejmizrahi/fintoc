@@ -1,17 +1,24 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { api } from "@/lib/api";
-import { useAuthStore } from "@/lib/store";
-import { ApprovalRequest } from "@/types";
+import { useState, useMemo, useCallback } from "react";
+import { type ColumnDef } from "@tanstack/react-table";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useForm, Controller } from "react-hook-form";
+import { z } from "zod";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
 import {
+  Plus,
+  Loader2,
   CheckCircle2,
   XCircle,
-  Loader2,
-  Plus,
   ShieldCheck,
   ListChecks,
+  MoreHorizontal,
+  FileText,
+  User,
+  Calendar,
+  DollarSign,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -20,17 +27,10 @@ import {
   Card,
   CardContent,
   CardDescription,
+  CardFooter,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import {
   Dialog,
   DialogContent,
@@ -42,140 +42,199 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
-/* ---------- helpers ---------- */
+import { DataTable } from "@/components/shared/data-table";
+import { EmptyState } from "@/components/shared/empty-state";
+import { PermissionGate } from "@/components/shared/permission-gate";
+import { ConfirmDialog } from "@/components/shared/confirm-dialog";
+import { StatusBadge } from "@/components/shared/status-badge";
 
-function formatMXN(amount: number): string {
-  return new Intl.NumberFormat("es-MX", {
-    style: "currency",
-    currency: "MXN",
-  }).format(amount);
+import { api } from "@/lib/api";
+import { formatMoney, formatDate } from "@/lib/utils/format";
+import type { ApprovalRequest } from "@/types";
+
+/* ---------- Query keys ---------- */
+
+const approvalKeys = {
+  all: ["approvals"] as const,
+  rules: () => [...approvalKeys.all, "rules"] as const,
+  pending: () => [...approvalKeys.all, "pending"] as const,
+};
+
+/* ---------- Zod schemas ---------- */
+
+const newRuleSchema = z.object({
+  name: z.string().min(1, "Nombre de la regla requerido"),
+  min_amount: z.number().min(0, "Monto minimo debe ser >= 0"),
+  max_amount: z.number().positive("Monto maximo debe ser > 0"),
+  approvers: z.string().min(1, "Al menos un aprobador requerido"),
+  auto_approve: z.boolean(),
+});
+
+type NewRuleForm = z.infer<typeof newRuleSchema>;
+
+const rejectReasonSchema = z.object({
+  reason: z.string().min(1, "Ingresa un motivo de rechazo"),
+});
+
+type RejectReasonForm = z.infer<typeof rejectReasonSchema>;
+
+/* ---------- Rule type ---------- */
+
+interface ApprovalRule {
+  id: number;
+  name: string;
+  min_amount: number;
+  max_amount: number;
+  approvers: string[];
+  auto_approve: boolean;
+  is_active: boolean;
+  levels?: number;
 }
 
-function formatDate(dateStr?: string) {
-  if (!dateStr) return "-";
-  return new Date(dateStr).toLocaleDateString("es-MX", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
-}
+/* ---------- Rules DataTable Columns ---------- */
 
-/* ---------- RejectDialog ---------- */
-
-interface RejectDialogProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onConfirm: (reason: string) => void;
-  submitting: boolean;
-}
-
-function RejectDialog({ open, onOpenChange, onConfirm, submitting }: RejectDialogProps) {
-  const [reason, setReason] = useState("");
-
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!reason.trim()) {
-      toast.error("Ingresa una razon de rechazo");
-      return;
-    }
-    onConfirm(reason);
-    setReason("");
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>Rechazar Aprobacion</DialogTitle>
-          <DialogDescription>
-            Indica la razon por la cual se rechaza esta solicitud.
-          </DialogDescription>
-        </DialogHeader>
-
-        <form onSubmit={handleSubmit} className="grid gap-4 py-2">
-          <div className="grid gap-2">
-            <Label htmlFor="reject-reason">Razon de rechazo</Label>
-            <Textarea
-              id="reject-reason"
-              placeholder="Explica por que se rechaza..."
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              rows={3}
-            />
-          </div>
-
-          <DialogFooter className="pt-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => onOpenChange(false)}
-              disabled={submitting}
-            >
-              Cancelar
+const ruleColumns: ColumnDef<ApprovalRule, any>[] = [
+  {
+    accessorKey: "name",
+    header: "Nombre",
+    cell: ({ getValue }) => (
+      <span className="font-medium">{getValue<string>()}</span>
+    ),
+  },
+  {
+    accessorKey: "min_amount",
+    header: () => <span className="text-right block">Monto Min</span>,
+    cell: ({ getValue }) => (
+      <span className="text-right font-mono block">
+        {formatMoney(getValue<number>())}
+      </span>
+    ),
+  },
+  {
+    accessorKey: "max_amount",
+    header: () => <span className="text-right block">Monto Max</span>,
+    cell: ({ getValue }) => (
+      <span className="text-right font-mono block">
+        {formatMoney(getValue<number>())}
+      </span>
+    ),
+  },
+  {
+    accessorKey: "approvers",
+    header: "Aprobadores",
+    cell: ({ getValue }) => {
+      const approvers = getValue<string[]>() || [];
+      return (
+        <div className="flex flex-wrap gap-1 max-w-[300px]">
+          {approvers.map((email, i) => (
+            <Badge key={i} variant="outline" className="text-xs">
+              {email}
+            </Badge>
+          ))}
+        </div>
+      );
+    },
+  },
+  {
+    accessorKey: "auto_approve",
+    header: "Auto-aprobar",
+    cell: ({ getValue }) =>
+      getValue<boolean>() ? (
+        <Badge className="bg-green-600 text-white">Si</Badge>
+      ) : (
+        <Badge variant="secondary">No</Badge>
+      ),
+  },
+  {
+    accessorKey: "is_active",
+    header: "Activa",
+    cell: ({ getValue }) =>
+      getValue<boolean>() ? (
+        <CheckCircle2 className="size-4 text-green-600" />
+      ) : (
+        <XCircle className="size-4 text-muted-foreground" />
+      ),
+  },
+  {
+    id: "actions",
+    header: () => <span className="text-right block">Acciones</span>,
+    cell: () => (
+      <div className="flex justify-end">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="sm">
+              <MoreHorizontal className="size-4" />
             </Button>
-            <Button type="submit" variant="destructive" disabled={submitting}>
-              {submitting && <Loader2 className="mr-2 size-4 animate-spin" />}
-              Rechazar
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem>Editar</DropdownMenuItem>
+            <DropdownMenuItem className="text-destructive">
+              Desactivar
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    ),
+  },
+];
 
 /* ---------- NewRuleDialog ---------- */
 
-interface NewRuleDialogProps {
+function NewRuleDialog({
+  open,
+  onOpenChange,
+}: {
   open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onSuccess: () => void;
-}
+  onOpenChange: (v: boolean) => void;
+}) {
+  const queryClient = useQueryClient();
 
-function NewRuleDialog({ open, onOpenChange, onSuccess }: NewRuleDialogProps) {
-  const [minAmount, setMinAmount] = useState("");
-  const [maxAmount, setMaxAmount] = useState("");
-  const [levels, setLevels] = useState("");
-  const [approvers, setApprovers] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-
-  function resetForm() {
-    setMinAmount("");
-    setMaxAmount("");
-    setLevels("");
-    setApprovers("");
-  }
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!minAmount || !maxAmount || !levels || !approvers.trim()) {
-      toast.error("Completa todos los campos");
-      return;
-    }
-    setSubmitting(true);
-    try {
-      const approverList = approvers
-        .split(",")
-        .map((email) => email.trim())
-        .filter(Boolean);
-      await api.approvals.createRule({
-        min_amount: parseFloat(minAmount),
-        max_amount: parseFloat(maxAmount),
-        levels: parseInt(levels, 10),
-        approvers: approverList,
-      });
+  const createRule = useMutation({
+    mutationFn: (data: any) => api.approvals.createRule(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: approvalKeys.rules() });
       toast.success("Regla creada exitosamente");
-      resetForm();
       onOpenChange(false);
-      onSuccess();
-    } catch (err: any) {
+    },
+    onError: (err: Error) => {
       toast.error(err.message || "Error al crear la regla");
-    } finally {
-      setSubmitting(false);
-    }
+    },
+  });
+
+  const form = useForm<NewRuleForm>({
+    resolver: zodResolver(newRuleSchema),
+    defaultValues: {
+      name: "",
+      min_amount: 0,
+      max_amount: 0,
+      approvers: "",
+      auto_approve: false,
+    },
+  });
+
+  function onSubmit(data: NewRuleForm) {
+    const approverList = data.approvers
+      .split(",")
+      .map((e) => e.trim())
+      .filter(Boolean);
+
+    createRule.mutate({
+      name: data.name,
+      min_amount: data.min_amount,
+      max_amount: data.max_amount,
+      approvers: approverList,
+      auto_approve: data.auto_approve,
+    });
   }
 
   return (
@@ -184,11 +243,25 @@ function NewRuleDialog({ open, onOpenChange, onSuccess }: NewRuleDialogProps) {
         <DialogHeader>
           <DialogTitle>Nueva Regla de Aprobacion</DialogTitle>
           <DialogDescription>
-            Define los rangos de monto y los aprobadores requeridos.
+            Define rangos de monto y aprobadores requeridos.
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="grid gap-4 py-2">
+        <form onSubmit={form.handleSubmit(onSubmit)} className="grid gap-4 py-2">
+          <div className="grid gap-2">
+            <Label htmlFor="rule-name">Nombre *</Label>
+            <Input
+              id="rule-name"
+              placeholder="Nombre de la regla"
+              {...form.register("name")}
+            />
+            {form.formState.errors.name && (
+              <p className="text-xs text-destructive">
+                {form.formState.errors.name.message}
+              </p>
+            )}
+          </div>
+
           <div className="grid grid-cols-2 gap-4">
             <div className="grid gap-2">
               <Label htmlFor="min-amount">Monto Minimo (MXN)</Label>
@@ -198,9 +271,13 @@ function NewRuleDialog({ open, onOpenChange, onSuccess }: NewRuleDialogProps) {
                 step="0.01"
                 min="0"
                 placeholder="0.00"
-                value={minAmount}
-                onChange={(e) => setMinAmount(e.target.value)}
+                {...form.register("min_amount")}
               />
+              {form.formState.errors.min_amount && (
+                <p className="text-xs text-destructive">
+                  {form.formState.errors.min_amount.message}
+                </p>
+              )}
             </div>
             <div className="grid gap-2">
               <Label htmlFor="max-amount">Monto Maximo (MXN)</Label>
@@ -210,34 +287,45 @@ function NewRuleDialog({ open, onOpenChange, onSuccess }: NewRuleDialogProps) {
                 step="0.01"
                 min="0"
                 placeholder="0.00"
-                value={maxAmount}
-                onChange={(e) => setMaxAmount(e.target.value)}
+                {...form.register("max_amount")}
               />
+              {form.formState.errors.max_amount && (
+                <p className="text-xs text-destructive">
+                  {form.formState.errors.max_amount.message}
+                </p>
+              )}
             </div>
           </div>
 
           <div className="grid gap-2">
-            <Label htmlFor="levels">Niveles de aprobacion</Label>
-            <Input
-              id="levels"
-              type="number"
-              min="1"
-              max="5"
-              placeholder="1"
-              value={levels}
-              onChange={(e) => setLevels(e.target.value)}
-            />
-          </div>
-
-          <div className="grid gap-2">
-            <Label htmlFor="approvers">Aprobadores (emails separados por coma)</Label>
+            <Label htmlFor="approvers">
+              Aprobadores (emails separados por coma)
+            </Label>
             <Textarea
               id="approvers"
               placeholder="admin@empresa.com, finanzas@empresa.com"
-              value={approvers}
-              onChange={(e) => setApprovers(e.target.value)}
               rows={3}
+              {...form.register("approvers")}
             />
+            {form.formState.errors.approvers && (
+              <p className="text-xs text-destructive">
+                {form.formState.errors.approvers.message}
+              </p>
+            )}
+          </div>
+
+          <div className="flex items-center gap-3">
+            <Controller
+              control={form.control}
+              name="auto_approve"
+              render={({ field }) => (
+                <Switch
+                  checked={field.value}
+                  onCheckedChange={field.onChange}
+                />
+              )}
+            />
+            <Label>Auto-aprobar cuando se cumpla la regla</Label>
           </div>
 
           <DialogFooter className="pt-2">
@@ -245,12 +333,14 @@ function NewRuleDialog({ open, onOpenChange, onSuccess }: NewRuleDialogProps) {
               type="button"
               variant="outline"
               onClick={() => onOpenChange(false)}
-              disabled={submitting}
+              disabled={createRule.isPending}
             >
               Cancelar
             </Button>
-            <Button type="submit" disabled={submitting}>
-              {submitting && <Loader2 className="mr-2 size-4 animate-spin" />}
+            <Button type="submit" disabled={createRule.isPending}>
+              {createRule.isPending && (
+                <Loader2 className="mr-2 size-4 animate-spin" />
+              )}
               Crear Regla
             </Button>
           </DialogFooter>
@@ -263,90 +353,86 @@ function NewRuleDialog({ open, onOpenChange, onSuccess }: NewRuleDialogProps) {
 /* ---------- Main Page ---------- */
 
 export default function AprobacionesPage() {
-  const { user } = useAuthStore();
-  const userEmail = user?.email || "";
-
-  const [pending, setPending] = useState<ApprovalRequest[]>([]);
-  const [rules, setRules] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [rulesLoading, setRulesLoading] = useState(true);
-  const [actionId, setActionId] = useState<number | null>(null);
+  const queryClient = useQueryClient();
+  const [ruleDialogOpen, setRuleDialogOpen] = useState(false);
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
   const [rejectingId, setRejectingId] = useState<number | null>(null);
-  const [ruleDialogOpen, setRuleDialogOpen] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
 
-  async function fetchPending() {
-    setLoading(true);
-    try {
-      const data = await api.approvals.pending(userEmail);
-      setPending(data);
-    } catch (err: any) {
-      toast.error(err.message || "Error al cargar aprobaciones pendientes");
-    } finally {
-      setLoading(false);
-    }
-  }
+  /* ----- Queries ----- */
 
-  async function fetchRules() {
-    setRulesLoading(true);
-    try {
-      const data = await api.approvals.rules();
-      setRules(data);
-    } catch (err: any) {
-      toast.error(err.message || "Error al cargar reglas");
-    } finally {
-      setRulesLoading(false);
-    }
-  }
+  const { data: rulesData, isLoading: rulesLoading } = useQuery({
+    queryKey: approvalKeys.rules(),
+    queryFn: () => api.approvals.rules(),
+    staleTime: 30_000,
+  });
 
-  useEffect(() => {
-    fetchPending();
-    fetchRules();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const { data: pendingData, isLoading: pendingLoading } = useQuery({
+    queryKey: approvalKeys.pending(),
+    queryFn: () => api.approvals.pending(),
+    staleTime: 15_000,
+  });
 
-  async function handleApprove(id: number) {
-    setActionId(id);
-    try {
-      await api.approvals.approve(id, {
-        approved_by: userEmail,
-        comments: "",
-      });
+  /* ----- Mutations ----- */
+
+  const approveMutation = useMutation({
+    mutationFn: (id: number) => api.approvals.approve(id),
+    onMutate: async (id) => {
+      await queryClient.cancelQueries({ queryKey: approvalKeys.pending() });
+      const previous = queryClient.getQueryData(approvalKeys.pending());
+      queryClient.setQueryData(approvalKeys.pending(), (old: any) =>
+        Array.isArray(old)
+          ? old.filter((item: any) => item.approval_id !== id)
+          : old
+      );
+      return { previous };
+    },
+    onError: (_err, _id, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(approvalKeys.pending(), context.previous);
+      }
+      toast.error("Error al aprobar");
+    },
+    onSuccess: () => {
       toast.success("Aprobacion registrada");
-      fetchPending();
-    } catch (err: any) {
-      toast.error(err.message || "Error al aprobar");
-    } finally {
-      setActionId(null);
-    }
-  }
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: approvalKeys.pending() });
+    },
+  });
 
-  function openRejectDialog(id: number) {
-    setRejectingId(id);
-    setRejectDialogOpen(true);
-  }
-
-  async function handleReject(reason: string) {
-    if (!rejectingId) return;
-    setSubmitting(true);
-    try {
-      await api.approvals.reject(rejectingId, {
-        rejected_by: userEmail,
-        reason,
-      });
+  const rejectMutation = useMutation({
+    mutationFn: ({ id, reason }: { id: number; reason: string }) =>
+      api.approvals.reject(id, reason),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: approvalKeys.pending() });
       toast.success("Solicitud rechazada");
       setRejectDialogOpen(false);
       setRejectingId(null);
-      fetchPending();
-    } catch (err: any) {
+    },
+    onError: (err: Error) => {
       toast.error(err.message || "Error al rechazar");
-    } finally {
-      setSubmitting(false);
-    }
+    },
+  });
+
+  const rejectForm = useForm<RejectReasonForm>({
+    resolver: zodResolver(rejectReasonSchema),
+    defaultValues: { reason: "" },
+  });
+
+  function handleRejectSubmit(data: RejectReasonForm) {
+    if (!rejectingId) return;
+    rejectMutation.mutate({ id: rejectingId, reason: data.reason });
   }
 
-  /* ---------- render ---------- */
+  const rules: ApprovalRule[] = useMemo(
+    () => (Array.isArray(rulesData) ? rulesData : []),
+    [rulesData]
+  );
+
+  const pending: ApprovalRequest[] = useMemo(
+    () => (Array.isArray(pendingData) ? pendingData : []),
+    [pendingData]
+  );
 
   return (
     <div className="flex flex-col gap-6">
@@ -361,174 +447,209 @@ export default function AprobacionesPage() {
       {/* Tabs */}
       <Tabs defaultValue="pendientes">
         <TabsList>
-          <TabsTrigger value="pendientes">
-            <ListChecks className="mr-1.5 size-4" />
-            Pendientes
-          </TabsTrigger>
           <TabsTrigger value="reglas">
             <ShieldCheck className="mr-1.5 size-4" />
             Reglas
           </TabsTrigger>
+          <TabsTrigger value="pendientes">
+            <ListChecks className="mr-1.5 size-4" />
+            Pendientes
+            {pending.length > 0 && (
+              <Badge variant="secondary" className="ml-2">
+                {pending.length}
+              </Badge>
+            )}
+          </TabsTrigger>
         </TabsList>
+
+        {/* ---- Tab: Reglas (admin only) ---- */}
+        <TabsContent value="reglas">
+          <PermissionGate
+            permission="approvals:manage"
+            fallback={
+              <EmptyState
+                icon={ShieldCheck}
+                title="Acceso restringido"
+                description="Solo administradores pueden gestionar reglas de aprobacion."
+              />
+            }
+          >
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between">
+                <div>
+                  <CardTitle>Reglas de Aprobacion</CardTitle>
+                  <CardDescription>
+                    Configura los rangos de monto y aprobadores requeridos.
+                  </CardDescription>
+                </div>
+                <Button onClick={() => setRuleDialogOpen(true)}>
+                  <Plus className="mr-2 size-4" />
+                  Nueva Regla
+                </Button>
+              </CardHeader>
+              <CardContent>
+                <DataTable
+                  columns={ruleColumns}
+                  data={rules}
+                  isLoading={rulesLoading}
+                  emptyState={
+                    <EmptyState
+                      icon={ShieldCheck}
+                      title="Sin reglas"
+                      description="No hay reglas de aprobacion configuradas."
+                      action={{
+                        label: "Crear primera regla",
+                        onClick: () => setRuleDialogOpen(true),
+                      }}
+                    />
+                  }
+                />
+              </CardContent>
+            </Card>
+          </PermissionGate>
+        </TabsContent>
 
         {/* ---- Tab: Pendientes ---- */}
         <TabsContent value="pendientes">
-          <Card>
-            <CardHeader>
-              <CardTitle>Aprobaciones Pendientes</CardTitle>
-              <CardDescription>
-                Pagos que requieren tu autorizacion para ser ejecutados.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {loading ? (
-                <div className="flex items-center justify-center py-12">
-                  <Loader2 className="size-6 animate-spin text-muted-foreground" />
-                </div>
-              ) : pending.length === 0 ? (
-                <p className="py-8 text-center text-sm text-muted-foreground">
-                  No hay aprobaciones pendientes.
-                </p>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>ID Pago</TableHead>
-                      <TableHead>Proveedor</TableHead>
-                      <TableHead className="text-right">Monto (MXN)</TableHead>
-                      <TableHead>Nivel</TableHead>
-                      <TableHead>Solicitado</TableHead>
-                      <TableHead className="text-right">Acciones</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {pending.map((item) => (
-                      <TableRow key={item.approval_id}>
-                        <TableCell className="font-medium">
-                          #{item.payment_id}
-                        </TableCell>
-                        <TableCell>{item.payment_partner || "-"}</TableCell>
-                        <TableCell className="text-right font-mono">
-                          {formatMXN(item.payment_amount)}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="outline">Nivel {item.level}</Badge>
-                        </TableCell>
-                        <TableCell className="text-muted-foreground">
-                          {formatDate(item.created_at)}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <div className="flex items-center justify-end gap-2">
-                            <Button
-                              variant="default"
-                              size="sm"
-                              onClick={() => handleApprove(item.approval_id)}
-                              disabled={actionId === item.approval_id}
-                            >
-                              {actionId === item.approval_id ? (
-                                <Loader2 className="mr-1.5 size-3.5 animate-spin" />
-                              ) : (
-                                <CheckCircle2 className="mr-1.5 size-3.5" />
-                              )}
-                              Aprobar
-                            </Button>
-                            <Button
-                              variant="destructive"
-                              size="sm"
-                              onClick={() => openRejectDialog(item.approval_id)}
-                              disabled={actionId === item.approval_id}
-                            >
-                              <XCircle className="mr-1.5 size-3.5" />
-                              Rechazar
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* ---- Tab: Reglas ---- */}
-        <TabsContent value="reglas">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
-              <div>
-                <CardTitle>Reglas de Aprobacion</CardTitle>
-                <CardDescription>
-                  Configura los niveles y montos requeridos para aprobacion.
-                </CardDescription>
-              </div>
-              <Button onClick={() => setRuleDialogOpen(true)}>
-                <Plus className="mr-2 size-4" />
-                Nueva Regla
-              </Button>
-            </CardHeader>
-            <CardContent>
-              {rulesLoading ? (
-                <div className="flex items-center justify-center py-12">
-                  <Loader2 className="size-6 animate-spin text-muted-foreground" />
-                </div>
-              ) : rules.length === 0 ? (
-                <p className="py-8 text-center text-sm text-muted-foreground">
-                  No hay reglas configuradas.
-                </p>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="text-right">Monto Min</TableHead>
-                      <TableHead className="text-right">Monto Max</TableHead>
-                      <TableHead>Niveles</TableHead>
-                      <TableHead>Aprobadores</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {rules.map((rule, idx) => (
-                      <TableRow key={rule.id ?? idx}>
-                        <TableCell className="text-right font-mono">
-                          {formatMXN(rule.min_amount)}
-                        </TableCell>
-                        <TableCell className="text-right font-mono">
-                          {formatMXN(rule.max_amount)}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="secondary">{rule.levels}</Badge>
-                        </TableCell>
-                        <TableCell className="max-w-[300px]">
-                          <div className="flex flex-wrap gap-1">
-                            {(rule.approvers || []).map((email: string, i: number) => (
-                              <Badge key={i} variant="outline" className="text-xs">
-                                {email}
-                              </Badge>
-                            ))}
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
-            </CardContent>
-          </Card>
+          {pendingLoading ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="size-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : pending.length === 0 ? (
+            <EmptyState
+              icon={ListChecks}
+              title="Sin aprobaciones pendientes"
+              description="No hay pagos que requieran tu autorizacion."
+            />
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              {pending.map((item) => (
+                <Card key={item.approval_id}>
+                  <CardHeader className="pb-3">
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="text-base">
+                        {item.payment_partner || "Proveedor"}
+                      </CardTitle>
+                      <Badge variant="outline">Nivel {item.level}</Badge>
+                    </div>
+                    <CardDescription>
+                      Pago #{item.payment_id}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="flex items-center gap-2 text-sm">
+                      <DollarSign className="size-4 text-muted-foreground" />
+                      <span className="font-mono font-semibold text-lg">
+                        {formatMoney(item.payment_amount)}
+                      </span>
+                    </div>
+                    {item.approver_email && (
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <User className="size-4" />
+                        <span>Solicitante: {item.approver_email}</span>
+                      </div>
+                    )}
+                    {item.payment_reference && (
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <FileText className="size-4" />
+                        <span>Ref: {item.payment_reference}</span>
+                      </div>
+                    )}
+                    {item.created_at && (
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <Calendar className="size-4" />
+                        <span>{formatDate(item.created_at)}</span>
+                      </div>
+                    )}
+                  </CardContent>
+                  <CardFooter className="flex gap-2">
+                    <Button
+                      className="flex-1"
+                      onClick={() =>
+                        approveMutation.mutate(item.approval_id)
+                      }
+                      disabled={approveMutation.isPending}
+                    >
+                      {approveMutation.isPending ? (
+                        <Loader2 className="mr-1.5 size-3.5 animate-spin" />
+                      ) : (
+                        <CheckCircle2 className="mr-1.5 size-3.5" />
+                      )}
+                      Aprobar
+                    </Button>
+                    <Button
+                      variant="destructive"
+                      className="flex-1"
+                      onClick={() => {
+                        setRejectingId(item.approval_id);
+                        setRejectDialogOpen(true);
+                      }}
+                      disabled={rejectMutation.isPending}
+                    >
+                      <XCircle className="mr-1.5 size-3.5" />
+                      Rechazar
+                    </Button>
+                  </CardFooter>
+                </Card>
+              ))}
+            </div>
+          )}
         </TabsContent>
       </Tabs>
 
-      {/* Dialogs */}
-      <RejectDialog
-        open={rejectDialogOpen}
-        onOpenChange={setRejectDialogOpen}
-        onConfirm={handleReject}
-        submitting={submitting}
-      />
-      <NewRuleDialog
-        open={ruleDialogOpen}
-        onOpenChange={setRuleDialogOpen}
-        onSuccess={fetchRules}
-      />
+      {/* New Rule Dialog */}
+      <NewRuleDialog open={ruleDialogOpen} onOpenChange={setRuleDialogOpen} />
+
+      {/* Reject Dialog */}
+      <Dialog open={rejectDialogOpen} onOpenChange={setRejectDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Rechazar Aprobacion</DialogTitle>
+            <DialogDescription>
+              Indica la razon por la cual se rechaza esta solicitud.
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            onSubmit={rejectForm.handleSubmit(handleRejectSubmit)}
+            className="grid gap-4 py-2"
+          >
+            <div className="grid gap-2">
+              <Label htmlFor="reject-reason">Razon de rechazo</Label>
+              <Textarea
+                id="reject-reason"
+                placeholder="Explica por que se rechaza..."
+                rows={3}
+                {...rejectForm.register("reason")}
+              />
+              {rejectForm.formState.errors.reason && (
+                <p className="text-xs text-destructive">
+                  {rejectForm.formState.errors.reason.message}
+                </p>
+              )}
+            </div>
+            <DialogFooter className="pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setRejectDialogOpen(false)}
+                disabled={rejectMutation.isPending}
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="submit"
+                variant="destructive"
+                disabled={rejectMutation.isPending}
+              >
+                {rejectMutation.isPending && (
+                  <Loader2 className="mr-2 size-4 animate-spin" />
+                )}
+                Rechazar
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
