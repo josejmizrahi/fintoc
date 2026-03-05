@@ -82,6 +82,7 @@ export const api = {
     execute: (id: number) => request<any>(`/api/payments/${id}/execute`, { method: "POST" }),
     pollStatus: (id: number) => request<any>(`/api/payments/${id}/poll-status`, { method: "POST" }),
     pollStuck: () => request<any>("/api/payments/poll-stuck", { method: "POST" }),
+    writebackOdoo: (id: number) => request<any>(`/api/payments/${id}/writeback-odoo`, { method: "POST" }),
     schedule: (id: number, date: string) => request<any>(`/api/payments/${id}/schedule?scheduled_date=${date}`, { method: "POST" }),
     scheduled: () => request<any[]>("/api/payments/scheduled/list"),
   },
@@ -112,6 +113,8 @@ export const api = {
   vendors: {
     list: () => request<any[]>("/api/vendors/"),
     get: (id: number) => request<any>(`/api/vendors/${id}`),
+    create: (data: { name: string; rfc?: string; email?: string; clabe?: string }) =>
+      request<any>("/api/vendors/", { method: "POST", body: JSON.stringify(data) }),
     clabe: (id: number) => request<any>(`/api/vendors/${id}/clabe`),
     setClabe: (id: number, clabe: string) => request<any>(`/api/vendors/${id}/clabe?clabe=${clabe}`, { method: "POST" }),
     verify: (id: number) => request<any>(`/api/vendors/${id}/verify-clabe`, { method: "POST" }),
@@ -123,6 +126,8 @@ export const api = {
     list: () => request<any[]>("/api/customers/"),
     search: (q: string) => request<any[]>(`/api/customers/search?q=${q}`),
     get: (id: number) => request<any>(`/api/customers/${id}`),
+    create: (data: { name: string; rfc?: string; email?: string; clabe?: string }) =>
+      request<any>("/api/customers/", { method: "POST", body: JSON.stringify(data) }),
     clabe: (id: number) => request<any>(`/api/customers/${id}/clabe`),
     invoices: (id: number) => request<any[]>(`/api/customers/${id}/invoices`),
   },
@@ -203,10 +208,18 @@ export const api = {
     create: (data: any) => request<any>(`/api/companies/?name=${data.name}&rfc=${data.rfc}`, { method: "POST" }),
   },
 
-  // Fintoc Widget
+  // Fintoc
   fintoc: {
     exchange: (exchangeToken: string) =>
       request<any>("/api/fintoc/exchange", { method: "POST", body: JSON.stringify({ exchange_token: exchangeToken }) }),
+    outboundTransfer: (data: { payment_id?: number; clabe: string; amount: number; holder_name?: string; reference_id?: string }) =>
+      request<any>("/api/fintoc", { method: "POST", body: JSON.stringify({ action: "outbound-transfer", ...data }) }),
+    verifyClabe: (clabe: string, vendorId?: number) =>
+      request<any>("/api/fintoc", { method: "POST", body: JSON.stringify({ action: "verify-clabe", clabe, vendor_id: vendorId }) }),
+    createAccountNumber: (customerId: number) =>
+      request<any>("/api/fintoc", { method: "POST", body: JSON.stringify({ action: "create-account-number", customer_id: customerId }) }),
+    getAccountNumber: (accountNumberId: string) =>
+      request<any>("/api/fintoc", { method: "POST", body: JSON.stringify({ action: "get-account-number", account_number_id: accountNumberId }) }),
   },
 
   // Onboarding & Integrations

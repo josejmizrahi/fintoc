@@ -87,8 +87,8 @@ export default function LoginPage() {
       toast.error("Completa todos los campos");
       return;
     }
-    if (regPassword.length < 6) {
-      toast.error("La contraseña debe tener al menos 6 caracteres");
+    if (regPassword.length < 8) {
+      toast.error("La contraseña debe tener al menos 8 caracteres");
       return;
     }
     setRegLoading(true);
@@ -222,7 +222,7 @@ export default function LoginPage() {
                     <Input
                       id="reg-password"
                       type="password"
-                      placeholder="Mínimo 6 caracteres"
+                      placeholder="Mínimo 8 caracteres"
                       value={regPassword}
                       onChange={(e) => setRegPassword(e.target.value)}
                       autoComplete="new-password"

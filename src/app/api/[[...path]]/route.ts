@@ -3,8 +3,9 @@ import { z } from "zod";
 import { hasDB, query, insert, update, queryPaginated } from "@/lib/db";
 import { getCompanyId, getUserRole } from "@/lib/auth-helpers";
 import { validateCfdiAgainstSat, parseCfdiXml } from "@/lib/sat";
-import { fintocGet, fintocPost } from "@/lib/fintoc";
+import { fintocGet, fintocPost, fintocOutboundTransfer } from "@/lib/fintoc";
 import { checkRouteAccess } from "@/lib/rbac";
+import { writeBackPaymentToOdoo } from "@/lib/odoo-writeback";
 
 // ── Zod schemas ──
 
@@ -569,7 +570,7 @@ async function dbPost(path: string, body: unknown, companyId: number | null): Pr
       return data?.[0];
     }
 
-    // Payments — execute via Fintoc payment_intents
+    // Payments — execute via Fintoc (outbound transfer with JWS, or fallback to payment_intents)
     let m = matchPath(path, "payments/:id/execute");
     if (m) {
       const { data: payment } = await query("payments", { match: { id: Number(m.id), company_id: companyId }, single: true });
@@ -578,21 +579,51 @@ async function dbPost(path: string, body: unknown, companyId: number | null): Pr
       try {
         const { data: fintocInt } = await query("integrations", { match: { company_id: companyId, provider: "fintoc" }, single: true });
         const fintocKey = fintocInt?.config ? (fintocInt.config as Record<string, string>).secretKey : null;
+        const jwsPrivateKey = process.env.FINTOC_JWS_PRIVATE_KEY || "";
 
         if (fintocKey && fintocKey !== "••••••••") {
+          const amountCents = Math.round(Number(payment.amount) * 100);
+          const clabe = (payment.clabe_destination as string) || "";
+          const meta = {
+            payment_id: String(payment.id),
+            company_id: String(companyId),
+            reference: (payment.reference_id as string) || "",
+            partner_name: (payment.partner_name as string) || "",
+          };
+
+          // Try outbound transfer (SPEI) if JWS key is configured and CLABE available
+          if (jwsPrivateKey && /^\d{18}$/.test(clabe)) {
+            const result = await fintocOutboundTransfer(fintocKey, jwsPrivateKey, {
+              amount: amountCents,
+              currency: "MXN",
+              counterparty: {
+                account_type: "CLABE",
+                account_number: clabe,
+                holder_name: (payment.partner_name as string) || undefined,
+              },
+              reference_id: (payment.reference_id as string) || `PAY-${payment.id}`,
+              metadata: meta,
+            });
+
+            if (result.ok && result.data) {
+              await update("payments", {
+                status: "processing", fintoc_transfer_id: result.data.id as string,
+                jws_signed: true, updated_at: new Date().toISOString(),
+              }, { id: Number(m.id), company_id: companyId });
+              return { ...payment, status: "processing", fintoc_transfer_id: result.data.id };
+            }
+          }
+
+          // Fallback: payment_intents (for inbound collections or when JWS not configured)
           const result = await fintocPost("/payment_intents", fintocKey, {
-            amount: Math.round(Number(payment.amount) * 100),
+            amount: amountCents,
             currency: "mxn",
             recipient_account: {
               holder_id: (payment.partner_rfc as string) || undefined,
-              number: (payment.clabe_destination as string) || undefined,
+              number: clabe || undefined,
               type: "clabe",
             },
-            metadata: {
-              payment_id: String(payment.id),
-              reference: (payment.reference_id as string) || "",
-              partner_name: (payment.partner_name as string) || "",
-            },
+            metadata: meta,
           });
 
           if (result.ok && result.data) {
@@ -607,6 +638,41 @@ async function dbPost(path: string, body: unknown, companyId: number | null): Pr
 
       const { data } = await update("payments", { status: "processing", updated_at: new Date().toISOString() }, { id: Number(m.id), company_id: companyId });
       return data?.[0];
+    }
+
+    // Payments — write-back to Odoo (create account.payment in Odoo)
+    m = matchPath(path, "payments/:id/writeback-odoo");
+    if (m) {
+      const { data: payment } = await query("payments", { match: { id: Number(m.id), company_id: companyId }, single: true });
+      if (!payment) return NextResponse.json({ detail: "Pago no encontrado" }, { status: 404 });
+
+      if (payment.odoo_payment_id) {
+        return { success: true, message: "Pago ya registrado en Odoo", odoo_payment_id: payment.odoo_payment_id };
+      }
+
+      // Find matching invoice for reconciliation
+      let invoiceOdooId: number | null = null;
+      if (payment.reference_id) {
+        const { data: invoice } = await query("invoices", {
+          match: { company_id: companyId, name: payment.reference_id },
+          single: true,
+        }).catch(() => ({ data: null }));
+        if (invoice?.odoo_id) invoiceOdooId = invoice.odoo_id as number;
+      }
+
+      const result = await writeBackPaymentToOdoo({
+        companyId,
+        paymentId: Number(m.id),
+        amount: Number(payment.amount) || 0,
+        direction: (payment.direction as "inbound" | "outbound") || "outbound",
+        partnerRfc: (payment.partner_rfc as string) || null,
+        partnerName: (payment.partner_name as string) || null,
+        reference: (payment.reference_id as string) || undefined,
+        date: (payment.executed_at as string)?.split("T")[0] || undefined,
+        invoiceOdooId,
+      });
+
+      return result;
     }
 
     // Payments — poll status from Fintoc for stuck "processing" payments
@@ -755,6 +821,34 @@ async function dbPost(path: string, body: unknown, companyId: number | null): Pr
       if (!budget) return NextResponse.json({ detail: "Presupuesto no encontrado" }, { status: 404 });
       const newSpent = Number(budget.amount_spent || 0) + amount;
       const { data } = await update("budgets", { amount_spent: newSpent, updated_at: new Date().toISOString() }, { id: Number(m.id), company_id: companyId });
+      return data?.[0];
+    }
+
+    // Vendors — create
+    if (path === "vendors" || path === "vendors/") {
+      const name = (b.name as string) || "";
+      if (!name.trim()) return NextResponse.json({ detail: "Nombre del proveedor requerido" }, { status: 400 });
+      const { data } = await insert("vendors", {
+        company_id: companyId, name: name.trim(),
+        rfc: (b.rfc as string)?.trim() || null,
+        email: (b.email as string)?.trim() || null,
+        clabe: (b.clabe as string)?.replace(/\D/g, "").slice(0, 18) || null,
+        is_active: true,
+      });
+      return data?.[0];
+    }
+
+    // Customers — create
+    if (path === "customers" || path === "customers/") {
+      const name = (b.name as string) || "";
+      if (!name.trim()) return NextResponse.json({ detail: "Nombre del cliente requerido" }, { status: 400 });
+      const { data } = await insert("customers", {
+        company_id: companyId, name: name.trim(),
+        rfc: (b.rfc as string)?.trim() || null,
+        email: (b.email as string)?.trim() || null,
+        clabe: (b.clabe as string)?.replace(/\D/g, "").slice(0, 18) || null,
+        is_active: true,
+      });
       return data?.[0];
     }
 

@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { api } from "@/lib/api";
-import { Payment } from "@/types";
+import { Payment, Vendor } from "@/types";
 import { toast } from "sonner";
 import {
   Plus,
@@ -75,14 +75,43 @@ interface NewPaymentDialogProps {
 }
 
 function NewPaymentDialog({ open, onOpenChange, onSuccess }: NewPaymentDialogProps) {
-  const [vendor, setVendor] = useState("");
+  const [vendors, setVendors] = useState<Vendor[]>([]);
+  const [vendorSearch, setVendorSearch] = useState("");
+  const [selectedVendor, setSelectedVendor] = useState<Vendor | null>(null);
+  const [showDropdown, setShowDropdown] = useState(false);
   const [amount, setAmount] = useState("");
   const [clabe, setClabe] = useState("");
   const [reference, setReference] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Load vendors when dialog opens
+  useEffect(() => {
+    if (open) {
+      api.vendors.list().then(setVendors).catch(() => {});
+    }
+  }, [open]);
+
+  const filteredVendors = useMemo(() => {
+    if (!vendorSearch.trim()) return vendors;
+    const q = vendorSearch.toLowerCase();
+    return vendors.filter(
+      (v) =>
+        v.name?.toLowerCase().includes(q) ||
+        v.rfc?.toLowerCase().includes(q)
+    );
+  }, [vendors, vendorSearch]);
+
+  function selectVendor(v: Vendor) {
+    setSelectedVendor(v);
+    setVendorSearch(v.name || "");
+    setShowDropdown(false);
+    if (v.clabe) setClabe(v.clabe);
+  }
 
   function resetForm() {
-    setVendor("");
+    setSelectedVendor(null);
+    setVendorSearch("");
     setAmount("");
     setClabe("");
     setReference("");
@@ -90,14 +119,15 @@ function NewPaymentDialog({ open, onOpenChange, onSuccess }: NewPaymentDialogPro
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!vendor || !amount || !clabe) {
+    const vendorName = selectedVendor?.name || vendorSearch.trim();
+    if (!vendorName || !amount || !clabe) {
       toast.error("Completa los campos requeridos");
       return;
     }
     setSubmitting(true);
     try {
       await api.payments.payVendor({
-        vendor_name: vendor,
+        vendor_name: vendorName,
         amount: parseFloat(amount),
         clabe_destination: clabe,
         reference_id: reference || undefined,
@@ -124,14 +154,39 @@ function NewPaymentDialog({ open, onOpenChange, onSuccess }: NewPaymentDialogPro
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="grid gap-4 py-2">
-          <div className="grid gap-2">
+          <div className="grid gap-2 relative" ref={dropdownRef}>
             <Label htmlFor="vendor">Proveedor</Label>
             <Input
               id="vendor"
               placeholder="Buscar proveedor..."
-              value={vendor}
-              onChange={(e) => setVendor(e.target.value)}
+              value={vendorSearch}
+              onChange={(e) => {
+                setVendorSearch(e.target.value);
+                setSelectedVendor(null);
+                setShowDropdown(true);
+              }}
+              onFocus={() => setShowDropdown(true)}
+              autoComplete="off"
             />
+            {showDropdown && filteredVendors.length > 0 && (
+              <div className="absolute top-full left-0 right-0 z-50 mt-1 max-h-48 overflow-y-auto rounded-md border bg-popover shadow-md">
+                {filteredVendors.map((v) => (
+                  <button
+                    key={v.id}
+                    type="button"
+                    className="flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-accent text-left"
+                    onClick={() => selectVendor(v)}
+                  >
+                    <span className="font-medium">{v.name}</span>
+                    {v.clabe && (
+                      <span className="text-xs text-muted-foreground font-mono ml-2">
+                        CLABE: ...{v.clabe.slice(-4)}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="grid gap-2">
@@ -151,11 +206,15 @@ function NewPaymentDialog({ open, onOpenChange, onSuccess }: NewPaymentDialogPro
             <Label htmlFor="clabe">CLABE destino</Label>
             <Input
               id="clabe"
-              placeholder="18 digitos"
+              placeholder="18 dígitos"
               maxLength={18}
               value={clabe}
-              onChange={(e) => setClabe(e.target.value)}
+              onChange={(e) => setClabe(e.target.value.replace(/\D/g, "").slice(0, 18))}
+              className="font-mono tracking-wider"
             />
+            {selectedVendor?.clabe && clabe === selectedVendor.clabe && (
+              <p className="text-xs text-muted-foreground">Auto-llenado del proveedor seleccionado</p>
+            )}
           </div>
 
           <div className="grid gap-2">
