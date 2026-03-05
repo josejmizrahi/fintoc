@@ -55,6 +55,7 @@ function LoginPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const loginWithToken = useAuthStore((s) => s.loginWithToken);
+  const setCompanies = useAuthStore((s) => s.setCompanies);
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const [mounted, setMounted] = useState(false);
   // Track whether a login/register submission is in progress to prevent
@@ -115,13 +116,23 @@ function LoginPageInner() {
         return;
       }
       const user = { id: res.user.id, email: res.user.email, name: res.user.full_name || res.user.name || '' };
+      const activeCompany = {
+        id: res.tenant?.id || res.company?.id,
+        name: res.tenant?.name || res.company?.name,
+        rfc: res.tenant?.rfc || res.company?.rfc,
+        onboarding_completed: res.onboarding_completed ?? true,
+      };
       loginWithToken(
         res.access_token,
         user,
-        { id: res.tenant?.id || res.company?.id, name: res.tenant?.name || res.company?.name, rfc: res.tenant?.rfc || res.company?.rfc },
+        activeCompany,
         res.role || 'admin',
         res.refresh_token,
       );
+      // Store all companies (for company switcher)
+      if (res.companies && res.companies.length > 0) {
+        setCompanies(res.companies);
+      }
       toast.success('Sesion iniciada correctamente');
       if (res.onboarding_completed === false) {
         router.push('/onboarding');

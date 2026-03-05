@@ -1,21 +1,22 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
   CheckCircle2,
-  XCircle,
   Loader2,
   ArrowRight,
   ArrowLeft,
   Landmark,
   ShieldCheck,
   Server,
+  Rocket,
+  SkipForward,
 } from "lucide-react";
 
 import {
@@ -32,29 +33,42 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 
 import { api } from "@/lib/api";
+import { useAuthStore } from "@/lib/store";
 
 /* ---------- Step definitions ---------- */
 
 const STEPS = [
   {
+    key: "welcome" as const,
+    title: "Bienvenida",
+    description: "Configura tu plataforma paso a paso.",
+    icon: Rocket,
+    optional: false,
+  },
+  {
     key: "odoo" as const,
-    title: "Conectar Odoo",
+    title: "Odoo (ERP)",
     description: "Conecta tu ERP para sincronizar clientes, proveedores y facturas.",
     icon: Server,
+    optional: true,
   },
   {
     key: "fintoc" as const,
-    title: "Conectar Fintoc",
+    title: "Fintoc (Pagos)",
     description: "Configura pagos SPEI y consulta de movimientos bancarios.",
     icon: Landmark,
+    optional: true,
   },
   {
     key: "sat" as const,
-    title: "Conectar SAT",
-    description: "Conecta con el SAT via Syntage para descargar CFDIs, declaraciones y mas.",
+    title: "SAT (Fiscal)",
+    description: "Conecta con el SAT via Syntage para descargar CFDIs y declaraciones.",
     icon: ShieldCheck,
+    optional: true,
   },
 ];
+
+type StepKey = (typeof STEPS)[number]["key"];
 
 /* ---------- Zod schemas per step ---------- */
 
@@ -99,10 +113,12 @@ function Stepper({
   steps,
   currentStep,
   completedSteps,
+  onStepClick,
 }: {
   steps: typeof STEPS;
   currentStep: number;
   completedSteps: Set<string>;
+  onStepClick: (index: number) => void;
 }) {
   return (
     <div className="flex items-center gap-0 w-full">
@@ -112,14 +128,17 @@ function Stepper({
 
         return (
           <div key={step.key} className="flex items-center flex-1">
-            <div className="flex flex-col items-center flex-1">
+            <button
+              onClick={() => onStepClick(i)}
+              className="flex flex-col items-center flex-1 group"
+            >
               <div
                 className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-medium border-2 transition-colors ${
                   isCompleted
                     ? "border-green-600 bg-green-600 text-white"
                     : isCurrent
                     ? "border-primary bg-primary text-primary-foreground"
-                    : "border-muted-foreground/30 bg-background text-muted-foreground"
+                    : "border-muted-foreground/30 bg-background text-muted-foreground group-hover:border-muted-foreground/50"
                 }`}
               >
                 {isCompleted ? (
@@ -135,7 +154,7 @@ function Stepper({
               >
                 {step.title}
               </span>
-            </div>
+            </button>
             {i < steps.length - 1 && (
               <div
                 className={`h-0.5 w-full mx-2 ${
@@ -156,13 +175,15 @@ function Stepper({
 
 export default function OnboardingPage() {
   const router = useRouter();
+  const activeCompany = useAuthStore((s) => s.activeCompany);
   const [step, setStep] = useState(0);
-  const [completedSteps, setCompletedSteps] = useState<Set<string>>(new Set());
+  const [completedSteps, setCompletedSteps] = useState<Set<string>>(new Set(["welcome"]));
   const [testResults, setTestResults] = useState<Record<string, TestResult | null>>({
     odoo: null,
     fintoc: null,
     sat: null,
   });
+  const [configsLoaded, setConfigsLoaded] = useState(false);
 
   // SAT file refs
   const cerInputRef = useRef<HTMLInputElement>(null);
@@ -188,6 +209,67 @@ export default function OnboardingPage() {
     resolver: zodResolver(satSchema),
     defaultValues: { syntageApiKey: "", rfcEmisor: "", fielPassword: "" },
   });
+
+  /* ----- Load existing configs ----- */
+
+  const { data: existingStatus } = useQuery({
+    queryKey: ["onboarding", "status"],
+    queryFn: () => api.onboarding.status(),
+    staleTime: 0,
+  });
+
+  useEffect(() => {
+    if (!existingStatus || configsLoaded) return;
+    setConfigsLoaded(true);
+
+    const completed = new Set<string>(["welcome"]);
+
+    // Load Odoo config
+    if (existingStatus.odoo?.config) {
+      const c = existingStatus.odoo.config;
+      odooForm.reset({
+        url: c.url || "",
+        database: c.database || "",
+        user: c.user || "",
+        apiKey: c.password || "",
+      });
+      if (existingStatus.odoo.is_connected) {
+        completed.add("odoo");
+        setTestResults((prev) => ({ ...prev, odoo: { success: true, message: "Conectado previamente" } }));
+      }
+    }
+
+    // Load Fintoc config
+    if (existingStatus.fintoc?.config) {
+      const c = existingStatus.fintoc.config;
+      fintocForm.reset({ secretKey: c.secretKey || "" });
+      if (existingStatus.fintoc.is_connected) {
+        completed.add("fintoc");
+        setTestResults((prev) => ({ ...prev, fintoc: { success: true, message: "Conectado previamente" } }));
+      }
+    }
+
+    // Load SAT config
+    if (existingStatus.sat?.config) {
+      const c = existingStatus.sat.config;
+      satForm.reset({
+        syntageApiKey: c.syntageApiKey || "",
+        rfcEmisor: c.rfcEmisor || activeCompany?.rfc || "",
+        fielPassword: c.fielPassword || "",
+      });
+      if (existingStatus.sat.is_connected) {
+        completed.add("sat");
+        setTestResults((prev) => ({ ...prev, sat: { success: true, message: "Conectado previamente" } }));
+      }
+    }
+
+    // Pre-fill RFC from company
+    if (!existingStatus.sat?.config?.rfcEmisor && activeCompany?.rfc) {
+      satForm.setValue("rfcEmisor", activeCompany.rfc);
+    }
+
+    setCompletedSteps(completed);
+  }, [existingStatus, configsLoaded, odooForm, fintocForm, satForm, activeCompany]);
 
   /* ----- Test Connection Mutation ----- */
 
@@ -217,7 +299,7 @@ export default function OnboardingPage() {
     },
   });
 
-  /* ----- Save + Complete Mutation ----- */
+  /* ----- Save step mutation ----- */
 
   const saveMutation = useMutation({
     mutationFn: (params: { provider: string; config: Record<string, string> }) =>
@@ -227,7 +309,7 @@ export default function OnboardingPage() {
   const completeMutation = useMutation({
     mutationFn: () => api.onboarding.complete(),
     onSuccess: () => {
-      toast.success("Configuracion completada");
+      toast.success("Configuracion completada. Bienvenido!");
       router.push("/");
     },
     onError: (err: Error) => {
@@ -237,18 +319,38 @@ export default function OnboardingPage() {
 
   /* ----- Handlers ----- */
 
+  function getConfigForStep(stepKey: StepKey): { provider: string; config: Record<string, string> } | null {
+    if (stepKey === "odoo") {
+      const values = odooForm.getValues();
+      if (!values.url && !values.database && !values.user && !values.apiKey) return null;
+      return {
+        provider: "odoo",
+        config: { url: values.url, database: values.database, user: values.user, password: values.apiKey },
+      };
+    }
+    if (stepKey === "fintoc") {
+      const values = fintocForm.getValues();
+      if (!values.secretKey) return null;
+      return { provider: "fintoc", config: { secretKey: values.secretKey } };
+    }
+    if (stepKey === "sat") {
+      const values = satForm.getValues();
+      if (!values.syntageApiKey && !values.rfcEmisor) return null;
+      return {
+        provider: "sat",
+        config: { syntageApiKey: values.syntageApiKey, rfcEmisor: values.rfcEmisor, fielPassword: values.fielPassword },
+      };
+    }
+    return null;
+  }
+
   async function handleTestOdoo() {
     const valid = await odooForm.trigger();
     if (!valid) return;
     const values = odooForm.getValues();
     testConnection.mutate({
       provider: "odoo",
-      config: {
-        url: values.url,
-        database: values.database,
-        user: values.user,
-        password: values.apiKey,
-      },
+      config: { url: values.url, database: values.database, user: values.user, password: values.apiKey },
     });
   }
 
@@ -267,22 +369,27 @@ export default function OnboardingPage() {
     if (!valid) return;
     const values = satForm.getValues();
 
-    // First save Syntage API key, then test connection via Syntage
     try {
       await api.sat.syntage.saveConfig({ syntageApiKey: values.syntageApiKey });
     } catch { /* will fail on test if key is bad */ }
 
     testConnection.mutate({
       provider: "sat",
-      config: {
-        syntageApiKey: values.syntageApiKey,
-        rfcEmisor: values.rfcEmisor,
-        fielPassword: values.fielPassword,
-      },
+      config: { syntageApiKey: values.syntageApiKey, rfcEmisor: values.rfcEmisor, fielPassword: values.fielPassword },
     });
   }
 
-  function handleNext() {
+  async function handleNext() {
+    // Save current step config before advancing
+    const config = getConfigForStep(currentStep.key);
+    if (config) {
+      try {
+        await saveMutation.mutateAsync(config);
+      } catch {
+        // Continue anyway - user can retry later
+      }
+    }
+
     if (step < STEPS.length - 1) {
       setStep(step + 1);
     }
@@ -294,46 +401,30 @@ export default function OnboardingPage() {
     }
   }
 
-  async function handleComplete() {
-    // Save all configs then complete
-    try {
-      const odooValues = odooForm.getValues();
-      const fintocValues = fintocForm.getValues();
-      const satValues = satForm.getValues();
-
-      await saveMutation.mutateAsync({
-        provider: "odoo",
-        config: {
-          url: odooValues.url,
-          database: odooValues.database,
-          user: odooValues.user,
-          password: odooValues.apiKey,
-        },
-      });
-      await saveMutation.mutateAsync({
-        provider: "fintoc",
-        config: { secretKey: fintocValues.secretKey },
-      });
-      await saveMutation.mutateAsync({
-        provider: "sat",
-        config: {
-          syntageApiKey: satValues.syntageApiKey,
-          rfcEmisor: satValues.rfcEmisor,
-          fielPassword: satValues.fielPassword,
-        },
-      });
-
-      completeMutation.mutate();
-    } catch (err: any) {
-      toast.error(err.message || "Error al guardar configuracion");
+  function handleSkip() {
+    if (step < STEPS.length - 1) {
+      setStep(step + 1);
     }
+  }
+
+  async function handleComplete() {
+    // Save last step if it has data
+    const config = getConfigForStep(currentStep.key);
+    if (config) {
+      try {
+        await saveMutation.mutateAsync(config);
+      } catch { /* continue */ }
+    }
+    completeMutation.mutate();
   }
 
   const isLastStep = step === STEPS.length - 1;
   const testResult = testResults[currentStep.key];
   const isConnected = testResult?.success === true;
   const isTesting = testConnection.isPending;
-  const isCompleting = completeMutation.isPending || saveMutation.isPending;
+  const isSaving = saveMutation.isPending;
+  const isCompleting = completeMutation.isPending;
+  const isBusy = isTesting || isSaving || isCompleting;
 
   return (
     <div className="p-6 max-w-2xl mx-auto space-y-8">
@@ -341,7 +432,9 @@ export default function OnboardingPage() {
       <div>
         <h1 className="text-3xl font-bold">Configuracion Inicial</h1>
         <p className="text-muted-foreground">
-          Conecta tus servicios para empezar a usar la plataforma.
+          {activeCompany?.name
+            ? `Configura ${activeCompany.name} paso a paso.`
+            : "Conecta tus servicios para empezar a usar la plataforma."}
         </p>
       </div>
 
@@ -350,6 +443,7 @@ export default function OnboardingPage() {
         steps={STEPS}
         currentStep={step}
         completedSteps={completedSteps}
+        onStepClick={setStep}
       />
 
       {/* Step Card */}
@@ -364,10 +458,38 @@ export default function OnboardingPage() {
             {testResult && !testResult.success && (
               <Badge variant="destructive">Error</Badge>
             )}
+            {currentStep.optional && !isConnected && (
+              <Badge variant="outline" className="text-muted-foreground">Opcional</Badge>
+            )}
           </CardTitle>
           <CardDescription>{currentStep.description}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
+          {/* Step 0: Welcome */}
+          {currentStep.key === "welcome" && (
+            <div className="space-y-6">
+              <div className="rounded-lg border bg-muted/50 p-6 space-y-4">
+                <h3 className="text-lg font-semibold">
+                  Bienvenido a {activeCompany?.name || "la plataforma"}
+                </h3>
+                <p className="text-sm text-muted-foreground">
+                  En los siguientes pasos puedes conectar tus integraciones. Cada paso es <strong>opcional</strong> y puedes configurarlos despues desde Configuracion.
+                </p>
+                <div className="grid gap-3 sm:grid-cols-3">
+                  {STEPS.filter((s) => s.key !== "welcome").map((s) => (
+                    <div key={s.key} className="flex items-start gap-3 p-3 rounded-lg border bg-background">
+                      <s.icon className="size-5 text-primary mt-0.5 shrink-0" />
+                      <div>
+                        <p className="text-sm font-medium">{s.title}</p>
+                        <p className="text-xs text-muted-foreground">{s.description}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Step 1: Odoo */}
           {currentStep.key === "odoo" && (
             <div className="grid gap-4 sm:grid-cols-2">
@@ -467,7 +589,7 @@ export default function OnboardingPage() {
           {/* Step 3: SAT via Syntage */}
           {currentStep.key === "sat" && (
             <div className="space-y-6">
-              <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
+              <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-200">
                 Se usa <strong>Syntage</strong> (api.syntage.com) como intermediario.
                 Sube tu FIEL y Syntage se encarga de validarla contra el SAT.
               </div>
@@ -587,8 +709,8 @@ export default function OnboardingPage() {
               </div>
 
               {isConnected && testResult && (
-                <div className="rounded-lg border border-green-200 bg-green-50 p-4 space-y-2">
-                  <p className="text-sm font-medium text-green-800">Syntage conectado</p>
+                <div className="rounded-lg border border-green-200 bg-green-50 p-4 space-y-2 dark:border-green-900 dark:bg-green-950">
+                  <p className="text-sm font-medium text-green-800 dark:text-green-200">Syntage conectado</p>
                   {testResult.rfc && (
                     <div className="flex items-center gap-2 text-sm">
                       <span className="text-muted-foreground">RFC:</span>
@@ -596,15 +718,15 @@ export default function OnboardingPage() {
                     </div>
                   )}
                   {testResult.message && (
-                    <p className="text-xs text-green-700">{testResult.message}</p>
+                    <p className="text-xs text-green-700 dark:text-green-300">{testResult.message}</p>
                   )}
                 </div>
               )}
             </div>
           )}
 
-          {/* Test result message */}
-          {testResult?.message && (
+          {/* Test result message (non-welcome steps) */}
+          {currentStep.key !== "welcome" && testResult?.message && (
             <>
               <Separator />
               <p
@@ -622,40 +744,51 @@ export default function OnboardingPage() {
           {/* Actions */}
           <div className="flex items-center justify-between">
             <div className="flex gap-3">
-              <Button
-                variant="outline"
-                onClick={
-                  currentStep.key === "odoo"
-                    ? handleTestOdoo
-                    : currentStep.key === "fintoc"
-                    ? handleTestFintoc
-                    : handleTestSat
-                }
-                disabled={isTesting || isCompleting}
-              >
-                {isTesting ? (
-                  <Loader2 className="mr-2 size-4 animate-spin" />
-                ) : null}
-                Probar Conexion
-              </Button>
+              {currentStep.key !== "welcome" && (
+                <Button
+                  variant="outline"
+                  onClick={
+                    currentStep.key === "odoo"
+                      ? handleTestOdoo
+                      : currentStep.key === "fintoc"
+                      ? handleTestFintoc
+                      : handleTestSat
+                  }
+                  disabled={isBusy}
+                >
+                  {isTesting ? (
+                    <Loader2 className="mr-2 size-4 animate-spin" />
+                  ) : null}
+                  Probar Conexion
+                </Button>
+              )}
             </div>
 
             <div className="flex gap-3">
               {step > 0 && (
-                <Button variant="ghost" onClick={handleBack} disabled={isCompleting}>
+                <Button variant="ghost" onClick={handleBack} disabled={isBusy}>
                   <ArrowLeft className="mr-2 size-4" />
                   Anterior
                 </Button>
               )}
+              {currentStep.optional && !isConnected && !isLastStep && (
+                <Button variant="ghost" onClick={handleSkip} disabled={isBusy}>
+                  <SkipForward className="mr-2 size-4" />
+                  Saltar
+                </Button>
+              )}
               {isLastStep ? (
-                <Button onClick={handleComplete} disabled={isCompleting}>
+                <Button onClick={handleComplete} disabled={isBusy}>
                   {isCompleting ? (
                     <Loader2 className="mr-2 size-4 animate-spin" />
                   ) : null}
                   Completar
                 </Button>
               ) : (
-                <Button onClick={handleNext}>
+                <Button onClick={handleNext} disabled={isBusy}>
+                  {isSaving ? (
+                    <Loader2 className="mr-2 size-4 animate-spin" />
+                  ) : null}
                   Siguiente
                   <ArrowRight className="ml-2 size-4" />
                 </Button>
@@ -666,10 +799,8 @@ export default function OnboardingPage() {
       </Card>
 
       {/* Step summary cards */}
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-4">
         {STEPS.map((s, i) => {
-          const result = testResults[s.key];
-          const StepIcon = s.icon;
           return (
             <button
               key={s.key}
@@ -684,7 +815,7 @@ export default function OnboardingPage() {
                 <div
                   className={`w-6 h-6 rounded-full text-xs flex items-center justify-center font-medium ${
                     completedSteps.has(s.key)
-                      ? "bg-green-100 text-green-700"
+                      ? "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300"
                       : i === step
                       ? "bg-primary text-primary-foreground"
                       : "bg-muted text-muted-foreground"
@@ -698,7 +829,7 @@ export default function OnboardingPage() {
                 </div>
                 <span className="text-sm font-medium">{s.title}</span>
               </div>
-              {completedSteps.has(s.key) && (
+              {completedSteps.has(s.key) && s.key !== "welcome" && (
                 <p className="text-xs text-green-600 mt-1 ml-8">Conectado</p>
               )}
             </button>
