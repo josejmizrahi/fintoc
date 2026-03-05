@@ -103,8 +103,9 @@ export function Header() {
   const handleSwitchCompany = async (company: typeof activeCompany) => {
     if (!company || company.id === activeCompany?.id) return;
     try {
-      await api.auth.switchCompany({ company_id: company.id });
-      switchCompany(company);
+      const res = await api.auth.switchCompany({ company_id: company.id });
+      const newRole = res?.data?.active_company?.role || 'admin';
+      switchCompany(company, newRole);
       queryClient.clear();
       if (!company.onboarding_completed) {
         router.push('/onboarding');
