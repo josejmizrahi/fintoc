@@ -7,7 +7,7 @@
 CREATE TABLE IF NOT EXISTS user_companies (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  company_id UUID NOT NULL,
+  company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
   role TEXT NOT NULL DEFAULT 'viewer',
   is_active BOOLEAN NOT NULL DEFAULT false,
   status TEXT NOT NULL DEFAULT 'active',
@@ -32,16 +32,6 @@ ALTER TABLE user_companies ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS user_companies_own_access ON user_companies;
 CREATE POLICY user_companies_own_access ON user_companies FOR ALL
   USING (user_id = auth.uid());
-
--- ============================================================
--- Fix companies.id type: migration 001 uses SERIAL (integer)
--- but new code expects UUID. Add a UUID column if needed.
--- ============================================================
--- NOTE: If companies.id is already UUID, these will be no-ops.
--- If it's SERIAL, the user_companies.company_id FK won't work
--- unless companies.id is cast or migrated. For fresh installs
--- with UUID, this works as-is. For existing SERIAL installs,
--- you may need to migrate companies.id to UUID separately.
 
 -- Ensure onboarding_completed column exists on companies
 ALTER TABLE companies ADD COLUMN IF NOT EXISTS onboarding_completed BOOLEAN DEFAULT false;
