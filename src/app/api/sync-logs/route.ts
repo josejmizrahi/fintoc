@@ -11,8 +11,9 @@ export async function GET(req: NextRequest) {
   if (!companyId) return NextResponse.json({ detail: "No autorizado" }, { status: 401 });
   if (!hasDB()) return NextResponse.json({ logs: [] });
 
-  const provider = req.nextUrl.searchParams.get("provider");
-  const limit = Math.min(Number(req.nextUrl.searchParams.get("limit")) || 20, 100);
+  const url = new URL(req.url);
+  const provider = url.searchParams.get("provider");
+  const limit = Math.min(Number(url.searchParams.get("limit")) || 20, 100);
 
   const match: Record<string, unknown> = { company_id: companyId };
   if (provider) match.provider = provider;
