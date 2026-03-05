@@ -78,9 +78,12 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   if (res.status === 401 && !url.includes('/api/auth/refresh')) {
     const newToken = await tryRefreshToken();
     if (newToken) {
-      const headers = { ...getAuthHeaders(), ...options?.headers };
-      headers['Authorization'] = `Bearer ${newToken}`;
-      res = await fetch(`${API_BASE}${url}`, { ...options, headers });
+      const refreshedHeaders: Record<string, string> = {
+        ...getAuthHeaders(),
+        ...(options?.headers as Record<string, string> | undefined),
+        'Authorization': `Bearer ${newToken}`,
+      };
+      res = await fetch(`${API_BASE}${url}`, { ...options, headers: refreshedHeaders });
     }
   }
 
