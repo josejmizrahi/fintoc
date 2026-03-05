@@ -15,11 +15,11 @@ export const POST = createHandler(async (req) => {
     const admin = getAdminClient();
 
     if (result.data.notification_ids && result.data.notification_ids.length > 0) {
-      await admin.from('notifications').update({ read: true })
+      await admin.from('notifications').update({ read: true, is_read: true })
         .in('id', result.data.notification_ids).eq('user_id', ctx.user_id);
     } else {
       // Mark all as read
-      await admin.from('notifications').update({ read: true })
+      await admin.from('notifications').update({ read: true, is_read: true })
         .eq('user_id', ctx.user_id).eq('company_id', ctx.company_id).eq('read', false);
     }
 

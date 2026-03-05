@@ -7,7 +7,7 @@ export const GET = createHandler(async (req) => {
   return withAuth(withRbac('reports.read', async (_req, ctx) => {
     const admin = getAdminClient();
     const { data: invoices } = await admin.from('invoices').select('*, customers:customer_id(id, name)')
-      .eq('company_id', ctx.company_id).eq('type', 'out_invoice').gt('amount_residual', 0);
+      .eq('company_id', ctx.company_id).eq('type', 'receivable').gt('amount_residual', 0);
 
     const today = new Date();
     const totals: Record<string, number> = { '0-30': 0, '31-60': 0, '61-90': 0, '90+': 0 };

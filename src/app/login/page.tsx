@@ -92,11 +92,12 @@ function LoginPageInner() {
   async function onLogin(data: LoginValues) {
     try {
       const res = await api.auth.login(data);
+      const user = { id: res.user.id, email: res.user.email, name: res.user.full_name || res.user.name || '' };
       loginWithToken(
         res.access_token,
-        res.user,
+        user,
         { id: res.tenant?.id || res.company?.id, name: res.tenant?.name || res.company?.name, rfc: res.tenant?.rfc || res.company?.rfc },
-        res.role || res.user?.role || 'admin',
+        res.role || 'admin',
       );
       toast.success('Sesion iniciada correctamente');
       if (res.onboarding_completed === false) {
@@ -111,15 +112,20 @@ function LoginPageInner() {
 
   async function onRegister(data: RegisterValues) {
     try {
-      const res = await api.auth.register({
+      const payload: Parameters<typeof api.auth.register>[0] = {
         email: data.email,
         password: data.password,
         company_name: data.company_name,
         rfc: data.rfc,
-      });
+      };
+      if ('full_name' in data && data.full_name) {
+        payload.name = data.full_name;
+      }
+      const res = await api.auth.register(payload);
+      const user = { id: res.user.id, email: res.user.email, name: res.user.full_name || res.user.name || '' };
       loginWithToken(
         res.access_token,
-        res.user,
+        user,
         { id: res.tenant?.id || res.company?.id, name: res.tenant?.name || res.company?.name, rfc: data.rfc },
         'admin',
       );

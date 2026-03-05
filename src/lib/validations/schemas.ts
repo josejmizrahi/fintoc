@@ -64,7 +64,7 @@ export const paymentExecuteBatchSchema = z.object({
 
 // --- Invoices ---
 export const invoiceCreateSchema = z.object({
-  type: z.enum(['in_invoice', 'out_invoice']),
+  type: z.enum(['receivable', 'payable']),
   vendor_id: uuid.optional(),
   customer_id: uuid.optional(),
   invoice_number: z.string().max(50).optional(),
@@ -123,7 +123,7 @@ export const importToOdooSchema = z.object({
 // --- Vendors ---
 export const vendorCreateSchema = z.object({
   name: z.string().min(2).max(200),
-  rfc: rfcSchema,
+  rfc: rfcSchema.optional(),
   email: z.string().email().optional(),
   phone: z.string().max(15).optional(),
   clabe: clabeSchema.optional(),
@@ -138,7 +138,7 @@ export const verifyClabeSchema = z.object({
 // --- Customers ---
 export const customerCreateSchema = z.object({
   name: z.string().min(2).max(200),
-  rfc: rfcSchema,
+  rfc: rfcSchema.optional(),
   email: z.string().email().optional(),
   phone: z.string().max(15).optional(),
 });
@@ -152,10 +152,9 @@ export const createClabeSchema = z.object({
 // --- Expenses ---
 export const expenseCreateSchema = z.object({
   employee_name: z.string().min(1).max(200),
-  category: z.enum(['travel', 'meal', 'material', 'transport', 'other']),
-  description: z.string().min(1).max(200),
+  category: z.string().min(1).max(100),
+  description: z.string().max(200).optional(),
   amount: z.number().positive(),
-  expense_date: z.string().date(),
   xml_url: z.string().url().optional(),
   cfdi_uuid: z.string().max(36).optional(),
 });
@@ -186,10 +185,11 @@ export const approvalRejectSchema = z.object({
 
 // --- Budgets ---
 export const budgetCreateSchema = z.object({
+  name: z.string().min(1).max(200).optional(),
   category: z.string().min(1).max(100),
   period_start: z.string().date(),
   period_end: z.string().date(),
-  amount: z.number().positive(),
+  amount_budgeted: z.number().positive(),
 });
 
 export const budgetUpdateSchema = budgetCreateSchema.partial();

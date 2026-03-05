@@ -91,7 +91,7 @@ type RejectReasonForm = z.infer<typeof rejectReasonSchema>;
 /* ---------- Rule type ---------- */
 
 interface ApprovalRule {
-  id: number;
+  id: string;
   name: string;
   min_amount: number;
   max_amount: number;
@@ -356,7 +356,7 @@ export default function AprobacionesPage() {
   const queryClient = useQueryClient();
   const [ruleDialogOpen, setRuleDialogOpen] = useState(false);
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
-  const [rejectingId, setRejectingId] = useState<number | null>(null);
+  const [rejectingId, setRejectingId] = useState<string | null>(null);
 
   /* ----- Queries ----- */
 
@@ -375,7 +375,7 @@ export default function AprobacionesPage() {
   /* ----- Mutations ----- */
 
   const approveMutation = useMutation({
-    mutationFn: (id: number) => api.approvals.approve(id),
+    mutationFn: (id: string) => api.approvals.approve(id),
     onMutate: async (id) => {
       await queryClient.cancelQueries({ queryKey: approvalKeys.pending() });
       const previous = queryClient.getQueryData(approvalKeys.pending());
@@ -401,7 +401,7 @@ export default function AprobacionesPage() {
   });
 
   const rejectMutation = useMutation({
-    mutationFn: ({ id, reason }: { id: number; reason: string }) =>
+    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
       api.approvals.reject(id, reason),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: approvalKeys.pending() });

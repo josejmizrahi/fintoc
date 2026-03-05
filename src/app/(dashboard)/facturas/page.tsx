@@ -191,7 +191,7 @@ function XmlViewerDialog({
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  invoiceId: number | null;
+  invoiceId: string | null;
 }) {
   const [xml, setXml] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -985,8 +985,8 @@ export default function FacturasPage() {
   const payableQuery = usePayableInvoices(queryFilters);
   const receivableQuery = useReceivableInvoices(queryFilters);
 
-  const payableData: Invoice[] = payableQuery.data ?? [];
-  const receivableData: Invoice[] = receivableQuery.data ?? [];
+  const payableData: Invoice[] = Array.isArray(payableQuery.data) ? payableQuery.data : (payableQuery.data?.data ?? []);
+  const receivableData: Invoice[] = Array.isArray(receivableQuery.data) ? receivableQuery.data : (receivableQuery.data?.data ?? []);
 
   const currentData = activeTab === "payable" ? payableData : receivableData;
   const currentQuery = activeTab === "payable" ? payableQuery : receivableQuery;
@@ -1059,7 +1059,7 @@ export default function FacturasPage() {
 
   // Dialog states
   const [xmlDialogOpen, setXmlDialogOpen] = useState(false);
-  const [xmlInvoiceId, setXmlInvoiceId] = useState<number | null>(null);
+  const [xmlInvoiceId, setXmlInvoiceId] = useState<string | null>(null);
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
   const [cancelInvoice, setCancelInvoice] = useState<Invoice | null>(null);
   const [complementsDialogOpen, setComplementsDialogOpen] = useState(false);

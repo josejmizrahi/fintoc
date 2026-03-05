@@ -400,7 +400,7 @@ function NewPaymentDialog({
                 setVendorSearch(e.target.value);
                 setSelectedVendor(null);
                 form.setValue("vendor_name", e.target.value);
-                form.setValue("vendor_id", undefined);
+                form.setValue("vendor_id", "" as any);
                 setShowVendorDropdown(true);
               }}
               onFocus={() => setShowVendorDropdown(true)}
@@ -455,7 +455,7 @@ function NewPaymentDialog({
                   defaultValue=""
                   onChange={(e) => {
                     const inv = invoices.find(
-                      (i) => i.id === Number(e.target.value)
+                      (i) => i.id === e.target.value
                     );
                     if (inv) selectInvoice(inv);
                   }}
@@ -958,14 +958,14 @@ export default function PagosPage() {
     if (!paymentsResponse) return [];
     if (Array.isArray(paymentsResponse)) return paymentsResponse;
     if (paymentsResponse.data) return paymentsResponse.data;
-    if (paymentsResponse.items) return paymentsResponse.items;
+    if ((paymentsResponse as any).items) return (paymentsResponse as any).items;
     return [];
   }, [paymentsResponse]);
 
   const totalCount = useMemo(() => {
     if (!paymentsResponse) return 0;
     if (Array.isArray(paymentsResponse)) return paymentsResponse.length;
-    return paymentsResponse.total ?? paymentsResponse.count ?? payments.length;
+    return paymentsResponse.meta?.total ?? (paymentsResponse as any).total ?? (paymentsResponse as any).count ?? payments.length;
   }, [paymentsResponse, payments.length]);
 
   // Mutations

@@ -58,7 +58,7 @@ export interface DashboardData {
 }
 
 export interface Invoice {
-  id: number;
+  id: string;
   name: string;
   type?: string;
   partner_name?: string;
@@ -104,7 +104,7 @@ export interface Invoice {
 }
 
 export interface Vendor {
-  id: number;
+  id: string;
   name: string;
   rfc?: string;
   email?: string;
@@ -125,7 +125,7 @@ export interface Vendor {
 }
 
 export interface Customer {
-  id: number;
+  id: string;
   name: string;
   rfc?: string;
   email?: string;
@@ -143,10 +143,10 @@ export interface Customer {
 }
 
 export interface CfdiDocument {
-  id: number;
-  company_id: number;
+  id: string;
+  company_id: string;
   uuid: string;
-  invoice_id?: number;
+  invoice_id?: string;
   tipo_comprobante?: string;
   rfc_emisor?: string;
   nombre_emisor?: string;
@@ -181,8 +181,8 @@ export interface CfdiDocument {
 }
 
 export interface SatDownloadRequest {
-  id: number;
-  company_id: number;
+  id: string;
+  company_id: string;
   request_id?: string;
   request_type: "emitidos" | "recibidos";
   solicitud_type: "CFDI" | "Metadata";
@@ -203,10 +203,10 @@ export interface SatDownloadRequest {
 }
 
 export interface SatCancellationRequest {
-  id: number;
-  company_id: number;
+  id: string;
+  company_id: string;
   cfdi_uuid: string;
-  invoice_id?: number;
+  invoice_id?: string;
   motivo: string;
   uuid_sustitucion?: string;
   status: string;
@@ -219,8 +219,8 @@ export interface SatCancellationRequest {
 }
 
 export interface BankMovement {
-  id: number;
-  company_id: number;
+  id: string;
+  company_id: string;
   fintoc_id?: string;
   amount: number;
   currency: string;
@@ -236,7 +236,7 @@ export interface BankMovement {
 }
 
 export interface Expense {
-  id: number;
+  id: string;
   employee_name: string;
   category?: string;
   description?: string;
@@ -244,7 +244,7 @@ export interface Expense {
   currency: string;
   status: string;
   cfdi_uuid?: string;
-  sat_validated: boolean;
+  sat_validated?: boolean;
   product_category?: string;
   payment_mode?: string; // own_account, company_account
   sheet_id?: number;
@@ -255,7 +255,7 @@ export interface Expense {
 }
 
 export interface Budget {
-  id: number;
+  id: string;
   name: string;
   category?: string;
   period_start: string;
@@ -270,8 +270,8 @@ export interface Budget {
 }
 
 export interface ApprovalRequest {
-  approval_id: number;
-  payment_id: number;
+  approval_id: string;
+  payment_id: string;
   level: number;
   approver_email?: string;
   payment_amount: number;
@@ -281,7 +281,7 @@ export interface ApprovalRequest {
 }
 
 export interface Notification {
-  id: number;
+  id: string;
   type: string;
   title: string;
   message?: string;
@@ -323,11 +323,11 @@ export interface ReconciliationEntry {
 }
 
 export interface OdooBankStatement {
-  id: number;
-  company_id: number;
+  id: string;
+  company_id: string;
   odoo_statement_line_id?: number;
-  bank_movement_id?: number;
-  payment_id?: number;
+  bank_movement_id?: string;
+  payment_id?: string;
   journal_id?: number;
   partner_id?: number;
   date: string;
@@ -343,14 +343,14 @@ export interface OdooBankStatement {
 }
 
 export interface OdooPurchaseOrder {
-  id: number;
-  company_id: number;
+  id: string;
+  company_id: string;
   odoo_id: number;
   name: string;
   partner_id?: number;
   partner_name?: string;
   partner_rfc?: string;
-  vendor_id?: number;
+  vendor_id?: string;
   state?: string; // draft, sent, purchase, done, cancel
   amount_total?: number;
   amount_tax?: number;
@@ -367,7 +367,7 @@ export interface OdooPurchaseOrder {
 }
 
 export interface OdooIdCache {
-  company_id: number;
+  company_id: string;
   cache_key: string;
   odoo_id: number;
   display_name?: string;
@@ -376,7 +376,7 @@ export interface OdooIdCache {
 }
 
 export interface Payment {
-  id: number;
+  id: string;
   direction: "inbound" | "outbound";
   status: string;
   amount: number;
@@ -394,10 +394,10 @@ export interface Payment {
   odoo_id?: number;
   odoo_payment_id?: number;
   odoo_state?: string;
-  reconciled_invoice_ids?: number[];
+  reconciled_invoice_ids?: string[];
   complemento_emitido?: boolean;
   complemento_uuid?: string;
   jws_signed?: boolean;
-  bank_movement_id?: number;
+  bank_movement_id?: string;
   source?: string;
 }

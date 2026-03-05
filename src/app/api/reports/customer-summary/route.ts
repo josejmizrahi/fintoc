@@ -9,7 +9,7 @@ export const GET = createHandler(async (req) => {
 
     const { data: customers } = await admin.from('customers').select('id, name, rfc').eq('company_id', ctx.company_id);
     const { data: invoices } = await admin.from('invoices').select('customer_id, amount_total, amount_paid')
-      .eq('company_id', ctx.company_id).eq('type', 'out_invoice');
+      .eq('company_id', ctx.company_id).eq('type', 'receivable');
 
     const result = (customers || []).map(customer => {
       const custInvoices = (invoices || []).filter(i => i.customer_id === customer.id);

@@ -26,7 +26,7 @@ export function useUnreadCount() {
 export function useMarkNotificationsRead() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (ids: (number | string)[]) => api.notifications.markRead(ids),
+    mutationFn: (ids: (string)[]) => api.notifications.markRead(ids),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: notificationKeys.all });
       toast.success('Notificaciones marcadas como leidas');

@@ -16,7 +16,7 @@ export const GET = createHandler(async (req) => {
       .from('invoices')
       .select('*, customers:customer_id(id, name, rfc)', { count: 'exact' })
       .eq('company_id', ctx.company_id)
-      .eq('type', 'out_invoice')
+      .eq('type', 'receivable')
       .gt('amount_residual', 0)
       .or(`due_date.is.null,due_date.gte.${today}`)
       .order('due_date', { ascending: true })

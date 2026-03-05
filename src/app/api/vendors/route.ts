@@ -54,14 +54,16 @@ export const POST = createHandler(async (req) => {
     const admin = getAdminClient();
 
     // Check RFC uniqueness
-    const { data: existing } = await admin
-      .from('vendors')
-      .select('id')
-      .eq('company_id', ctx.company_id)
-      .eq('rfc', data.rfc.toUpperCase())
-      .single();
+    if (data.rfc) {
+      const { data: existing } = await admin
+        .from('vendors')
+        .select('id')
+        .eq('company_id', ctx.company_id)
+        .eq('rfc', data.rfc.toUpperCase())
+        .single();
 
-    if (existing) throw new ApiError('DUPLICATE', 'Ya existe un proveedor con este RFC', 409);
+      if (existing) throw new ApiError('DUPLICATE', 'Ya existe un proveedor con este RFC', 409);
+    }
 
     const bankName = data.clabe ? getBankFromCLABE(data.clabe) : null;
 
@@ -70,7 +72,7 @@ export const POST = createHandler(async (req) => {
       .insert({
         company_id: ctx.company_id,
         name: data.name,
-        rfc: data.rfc.toUpperCase(),
+        rfc: data.rfc?.toUpperCase() || null,
         email: data.email || null,
         phone: data.phone || null,
         clabe: data.clabe || null,

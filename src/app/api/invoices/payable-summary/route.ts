@@ -11,7 +11,7 @@ export const GET = createHandler(async (req) => {
       .from('invoices')
       .select('amount_residual')
       .eq('company_id', ctx.company_id)
-      .eq('type', 'in_invoice')
+      .eq('type', 'payable')
       .gt('amount_residual', 0);
 
     if (error) return Response.json({ data: { total_amount: 0, count: 0 } });

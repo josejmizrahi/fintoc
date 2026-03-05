@@ -11,7 +11,7 @@ export const GET = createHandler(async (req) => {
     const { data: payments } = await admin.from('payments').select('vendor_id, amount, confirmed_at')
       .eq('company_id', ctx.company_id).eq('status', 'confirmed');
     const { data: invoices } = await admin.from('invoices').select('vendor_id')
-      .eq('company_id', ctx.company_id).eq('type', 'in_invoice');
+      .eq('company_id', ctx.company_id).eq('type', 'payable');
 
     const result = (vendors || []).map(vendor => {
       const vendorPayments = (payments || []).filter(p => p.vendor_id === vendor.id);

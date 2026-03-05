@@ -34,7 +34,7 @@ export function useCreateExpense() {
 export function useApproveExpense() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (id: number | string) => api.expenses.approve(id),
+    mutationFn: (id: string) => api.expenses.approve(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: expenseKeys.all });
       toast.success('Gasto aprobado exitosamente');
@@ -48,7 +48,7 @@ export function useApproveExpense() {
 export function useRejectExpense() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, reason }: { id: number | string; reason: string }) => api.expenses.reject(id, reason),
+    mutationFn: ({ id, reason }: { id: string; reason: string }) => api.expenses.reject(id, reason),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: expenseKeys.all });
       toast.success('Gasto rechazado');
