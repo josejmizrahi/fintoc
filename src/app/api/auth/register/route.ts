@@ -79,9 +79,10 @@ export const POST = createHandler(async (req) => {
   });
 
   if (memberError) {
+    console.error('user_companies insert failed:', JSON.stringify(memberError));
     await admin.auth.admin.deleteUser(userId);
     await admin.from('companies').delete().eq('id', company.id);
-    throw new ApiError('INTERNAL_ERROR', 'Error al crear membresia', 500);
+    throw new ApiError('INTERNAL_ERROR', `Error al crear membresia: ${memberError.message}`, 500);
   }
 
   // Sign in to get access token

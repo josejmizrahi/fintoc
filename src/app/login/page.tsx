@@ -119,7 +119,7 @@ function LoginPageInner() {
         rfc: data.rfc,
       };
       if ('full_name' in data && data.full_name) {
-        payload.name = data.full_name;
+        payload.full_name = data.full_name;
       }
       const res = await api.auth.register(payload);
       const user = { id: res.user.id, email: res.user.email, name: res.user.full_name || res.user.name || '' };

@@ -361,12 +361,10 @@ function NewPaymentDialog({
   async function onSubmit(data: PaymentFormValues) {
     await createPayment.mutateAsync({
       vendor_id: data.vendor_id,
-      vendor_name: data.vendor_name,
-      invoice_id: data.invoice_id,
+      invoice_id: data.invoice_id || undefined,
       amount: data.amount,
-      clabe_destination: data.clabe,
       concept: data.concept,
-      reference_id: data.reference || undefined,
+      reference: data.reference || undefined,
       scheduled_date: data.scheduled_date || undefined,
     });
     resetDialog();

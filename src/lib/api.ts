@@ -110,7 +110,7 @@ export const api = {
   del,
 
   auth: {
-    register: (data: { email: string; password: string; name?: string; company_name: string; rfc: string }) =>
+    register: (data: { email: string; password: string; full_name?: string; company_name: string; rfc: string }) =>
       authRequest<any>('/api/auth/register', data),
     login: (data: { email: string; password: string }) =>
       authRequest<any>('/api/auth/login', data),
