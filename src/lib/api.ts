@@ -43,10 +43,17 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
 
   if (res.status === 401) {
     if (typeof window !== 'undefined') {
+      const detail = await res.json().catch(() => ({}));
+      console.warn('[API 401]', url, detail);
       localStorage.removeItem('token');
       localStorage.removeItem('user');
       localStorage.removeItem('activeCompany');
-      window.location.href = '/login';
+      localStorage.removeItem('companies');
+      localStorage.removeItem('role');
+      // Use Next.js router-friendly redirect instead of hard reload
+      if (window.location.pathname !== '/login') {
+        window.location.href = '/login';
+      }
     }
     throw new ApiError(401, 'Sesion expirada. Inicia sesion nuevamente.');
   }
