@@ -21,14 +21,14 @@ export const POST = createHandler(async (req) => {
     });
   }
 
-  const { email, password, full_name, company_name, company_rfc } = result.data;
+  const { email, password, full_name, company_name, rfc } = result.data;
   const admin = getAdminClient();
 
   // Check if RFC already exists
   const { data: existingCompany } = await admin
     .from('companies')
     .select('id')
-    .eq('rfc', company_rfc.toUpperCase())
+    .eq('rfc', rfc.toUpperCase())
     .single();
 
   if (existingCompany) {
@@ -40,7 +40,7 @@ export const POST = createHandler(async (req) => {
     email,
     password,
     email_confirm: true,
-    user_metadata: { full_name },
+    user_metadata: { full_name: full_name || '' },
   });
 
   if (authError) {
@@ -57,7 +57,7 @@ export const POST = createHandler(async (req) => {
     .from('companies')
     .insert({
       name: company_name,
-      rfc: company_rfc.toUpperCase(),
+      rfc: rfc.toUpperCase(),
       onboarding_completed: false,
     })
     .select()
@@ -99,18 +99,23 @@ export const POST = createHandler(async (req) => {
   const { data: session } = await anonClient.auth.signInWithPassword({ email, password });
 
   return Response.json({
-    data: {
-      user: {
-        id: userId,
-        email,
-        full_name,
-      },
-      company: {
-        id: company.id,
-        name: company.name,
-        rfc: company.rfc,
-      },
-      access_token: session?.session?.access_token || null,
+    user: {
+      id: userId,
+      email,
+      full_name: full_name || '',
     },
+    company: {
+      id: company.id,
+      name: company.name,
+      rfc: company.rfc,
+    },
+    tenant: {
+      id: company.id,
+      name: company.name,
+      rfc: company.rfc,
+    },
+    role: 'admin',
+    onboarding_completed: false,
+    access_token: session?.session?.access_token || null,
   }, { status: 201 });
 }, { rateLimit: 'auth', public: true });

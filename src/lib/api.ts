@@ -44,7 +44,8 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new ApiError(res.status, body.error || body.detail || `Error ${res.status}`, body.code);
+    const message = body.detail || body.error?.message || (typeof body.error === 'string' ? body.error : `Error ${res.status}`);
+    throw new ApiError(res.status, message, body.error?.code || body.code);
   }
 
   return res.json();
@@ -57,8 +58,9 @@ async function authRequest<T>(path: string, body: object): Promise<T> {
     body: JSON.stringify(body),
   });
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new ApiError(res.status, error.detail || error.error || `Error ${res.status}`);
+    const body = await res.json().catch(() => ({ detail: res.statusText }));
+    const message = body.detail || body.error?.message || (typeof body.error === 'string' ? body.error : `Error ${res.status}`);
+    throw new ApiError(res.status, message, body.error?.code);
   }
   return res.json();
 }
