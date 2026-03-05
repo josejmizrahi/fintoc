@@ -217,22 +217,48 @@ export default function PagosPage() {
     fetchPayments();
   }, []);
 
-  // Auto-poll processing payments every 15s
-  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Auto-poll processing payments with progressive backoff (#17)
+  const pollingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pollStartRef = useRef<number>(0);
+  const [pollingExpired, setPollingExpired] = useState(false);
+
   useEffect(() => {
     const hasProcessing = payments.some((p) => p.status === "processing");
-    if (hasProcessing && !pollingRef.current) {
-      pollingRef.current = setInterval(async () => {
-        try {
-          await api.payments.pollStuck();
-          fetchPayments();
-        } catch { /* ignore */ }
-      }, 15000);
-    } else if (!hasProcessing && pollingRef.current) {
-      clearInterval(pollingRef.current);
-      pollingRef.current = null;
+    if (!hasProcessing) {
+      if (pollingRef.current) { clearTimeout(pollingRef.current); pollingRef.current = null; }
+      pollStartRef.current = 0;
+      setPollingExpired(false);
+      return;
     }
-    return () => { if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null; } };
+    if (!pollStartRef.current) pollStartRef.current = Date.now();
+
+    const elapsed = Date.now() - pollStartRef.current;
+    // Stop polling after 5 minutes
+    if (elapsed > 300000) {
+      if (pollingRef.current) { clearTimeout(pollingRef.current); pollingRef.current = null; }
+      setPollingExpired(true);
+      return;
+    }
+
+    const getInterval = () => {
+      if (elapsed < 30000) return 5000;     // First 30s: 5s
+      if (elapsed < 150000) return 15000;   // Next 2min: 15s
+      return 30000;                          // After: 30s
+    };
+
+    const doPoll = async () => {
+      try {
+        await api.payments.pollStuck();
+        fetchPayments();
+      } catch { /* ignore */ }
+      pollingRef.current = setTimeout(doPoll, getInterval());
+    };
+
+    if (!pollingRef.current) {
+      pollingRef.current = setTimeout(doPoll, getInterval());
+    }
+
+    return () => { if (pollingRef.current) { clearTimeout(pollingRef.current); pollingRef.current = null; } };
   }, [payments]);
 
   const [pollingId, setPollingId] = useState<number | null>(null);

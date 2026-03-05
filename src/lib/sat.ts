@@ -3,6 +3,8 @@
  * Shared by: catch-all route, onboarding route, reconciliation route
  */
 
+import { withRetry } from "./retry";
+
 const SAT_SOAP_URL = "https://consultaqr.facturaelectronica.sat.gob.mx/ConsultaCFDIService.svc";
 const SAT_SOAP_ACTION = "http://tempuri.org/IConsultaCFDIService/Consulta";
 
@@ -32,36 +34,47 @@ export async function validateCfdiAgainstSat(
 </soap:Envelope>`;
 
   try {
-    const res = await fetch(SAT_SOAP_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "text/xml; charset=utf-8",
-        SOAPAction: SAT_SOAP_ACTION,
-      },
-      body: soapEnvelope,
-      signal: AbortSignal.timeout(timeout),
-    });
+    return await withRetry(async () => {
+      const res = await fetch(SAT_SOAP_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "text/xml; charset=utf-8",
+          SOAPAction: SAT_SOAP_ACTION,
+        },
+        body: soapEnvelope,
+        signal: AbortSignal.timeout(timeout),
+      });
 
-    if (!res.ok) return "Error";
+      if (!res.ok) return "Error";
 
-    const text = await res.text();
-    if (text.includes("Vigente")) return "Vigente";
-    if (text.includes("Cancelado")) return "Cancelado";
-    if (text.includes("No Encontrado")) return "No encontrado";
-    return "Sin verificar";
+      const text = await res.text();
+      if (text.includes("Vigente")) return "Vigente";
+      if (text.includes("Cancelado")) return "Cancelado";
+      if (text.includes("No Encontrado")) return "No encontrado";
+      return "Sin verificar";
+    }, { maxRetries: 2, retryOn: (err) => err instanceof Error && err.message.includes("timeout") });
   } catch {
     return "Sin verificar";
   }
 }
 
-export function parseCfdiXml(xml: string): {
+export interface ParsedCfdi {
   uuid: string;
   rfcEmisor: string;
   rfcReceptor: string;
   total: number;
   fecha: string;
   fechaTimbrado: string;
-} {
+  tipoComprobante: string;
+  nombreEmisor: string;
+  nombreReceptor: string;
+  regimenFiscal: string;
+  usoCfdi: string;
+  subtotal: number;
+  descuento: number;
+}
+
+export function parseCfdiXml(xml: string): ParsedCfdi {
   const uuidMatch =
     xml.match(/UUID=["']([^"']+)["']/i) ||
     xml.match(/uuid=["']([^"']+)["']/i);
@@ -80,6 +93,19 @@ export function parseCfdiXml(xml: string): {
   const fechaMatch = xml.match(/Fecha=["']([^"']+)["']/i);
   const fechaTimbradoMatch = xml.match(/FechaTimbrado=["']([^"']+)["']/i);
 
+  // Fix #11: Extract additional CFDI fields
+  const tipoMatch = xml.match(/TipoDeComprobante=["']([^"']+)["']/i);
+  const subtotalMatch = xml.match(/SubTotal=["']([^"']+)["']/i);
+  const descuentoMatch = xml.match(/Descuento=["']([^"']+)["']/i);
+
+  // Extract Emisor/Receptor names (Nombre attribute within their respective elements)
+  const emisorBlock = xml.match(/<[^>]*Emisor[^>]*>/i)?.[0] || "";
+  const receptorBlock = xml.match(/<[^>]*Receptor[^>]*>/i)?.[0] || "";
+  const nombreEmisor = emisorBlock.match(/Nombre=["']([^"']+)["']/i)?.[1] || "";
+  const nombreReceptor = receptorBlock.match(/Nombre=["']([^"']+)["']/i)?.[1] || "";
+  const regimenFiscal = emisorBlock.match(/RegimenFiscal=["']([^"']+)["']/i)?.[1] || "";
+  const usoCfdi = receptorBlock.match(/UsoCFDI=["']([^"']+)["']/i)?.[1] || "";
+
   return {
     uuid: uuidMatch?.[1] || "",
     rfcEmisor: allRfcs[0] || rfcEmisorMatch?.[1] || "",
@@ -87,6 +113,13 @@ export function parseCfdiXml(xml: string): {
     total: parseFloat(totalMatch?.[1] || "0") || 0,
     fecha: fechaMatch?.[1] || "",
     fechaTimbrado: fechaTimbradoMatch?.[1] || "",
+    tipoComprobante: tipoMatch?.[1] || "",
+    nombreEmisor,
+    nombreReceptor,
+    regimenFiscal,
+    usoCfdi,
+    subtotal: parseFloat(subtotalMatch?.[1] || "0") || 0,
+    descuento: parseFloat(descuentoMatch?.[1] || "0") || 0,
   };
 }
 

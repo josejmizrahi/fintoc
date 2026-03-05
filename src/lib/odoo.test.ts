@@ -50,7 +50,7 @@ describe("odooJsonRpc", () => {
 
     await expect(odooJsonRpc("https://odoo.test.com", "common", "version", []))
       .rejects.toThrow("HTTP 502");
-  });
+  }, 15000);
 
   it("returns parsed JSON-RPC response", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({

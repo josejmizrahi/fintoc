@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import {
@@ -113,11 +113,27 @@ export function SyncStatus({ provider, syncLogId, isRunning }: SyncStatusProps) 
     fetchLogs();
   }, [fetchLogs]);
 
-  // Poll while running
+  // Poll while running with exponential backoff (#17)
+  const pollCountRef = useRef(0);
   useEffect(() => {
-    if (!isRunning && activeLog?.status !== "running") return;
-    const interval = setInterval(fetchLogs, 2000);
-    return () => clearInterval(interval);
+    if (!isRunning && activeLog?.status !== "running") {
+      pollCountRef.current = 0;
+      return;
+    }
+    const getInterval = () => {
+      const count = pollCountRef.current;
+      if (count < 10) return 5000;    // First 10 polls: 5s
+      if (count < 20) return 15000;   // Next 10: 15s
+      return 30000;                    // After 20: 30s
+    };
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = () => {
+      fetchLogs();
+      pollCountRef.current++;
+      timer = setTimeout(poll, getInterval());
+    };
+    timer = setTimeout(poll, getInterval());
+    return () => clearTimeout(timer);
   }, [isRunning, activeLog?.status, fetchLogs]);
 
   if (!activeLog && logs.length === 0) return null;
