@@ -21,9 +21,9 @@ export const GET = createHandler(async (req) => {
       throw new ApiError('INTEGRATION_NOT_CONFIGURED', 'Syntage no configurado', 422);
     }
 
-    const params: Record<string, string | string[] | number | undefined> = {};
+    const params: syntage.InvoiceQueryParams = {};
     const type = url.searchParams.get('type');
-    if (type) params.type = type;
+    if (type) params.type = type as 'issued' | 'received';
     const dateFrom = url.searchParams.get('dateFrom');
     if (dateFrom) params.dateFrom = dateFrom;
     const dateTo = url.searchParams.get('dateTo');
@@ -33,9 +33,11 @@ export const GET = createHandler(async (req) => {
     const page = url.searchParams.get('page');
     if (page) params.page = parseInt(page, 10);
     const limit = url.searchParams.get('limit');
-    if (limit) params.limit = parseInt(limit, 10);
+    if (limit) params.itemsPerPage = parseInt(limit, 10);
+    const status = url.searchParams.get('status');
+    if (status) params.status = status as 'active' | 'cancelled';
 
-    const invoices = await syntage.getInvoices(integration.syntage_taxpayer_id, params as Parameters<typeof syntage.getInvoices>[1]);
+    const invoices = await syntage.getInvoices(integration.syntage_taxpayer_id, params);
 
     return Response.json({ data: invoices });
   }))(req, { params: Promise.resolve({}) });

@@ -29,11 +29,10 @@ export const POST = createHandler(async (req) => {
     }
 
     // Fetch SAT invoices
-    const satResult = (await syntage.getInvoices(integration.syntage_taxpayer_id, {
+    const satInvoices = await syntage.getInvoices(integration.syntage_taxpayer_id, {
       dateFrom: period_start,
       dateTo: period_end,
-    })) as { data?: Record<string, unknown>[] };
-    const satInvoices = satResult?.data || [];
+    });
 
     // Fetch app invoices
     const { data: appInvoices } = await admin

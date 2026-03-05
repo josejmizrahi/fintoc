@@ -39,11 +39,11 @@ export const POST = createHandler(async (req) => {
     if (!odooInt?.config_encrypted) throw new ApiError('INTEGRATION_NOT_CONFIGURED', 'Odoo no configurado', 422);
 
     // Fetch CFDI from Syntage
-    const invoicesResult = (await syntage.getInvoices(syntageInt.syntage_taxpayer_id, {
+    const invoices = await syntage.getInvoices(syntageInt.syntage_taxpayer_id, {
       uuid: [cfdi_uuid],
-    })) as { data?: Record<string, unknown>[] };
+    });
 
-    const cfdi = invoicesResult?.data?.[0];
+    const cfdi = invoices?.[0];
     if (!cfdi) throw new ApiError('NOT_FOUND', 'CFDI no encontrado en SAT', 404);
 
     // Create account.move in Odoo

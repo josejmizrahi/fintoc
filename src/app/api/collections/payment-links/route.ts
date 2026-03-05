@@ -40,16 +40,15 @@ export const POST = createHandler(async (req) => {
 
     if (!bankAccount?.clabe) throw new ApiError('INTEGRATION_NOT_CONFIGURED', 'Sin cuenta bancaria configurada', 422);
 
-    const intent = (await createPaymentIntent({
+    const intent = await createPaymentIntent({
       amount: Math.round(paymentAmount * 100),
       currency: 'MXN',
-      recipient_account: { clabe: bankAccount.clabe },
-    })) as { id: string; widget_token?: string; expires_at?: string };
+      recipient_account: { number: bankAccount.clabe },
+    });
 
     return Response.json({
       data: {
         payment_link: intent.widget_token || intent.id,
-        expires_at: intent.expires_at,
         fintoc_payment_intent_id: intent.id,
       },
     }, { status: 201 });
