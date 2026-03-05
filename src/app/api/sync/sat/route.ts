@@ -1,27 +1,45 @@
 import { createHandler } from '@/lib/middleware/route-handler';
 import { withAuth } from '@/lib/middleware/auth';
 import { withRbac } from '@/lib/middleware/rbac';
-import { ApiError } from '@/lib/utils/errors';
-import { getAdminClient } from '@/lib/supabase/admin';
-import * as syntage from '@/lib/integrations/syntage';
+import { syncSat, getSyntageTaxpayerForCompany } from '@/lib/integrations/sync-engine';
+import type { Extractor } from '@/lib/integrations/syntage';
 
 export const POST = createHandler(async (req) => {
-  return withAuth(withRbac('sync.execute', async (_req, ctx) => {
-    const admin = getAdminClient();
+  return withAuth(withRbac('sync.execute', async (request, ctx) => {
+    const companyId = String(ctx.company_id);
+    const taxpayerId = await getSyntageTaxpayerForCompany(companyId);
 
-    const { data: integration } = await admin.from('integrations').select('syntage_taxpayer_id')
-      .eq('company_id', ctx.company_id).eq('provider', 'syntage').single();
+    let extractors: Extractor[] | undefined;
+    let dateFrom: string | undefined;
+    let dateTo: string | undefined;
 
-    if (!integration?.syntage_taxpayer_id) throw new ApiError('INTEGRATION_NOT_CONFIGURED', 'Syntage no configurado', 422);
+    try {
+      const body = await request.json() as {
+        extractors?: Extractor[];
+        date_from?: string;
+        date_to?: string;
+      };
+      extractors = body.extractors;
+      dateFrom = body.date_from;
+      dateTo = body.date_to;
+    } catch {
+      // No body — use defaults
+    }
 
-    const extraction = (await syntage.createExtraction(
-      integration.syntage_taxpayer_id, 'invoice', {}
-    )) as { id: string };
-
-    await admin.from('syntage_extractions').insert({
-      company_id: ctx.company_id, syntage_extraction_id: extraction.id, extractor: 'invoice', status: 'pending',
+    const result = await syncSat(companyId, taxpayerId, {
+      extractors,
+      dateFrom,
+      dateTo,
     });
 
-    return Response.json({ data: { extraction_id: extraction.id, status: 'pending' } });
+    return Response.json({
+      data: {
+        status: result.status,
+        extractions: result.extractions,
+        errors: result.errors.length > 0
+          ? result.errors.map(e => ({ entity: e.entity, message: e.message }))
+          : undefined,
+      },
+    });
   }))(req, { params: Promise.resolve({}) });
 }, { rateLimit: 'batch' });

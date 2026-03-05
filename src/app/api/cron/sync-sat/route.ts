@@ -1,5 +1,5 @@
 import { getAdminClient } from '@/lib/supabase/admin';
-import * as syntage from '@/lib/integrations/syntage';
+import { syncSat } from '@/lib/integrations/sync-engine';
 
 export async function GET(req: Request): Promise<Response> {
   const secret = req.headers.get('authorization')?.replace('Bearer ', '');
@@ -8,7 +8,7 @@ export async function GET(req: Request): Promise<Response> {
   }
 
   const admin = getAdminClient();
-  const results: Array<{ company_id: string; status: string; error?: string }> = [];
+  const results: Array<{ company_id: string; status: string; extractions?: unknown[]; error?: string }> = [];
 
   try {
     const { data: integrations } = await admin.from('integrations')
@@ -19,21 +19,16 @@ export async function GET(req: Request): Promise<Response> {
 
     for (const integration of (integrations || [])) {
       try {
-        const extraction = (await syntage.createExtraction(
-          integration.syntage_taxpayer_id!, 'invoice', {}
-        )) as { id: string };
+        const result = await syncSat(integration.company_id, integration.syntage_taxpayer_id!);
 
-        await admin.from('syntage_extractions').insert({
+        results.push({
           company_id: integration.company_id,
-          syntage_extraction_id: extraction.id,
-          extractor: 'invoice',
-          status: 'pending',
+          status: result.status,
+          extractions: result.extractions,
+          error: result.errors.length > 0
+            ? result.errors.map(e => `${e.entity}: ${e.message}`).join('; ')
+            : undefined,
         });
-
-        await admin.from('integrations').update({ last_sync: new Date().toISOString() })
-          .eq('company_id', integration.company_id).eq('provider', 'syntage');
-
-        results.push({ company_id: integration.company_id, status: 'extraction_created' });
       } catch (err) {
         results.push({
           company_id: integration.company_id,
