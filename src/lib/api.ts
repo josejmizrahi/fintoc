@@ -261,4 +261,23 @@ export const api = {
     createToken: (partnerId: number) => request<any>(`/api/vendor-portal/token?partner_id=${partnerId}`, { method: "POST" }),
     dashboard: (token: string) => request<any>(`/api/vendor-portal/dashboard?token=${token}`),
   },
+
+  // Odoo (write-back, bank statements, purchase orders)
+  odoo: {
+    stats: () => request<any>("/api/odoo/stats"),
+    purchaseOrders: () => request<any[]>("/api/odoo/purchase-orders"),
+    bankStatements: () => request<any[]>("/api/odoo/bank-statements"),
+    idCache: () => request<any[]>("/api/odoo/id-cache"),
+    pushBankStatements: (days?: number) => request<any>("/api/odoo/bank-statements/push", { method: "POST", body: JSON.stringify({ days: days || 7 }) }),
+    createVendor: (data: { name: string; rfc?: string; email?: string; phone?: string; clabe?: string }) =>
+      request<any>("/api/odoo/vendor/create", { method: "POST", body: JSON.stringify(data) }),
+    createCustomer: (data: { name: string; rfc?: string; email?: string; phone?: string }) =>
+      request<any>("/api/odoo/customer/create", { method: "POST", body: JSON.stringify(data) }),
+    invoiceAction: (invoiceId: number, action: "post" | "cancel" | "draft") =>
+      request<any>("/api/odoo/invoice/action", { method: "POST", body: JSON.stringify({ invoice_id: invoiceId, action }) }),
+    modelFields: (model: string) =>
+      request<any>("/api/odoo/model/fields", { method: "POST", body: JSON.stringify({ model }) }),
+    modelCount: (model: string, domain?: unknown[][]) =>
+      request<any>("/api/odoo/model/count", { method: "POST", body: JSON.stringify({ model, domain: domain || [] }) }),
+  },
 };

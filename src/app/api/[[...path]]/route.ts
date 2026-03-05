@@ -6,6 +6,7 @@ import { validateCfdiAgainstSat, parseCfdiXml } from "@/lib/sat";
 import { fintocGet, fintocPost, fintocOutboundTransfer } from "@/lib/fintoc";
 import { checkRouteAccess } from "@/lib/rbac";
 import { writeBackPaymentToOdoo } from "@/lib/odoo-writeback";
+import { handleOdooGet, handleOdooPost } from "./handlers/odoo";
 
 // ── Zod schemas ──
 
@@ -428,6 +429,12 @@ async function dbGet(path: string, companyId: number | null, page?: number, limi
     if (path === "sat/documents") {
       const { data } = await query("cfdi_documents", { match: { company_id: companyId }, order: { column: "fecha_emision" } });
       return data || [];
+    }
+
+    // Odoo handlers (purchase orders, bank statements, stats, id-cache)
+    if (path.startsWith("odoo/")) {
+      const odooResult = await handleOdooGet(path, companyId);
+      if (odooResult) return odooResult;
     }
 
     // Reports (real DB aggregation)
@@ -970,6 +977,12 @@ async function dbPost(path: string, body: unknown, companyId: number | null): Pr
       } catch (e) {
         return NextResponse.json({ detail: e instanceof Error ? e.message : "Error" }, { status: 500 });
       }
+    }
+
+    // Odoo write-back handlers (bank statements, vendor/customer creation, invoice actions, model exploration)
+    if (path.startsWith("odoo/")) {
+      const odooResult = await handleOdooPost(path, companyId, b);
+      if (odooResult) return odooResult;
     }
 
     // SAT — CFDI validation
