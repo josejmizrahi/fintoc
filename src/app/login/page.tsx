@@ -114,17 +114,6 @@ function LoginPageInner() {
         { id: res.tenant?.id || res.company?.id, name: res.tenant?.name || res.company?.name, rfc: res.tenant?.rfc || res.company?.rfc },
         res.role || 'admin',
       );
-      // Verify the full auth chain works before navigating
-      try {
-        const debugRes = await api.auth.debug();
-        if (debugRes.error) {
-          toast.error(`Auth check fallo: ${debugRes.error}`, { duration: 10000 });
-          return;
-        }
-      } catch (verifyErr) {
-        toast.error(`Token no valido: ${verifyErr instanceof Error ? verifyErr.message : 'Error desconocido'}`, { duration: 10000 });
-        return;
-      }
       toast.success('Sesion iniciada correctamente');
       if (res.onboarding_completed === false) {
         router.push('/onboarding');

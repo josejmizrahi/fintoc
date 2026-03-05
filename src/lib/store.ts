@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { setAuthInvalidationHandler } from './api';
 import type { Role } from './rbac';
 
 interface Company {
@@ -22,6 +23,7 @@ interface AuthState {
   companies: Company[];
   activeCompany: Company | null;
   role: Role;
+  authError: string | null;
   loginWithToken: (token: string, user: UserData, company: Company, role?: Role) => void;
   setCompanies: (companies: Company[]) => void;
   switchCompany: (company: Company, role?: Role) => void;
@@ -49,6 +51,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     (typeof window !== 'undefined'
       ? (localStorage.getItem('role') as Role)
       : null) || 'viewer',
+  authError: null,
   loginWithToken: (token, user, company, role = 'admin') => {
     if (!token) {
       console.error('loginWithToken called with null/empty token');
@@ -90,9 +93,27 @@ export const useAuthStore = create<AuthState>((set) => ({
       activeCompany: null,
       companies: [],
       role: 'viewer',
+      authError: null,
     });
   },
 }));
+
+// Register the auth invalidation handler so API 401s flow through the store
+if (typeof window !== 'undefined') {
+  setAuthInvalidationHandler((reason: string) => {
+    const state = useAuthStore.getState();
+    // Only invalidate if currently authenticated (prevent double-firing)
+    if (state.isAuthenticated) {
+      console.warn('[Auth] Session invalidated:', reason);
+      // Store the reason so login page can show it
+      sessionStorage.setItem('auth_debug', reason);
+      // Use the store's logout which clears localStorage + updates state
+      // The dashboard layout's useEffect will handle the redirect to /login
+      state.logout();
+      useAuthStore.setState({ authError: reason });
+    }
+  });
+}
 
 interface SidebarState {
   collapsed: boolean;

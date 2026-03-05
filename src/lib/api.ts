@@ -35,10 +35,18 @@ function getAuthHeaders(): Record<string, string> {
   return headers;
 }
 
-// Prevent multiple concurrent 401 handlers from all triggering redirects
-let isRedirectingTo401 = false;
+// Callback for auth invalidation — set by the auth store to avoid circular imports
+let onAuthInvalidated: ((reason: string) => void) | null = null;
+export function setAuthInvalidationHandler(handler: (reason: string) => void) {
+  onAuthInvalidated = handler;
+}
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
+  // Fail fast if no token is available (don't even make the request)
+  if (typeof window !== 'undefined' && !localStorage.getItem('token')) {
+    throw new ApiError(401, 'No hay token de autenticacion');
+  }
+
   const res = await fetch(`${API_BASE}${url}`, {
     ...options,
     headers: { ...getAuthHeaders(), ...options?.headers },
@@ -48,22 +56,9 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
     const detail = await res.json().catch(() => ({}));
     const debugMsg = `401 en ${url}: ${detail?.detail || detail?.error?.message || JSON.stringify(detail)}`;
     console.warn('[API 401]', debugMsg);
-    if (typeof window !== 'undefined' && !isRedirectingTo401) {
-      isRedirectingTo401 = true;
-      // Store debug info so login page can show it
-      sessionStorage.setItem('auth_debug', debugMsg);
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
-      localStorage.removeItem('activeCompany');
-      localStorage.removeItem('companies');
-      localStorage.removeItem('role');
-      // Delay redirect so we don't interrupt other requests
-      setTimeout(() => {
-        if (window.location.pathname !== '/login') {
-          window.location.href = '/login';
-        }
-        isRedirectingTo401 = false;
-      }, 500);
+    // Let the Zustand store handle logout + redirect (no hard window.location.href)
+    if (onAuthInvalidated) {
+      onAuthInvalidated(debugMsg);
     }
     throw new ApiError(401, debugMsg);
   }
