@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useMemo, useCallback } from "react";
+import { PermissionGate } from "@/components/shared/permission-gate";
+import { ShieldAlert } from "lucide-react";
 import { type ColumnDef } from "@tanstack/react-table";
 import {
   GitCompareArrows,
@@ -887,6 +889,16 @@ export default function ConciliacionPage() {
   /* ---------- Render ---------- */
 
   return (
+    <PermissionGate
+      permission="reconciliation:read"
+      fallback={
+        <div className="flex flex-col items-center justify-center gap-4 py-24 text-muted-foreground">
+          <ShieldAlert className="size-12" />
+          <p className="text-lg font-medium">Acceso restringido</p>
+          <p className="text-sm">No tienes permisos para ver conciliacion.</p>
+        </div>
+      }
+    >
     <div className="flex flex-col gap-6">
       {/* Header */}
       <div>
@@ -1389,5 +1401,6 @@ export default function ConciliacionPage() {
         onConfirm={confirmDialog.onConfirm}
       />
     </div>
+    </PermissionGate>
   );
 }
