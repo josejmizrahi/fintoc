@@ -5,7 +5,7 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 
 // Routes that don't require authentication
-const PUBLIC_ROUTES = ["/login", "/api/auth/login", "/api/auth/register", "/api/health", "/api/setup"];
+const PUBLIC_ROUTES = ["/login", "/api/auth/login", "/api/auth/register", "/api/health", "/api/setup", "/api/webhooks"];
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;

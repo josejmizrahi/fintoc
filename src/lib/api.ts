@@ -209,17 +209,22 @@ export const api = {
       request<any>("/api/fintoc/exchange", { method: "POST", body: JSON.stringify({ exchange_token: exchangeToken }) }),
   },
 
-  // Onboarding
+  // Onboarding & Integrations
   onboarding: {
     status: () => request<any>("/api/onboarding"),
     save: (provider: string, config: Record<string, string>) =>
       request<any>("/api/onboarding", { method: "POST", body: JSON.stringify({ action: "save", provider, config }) }),
     test: (provider: string, config: Record<string, string>) =>
       request<any>("/api/onboarding", { method: "POST", body: JSON.stringify({ action: "test", provider, config }) }),
-    sync: (provider: string) =>
-      request<any>("/api/onboarding", { method: "POST", body: JSON.stringify({ action: "sync", provider }) }),
     complete: () =>
       request<any>("/api/onboarding", { method: "POST", body: JSON.stringify({ action: "complete" }) }),
+  },
+
+  // Sync (data import from Odoo, Fintoc, SAT)
+  sync: {
+    trigger: (provider: string) =>
+      request<any>("/api/sync", { method: "POST", body: JSON.stringify({ provider }) }),
+    logs: () => request<any>("/api/sync"),
   },
 
   // Vendor Portal
