@@ -210,7 +210,7 @@ function CreateCustomerDialog({
 
 /* ---------- Customer Detail Content ---------- */
 
-function CustomerDetailContent({ customerId }: { customerId: number }) {
+function CustomerDetailContent({ customerId }: { customerId: string }) {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -283,7 +283,7 @@ function CustomerDetailContent({ customerId }: { customerId: number }) {
   );
 }
 
-function CustomerAgingContent({ customerId }: { customerId: number }) {
+function CustomerAgingContent({ customerId }: { customerId: string }) {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
 

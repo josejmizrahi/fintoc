@@ -299,7 +299,7 @@ function CreateVendorDialog({
 
 /* ---------- Vendor Detail Panel ---------- */
 
-function VendorDetailContent({ vendorId }: { vendorId: number }) {
+function VendorDetailContent({ vendorId }: { vendorId: string }) {
   const [bills, setBills] = useState<Invoice[]>([]);
   const [billsLoading, setBillsLoading] = useState(true);
   const [payments, setPayments] = useState<any[]>([]);
@@ -364,7 +364,7 @@ export default function ProveedoresPage() {
   const [filters, setFilters] = useVendorFilters();
   const [createOpen, setCreateOpen] = useState(false);
   const [detailVendor, setDetailVendor] = useState<Vendor | null>(null);
-  const [syncingId, setSyncingId] = useState<number | null>(null);
+  const [syncingId, setSyncingId] = useState<string | null>(null);
 
   // TanStack Query hooks
   const { data: vendorsRaw, isLoading } = useVendors({

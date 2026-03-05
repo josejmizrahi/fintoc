@@ -19,7 +19,7 @@ export const GET = createHandler(async (req) => {
 
     // Get pending receivables
     const { data: receivables } = await admin.from('invoices').select('amount_residual, due_date')
-      .eq('company_id', ctx.company_id).eq('type', 'out_invoice').gt('amount_residual', 0);
+      .eq('company_id', ctx.company_id).eq('type', 'receivable').gt('amount_residual', 0);
 
     const today = new Date();
     const forecast: { date: string; optimistic: number; base: number; pessimistic: number }[] = [];

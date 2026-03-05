@@ -38,15 +38,15 @@ export const POST = createHandler(async (req) => {
     const result = expenseCreateSchema.safeParse(body);
     if (!result.success) throw new ApiError('VALIDATION_ERROR', 'Error de validacion', 400);
 
-    // Validate expense_date is not future
-    if (new Date(result.data.expense_date) > new Date()) {
-      throw new ApiError('VALIDATION_ERROR', 'La fecha del gasto no puede ser futura', 400);
-    }
-
     const admin = getAdminClient();
     const { data: expense, error } = await admin.from('expenses').insert({
       company_id: ctx.company_id,
-      ...result.data,
+      employee_name: result.data.employee_name,
+      category: result.data.category,
+      description: result.data.description || null,
+      amount: result.data.amount,
+      currency: 'MXN',
+      xml_url: result.data.xml_url || null,
       status: 'pending',
       created_by: ctx.user_id,
     }).select().single();

@@ -7,7 +7,7 @@ export const customerKeys = {
   lists: () => [...customerKeys.all, 'list'] as const,
   list: (filters: Record<string, unknown>) => [...customerKeys.lists(), filters] as const,
   details: () => [...customerKeys.all, 'detail'] as const,
-  detail: (id: number | string) => [...customerKeys.details(), id] as const,
+  detail: (id: string) => [...customerKeys.details(), id] as const,
 };
 
 export function useCustomers(filters: Record<string, unknown> = {}) {
@@ -19,7 +19,7 @@ export function useCustomers(filters: Record<string, unknown> = {}) {
   });
 }
 
-export function useCustomer(id: number | string) {
+export function useCustomer(id: string) {
   return useQuery({
     queryKey: customerKeys.detail(id),
     queryFn: () => api.customers.get(id),
@@ -45,7 +45,7 @@ export function useCreateCustomer() {
 export function useUpdateCustomer() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, data }: { id: number | string; data: any }) => api.customers.update(id, data),
+    mutationFn: ({ id, data }: { id: string; data: any }) => api.customers.update(id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: customerKeys.all });
       toast.success('Cliente actualizado exitosamente');
@@ -59,7 +59,7 @@ export function useUpdateCustomer() {
 export function useCreateCustomerClabe() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (id: number | string) => api.customers.createClabe(id),
+    mutationFn: (id: string) => api.customers.createClabe(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: customerKeys.all });
       toast.success('CLABE creada exitosamente');

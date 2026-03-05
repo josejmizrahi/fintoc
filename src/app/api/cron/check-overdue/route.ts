@@ -16,7 +16,7 @@ export async function GET(req: Request): Promise<Response> {
       .lt('due_date', today)
       .gt('amount_residual', 0)
       .neq('payment_status', 'overdue')
-      .in('type', ['in_invoice', 'out_invoice']);
+      .in('type', ['payable', 'receivable']);
 
     let updated = 0;
     for (const invoice of (newlyOverdue || [])) {

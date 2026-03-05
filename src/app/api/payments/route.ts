@@ -112,7 +112,7 @@ export const POST = createHandler(async (req) => {
       .from('approval_rules')
       .select('*')
       .eq('company_id', ctx.company_id)
-      .eq('active', true)
+      .eq('is_active', true)
       .lte('amount_min', paymentAmount)
       .order('amount_min', { ascending: false });
 

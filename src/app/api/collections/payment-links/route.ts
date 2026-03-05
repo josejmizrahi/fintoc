@@ -22,7 +22,7 @@ export const POST = createHandler(async (req) => {
       .select('*')
       .eq('id', invoice_id)
       .eq('company_id', ctx.company_id)
-      .eq('type', 'out_invoice')
+      .eq('type', 'receivable')
       .single();
 
     if (!invoice) throw new ApiError('NOT_FOUND', 'Factura no encontrada', 404);

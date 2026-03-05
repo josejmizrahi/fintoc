@@ -12,7 +12,7 @@ export const GET = createHandler(async (req) => {
       .from('invoices')
       .select('*, customers:customer_id(id, name, rfc)')
       .eq('company_id', ctx.company_id)
-      .eq('type', 'out_invoice')
+      .eq('type', 'receivable')
       .gt('amount_residual', 0);
 
     const buckets = [

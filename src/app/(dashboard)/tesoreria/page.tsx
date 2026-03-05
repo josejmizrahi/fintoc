@@ -50,7 +50,7 @@ import { formatMoney, formatDate, formatCLABE } from "@/lib/utils/format";
 /* ---------- Movement type ---------- */
 
 interface Movement {
-  id: number;
+  id: string;
   date: string;
   description: string;
   amount: number;

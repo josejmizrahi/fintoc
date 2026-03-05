@@ -12,6 +12,7 @@ interface UserData {
   id: string;
   email: string;
   name: string;
+  full_name?: string;
 }
 
 interface AuthState {

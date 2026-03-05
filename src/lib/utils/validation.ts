@@ -1,17 +1,13 @@
 import { z } from 'zod';
 
-export const rfcSchema = z
-  .string()
-  .min(12, 'RFC debe tener al menos 12 caracteres')
-  .max(13, 'RFC debe tener maximo 13 caracteres')
-  .regex(/^[A-Z&Ñ]{3,4}\d{6}[A-Z0-9]{3}$/, 'RFC invalido')
-  .transform((v) => v.toUpperCase());
+// Re-export common validators from canonical schemas
+export {
+  rfcSchema,
+  clabeSchema,
+  emailSchema,
+} from '@/lib/validations/schemas';
 
-export const clabeSchema = z
-  .string()
-  .length(18, 'CLABE debe tener 18 digitos')
-  .regex(/^\d{18}$/, 'CLABE solo acepta numeros');
-
+// Frontend-specific validators
 export const moneySchema = z
   .number()
   .positive('Monto debe ser mayor a 0')
@@ -19,14 +15,13 @@ export const moneySchema = z
 
 export const uuidCfdiSchema = z.string().uuid('UUID CFDI invalido');
 
-export const emailSchema = z.string().email('Email invalido');
-
 export const passwordSchema = z
   .string()
   .min(8, 'Minimo 8 caracteres')
   .regex(/[A-Z]/, 'Debe contener al menos 1 mayuscula')
   .regex(/[0-9]/, 'Debe contener al menos 1 numero');
 
+// --- Auth (frontend-only: includes confirm_password) ---
 export const loginSchema = z.object({
   email: z.string().email('Email invalido'),
   password: z.string().min(1, 'Password requerido'),
@@ -40,6 +35,7 @@ export const registerSchema = z
       .min(12, 'RFC invalido')
       .max(13, 'RFC invalido')
       .transform((v) => v.toUpperCase()),
+    full_name: z.string().min(2, 'Nombre requerido').max(100).optional(),
     email: z.string().email('Email invalido'),
     password: passwordSchema,
     confirm_password: z.string(),
@@ -53,12 +49,13 @@ export const resetPasswordSchema = z.object({
   email: z.string().email('Email invalido'),
 });
 
+// --- Payments (frontend form: includes display fields) ---
 export const createPaymentSchema = z.object({
-  vendor_id: z.number().or(z.string()).optional(),
-  vendor_name: z.string().min(1, 'Proveedor requerido'),
-  invoice_id: z.number().optional(),
+  vendor_id: z.string().min(1, 'Proveedor requerido'),
+  vendor_name: z.string().optional(),
+  invoice_id: z.string().optional(),
   amount: moneySchema,
-  clabe: clabeSchema,
+  clabe: z.string().optional(),
   concept: z
     .string()
     .min(1, 'Concepto requerido')
@@ -67,6 +64,7 @@ export const createPaymentSchema = z.object({
   scheduled_date: z.string().optional(),
 });
 
+// --- Vendors (frontend form) ---
 export const createVendorSchema = z.object({
   name: z.string().min(2, 'Nombre requerido'),
   rfc: z
@@ -84,6 +82,7 @@ export const createVendorSchema = z.object({
     .refine((v) => !v || /^\d{18}$/.test(v), 'CLABE debe tener 18 digitos'),
 });
 
+// --- Customers (frontend form) ---
 export const createCustomerSchema = z.object({
   name: z.string().min(2, 'Nombre requerido'),
   rfc: z
@@ -97,22 +96,25 @@ export const createCustomerSchema = z.object({
   phone: z.string().optional(),
 });
 
+// --- Expenses (frontend form) ---
 export const createExpenseSchema = z.object({
   employee_name: z.string().min(1, 'Empleado requerido'),
   category: z.string().min(1, 'Categoria requerida'),
-  description: z.string().min(1, 'Descripcion requerida').max(200, 'Maximo 200 caracteres'),
+  description: z.string().max(200, 'Maximo 200 caracteres').optional(),
   amount: moneySchema,
   date: z.string().min(1, 'Fecha requerida'),
 });
 
+// --- Budgets (frontend form) ---
 export const createBudgetSchema = z.object({
-  name: z.string().min(1, 'Nombre requerido'),
+  name: z.string().min(1, 'Nombre requerido').optional(),
   category: z.string().min(1, 'Categoria requerida'),
   period_start: z.string().min(1, 'Fecha inicio requerida'),
   period_end: z.string().min(1, 'Fecha fin requerida'),
   amount_budgeted: moneySchema,
 });
 
+// --- SAT (frontend form) ---
 export const satValidateSchema = z.object({
   uuid: uuidCfdiSchema,
   rfc_emisor: z.string().min(12, 'RFC Emisor requerido'),

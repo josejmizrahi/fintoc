@@ -12,7 +12,7 @@ export const GET = createHandler(async (req) => {
       .from('invoices')
       .select('*, customers:customer_id(id, name)')
       .eq('company_id', ctx.company_id)
-      .eq('type', 'out_invoice')
+      .eq('type', 'receivable')
       .gt('amount_residual', 0)
       .lt('due_date', today)
       .order('amount_residual', { ascending: false })

@@ -92,9 +92,9 @@ type RejectForm = z.infer<typeof rejectSchema>;
 /* ---------- Columns ---------- */
 
 function useExpenseColumns(
-  onApprove: (id: number) => void,
-  onRejectOpen: (id: number) => void,
-  approvingId: number | null
+  onApprove: (id: string) => void,
+  onRejectOpen: (id: string) => void,
+  approvingId: string | null
 ): ColumnDef<Expense, any>[] {
   return useMemo(
     () => [
@@ -390,8 +390,8 @@ export default function GastosPage() {
   const [tab, setTab] = useState("todos");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
-  const [rejectingId, setRejectingId] = useState<number | null>(null);
-  const [approvingId, setApprovingId] = useState<number | null>(null);
+  const [rejectingId, setRejectingId] = useState<string | null>(null);
+  const [approvingId, setApprovingId] = useState<string | null>(null);
 
   const statusFilter = tab === "todos" ? undefined : tab;
 
@@ -415,14 +415,14 @@ export default function GastosPage() {
   const expenses: Expense[] = useMemo(() => {
     if (!expensesData) return [];
     if (Array.isArray(expensesData)) return expensesData;
-    const d = expensesData as Record<string, unknown>;
+    const d = expensesData as unknown as Record<string, unknown>;
     return (d.data as Expense[]) ?? [];
   }, [expensesData]);
 
   const totalExpenses = expenses.length;
 
   const handleApprove = useCallback(
-    async (id: number) => {
+    async (id: string) => {
       setApprovingId(id);
       try {
         await approveExpense.mutateAsync(id);
@@ -433,7 +433,7 @@ export default function GastosPage() {
     [approveExpense]
   );
 
-  const handleRejectOpen = useCallback((id: number) => {
+  const handleRejectOpen = useCallback((id: string) => {
     setRejectingId(id);
     setRejectDialogOpen(true);
   }, []);

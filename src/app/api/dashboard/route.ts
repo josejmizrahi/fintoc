@@ -15,10 +15,10 @@ export const GET = createHandler(async (req) => {
       admin.from('bank_accounts').select('balance').eq('company_id', ctx.company_id),
       // Accounts receivable
       admin.from('invoices').select('amount_residual')
-        .eq('company_id', ctx.company_id).eq('type', 'out_invoice').gt('amount_residual', 0),
+        .eq('company_id', ctx.company_id).eq('type', 'receivable').gt('amount_residual', 0),
       // Accounts payable
       admin.from('invoices').select('amount_residual')
-        .eq('company_id', ctx.company_id).eq('type', 'in_invoice').gt('amount_residual', 0),
+        .eq('company_id', ctx.company_id).eq('type', 'payable').gt('amount_residual', 0),
       // Overdue
       admin.from('invoices').select('amount_residual')
         .eq('company_id', ctx.company_id).gt('amount_residual', 0).lt('due_date', today),

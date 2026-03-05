@@ -6,8 +6,8 @@ export const invoiceKeys = {
   payable: (filters: Record<string, unknown>) => [...invoiceKeys.all, 'payable', filters] as const,
   receivable: (filters: Record<string, unknown>) => [...invoiceKeys.all, 'receivable', filters] as const,
   details: () => [...invoiceKeys.all, 'detail'] as const,
-  detail: (id: number | string) => [...invoiceKeys.details(), id] as const,
-  cfdi: (id: number | string) => [...invoiceKeys.all, 'cfdi', id] as const,
+  detail: (id: string) => [...invoiceKeys.details(), id] as const,
+  cfdi: (id: string) => [...invoiceKeys.all, 'cfdi', id] as const,
 };
 
 export function usePayableInvoices(filters: Record<string, unknown> = {}) {
@@ -28,7 +28,7 @@ export function useReceivableInvoices(filters: Record<string, unknown> = {}) {
   });
 }
 
-export function useInvoice(id: number | string) {
+export function useInvoice(id: string) {
   return useQuery({
     queryKey: invoiceKeys.detail(id),
     queryFn: () => api.invoices.get(id),
@@ -37,7 +37,7 @@ export function useInvoice(id: number | string) {
   });
 }
 
-export function useInvoiceCfdi(id: number | string) {
+export function useInvoiceCfdi(id: string) {
   return useQuery({
     queryKey: invoiceKeys.cfdi(id),
     queryFn: () => api.invoices.cfdi(id),

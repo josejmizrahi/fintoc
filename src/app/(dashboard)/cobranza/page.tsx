@@ -99,7 +99,7 @@ function PaymentLinkDialog({
   const [generatedUrl, setGeneratedUrl] = useState("");
 
   const generateMutation = useMutation({
-    mutationFn: (data: { partner_id: number; amount: number }) =>
+    mutationFn: (data: { partner_id: string; amount: number }) =>
       api.collections.paymentLink(data),
     onSuccess: (result: any) => {
       setGeneratedUrl(result.payment_url || result.url || "");
@@ -322,7 +322,7 @@ export default function CobranzaPage() {
   });
 
   const sendReminderMutation = useMutation({
-    mutationFn: (data: { invoice_id: number }) =>
+    mutationFn: (data: { invoice_id: string }) =>
       api.collections.sendReminder(data),
     onSuccess: () => toast.success("Recordatorio enviado"),
     onError: (err: Error) =>

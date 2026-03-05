@@ -7,7 +7,7 @@ export const vendorKeys = {
   lists: () => [...vendorKeys.all, 'list'] as const,
   list: (filters: Record<string, unknown>) => [...vendorKeys.lists(), filters] as const,
   details: () => [...vendorKeys.all, 'detail'] as const,
-  detail: (id: number | string) => [...vendorKeys.details(), id] as const,
+  detail: (id: string) => [...vendorKeys.details(), id] as const,
 };
 
 export function useVendors(filters: Record<string, unknown> = {}) {
@@ -19,7 +19,7 @@ export function useVendors(filters: Record<string, unknown> = {}) {
   });
 }
 
-export function useVendor(id: number | string) {
+export function useVendor(id: string) {
   return useQuery({
     queryKey: vendorKeys.detail(id),
     queryFn: () => api.vendors.get(id),
@@ -45,7 +45,7 @@ export function useCreateVendor() {
 export function useUpdateVendor() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, data }: { id: number | string; data: any }) => api.vendors.update(id, data),
+    mutationFn: ({ id, data }: { id: string; data: any }) => api.vendors.update(id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: vendorKeys.all });
       toast.success('Proveedor actualizado exitosamente');
@@ -59,7 +59,7 @@ export function useUpdateVendor() {
 export function useVerifyVendorClabe() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (id: number | string) => api.vendors.verifyClabe(id),
+    mutationFn: (id: string) => api.vendors.verifyClabe(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: vendorKeys.all });
       toast.success('CLABE verificada exitosamente');

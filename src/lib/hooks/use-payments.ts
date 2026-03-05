@@ -7,7 +7,7 @@ export const paymentKeys = {
   lists: () => [...paymentKeys.all, 'list'] as const,
   list: (filters: Record<string, unknown>) => [...paymentKeys.lists(), filters] as const,
   details: () => [...paymentKeys.all, 'detail'] as const,
-  detail: (id: number | string) => [...paymentKeys.details(), id] as const,
+  detail: (id: string) => [...paymentKeys.details(), id] as const,
 };
 
 export function usePayments(filters: Record<string, unknown> = {}) {
@@ -19,7 +19,7 @@ export function usePayments(filters: Record<string, unknown> = {}) {
   });
 }
 
-export function usePayment(id: number | string) {
+export function usePayment(id: string) {
   return useQuery({
     queryKey: paymentKeys.detail(id),
     queryFn: () => api.payments.get(id),
@@ -45,7 +45,7 @@ export function useCreatePayment() {
 export function useExecutePayment() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (paymentId: number | string) => api.payments.execute({ payment_id: paymentId }),
+    mutationFn: (paymentId: string) => api.payments.execute({ payment_id: paymentId }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: paymentKeys.all });
       toast.success('Pago ejecutado exitosamente');
@@ -59,7 +59,7 @@ export function useExecutePayment() {
 export function useExecuteBatchPayments() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (paymentIds: (number | string)[]) => api.payments.executeBatch({ payment_ids: paymentIds }),
+    mutationFn: (paymentIds: (string)[]) => api.payments.executeBatch({ payment_ids: paymentIds }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: paymentKeys.all });
       toast.success('Pagos ejecutados exitosamente');
@@ -73,7 +73,7 @@ export function useExecuteBatchPayments() {
 export function useCancelPayment() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (id: number | string) => api.payments.cancel(id),
+    mutationFn: (id: string) => api.payments.cancel(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: paymentKeys.all });
       toast.success('Pago cancelado exitosamente');
@@ -87,7 +87,7 @@ export function useCancelPayment() {
 export function useRetryPayment() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (id: number | string) => api.payments.retry(id),
+    mutationFn: (id: string) => api.payments.retry(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: paymentKeys.all });
       toast.success('Pago reintentado exitosamente');

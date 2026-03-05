@@ -93,7 +93,7 @@ export async function POST(req: Request): Promise<Response> {
                   efos_status: (payload.data.efos_status as string) || null,
                   syntage_invoice_id: payload.data.id as string,
                   source: 'sat',
-                  type: (payload.data.type as string) === 'egreso' ? 'out_invoice' : 'in_invoice',
+                  type: (payload.data.type as string) === 'egreso' ? 'receivable' : 'payable',
                   amount_total: (payload.data.total as number) || 0,
                   amount_paid: 0, amount_residual: (payload.data.total as number) || 0,
                   invoice_date: (payload.data.issued_at as string)?.split('T')[0] || new Date().toISOString().split('T')[0],

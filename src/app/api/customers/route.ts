@@ -36,21 +36,23 @@ export const POST = createHandler(async (req) => {
     if (!result.success) throw new ApiError('VALIDATION_ERROR', 'Error de validacion', 400);
 
     const admin = getAdminClient();
-    const { data: existing } = await admin
-      .from('customers')
-      .select('id')
-      .eq('company_id', ctx.company_id)
-      .eq('rfc', result.data.rfc.toUpperCase())
-      .single();
+    if (result.data.rfc) {
+      const { data: existing } = await admin
+        .from('customers')
+        .select('id')
+        .eq('company_id', ctx.company_id)
+        .eq('rfc', result.data.rfc.toUpperCase())
+        .single();
 
-    if (existing) throw new ApiError('DUPLICATE', 'Ya existe un cliente con este RFC', 409);
+      if (existing) throw new ApiError('DUPLICATE', 'Ya existe un cliente con este RFC', 409);
+    }
 
     const { data: customer, error } = await admin
       .from('customers')
       .insert({
         company_id: ctx.company_id,
         name: result.data.name,
-        rfc: result.data.rfc.toUpperCase(),
+        rfc: result.data.rfc?.toUpperCase() || null,
         email: result.data.email || null,
         phone: result.data.phone || null,
       })
