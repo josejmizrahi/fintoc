@@ -1,52 +1,116 @@
-import { NextRequest, NextResponse } from "next/server";
-import { registerUser } from "@/lib/auth-server";
+import { createHandler } from '@/lib/middleware/route-handler';
+import { getAdminClient } from '@/lib/supabase/admin';
+import { registerSchema } from '@/lib/validations/schemas';
+import { ApiError } from '@/lib/utils/errors';
+import { checkRateLimit } from '@/lib/middleware/rate-limit';
 
-export async function POST(req: NextRequest) {
+export const POST = createHandler(async (req) => {
+  checkRateLimit(req, 'auth');
+
+  let body: unknown;
   try {
-    const body = await req.json();
-    const { email, password, name, company_name, rfc } = body;
-
-    if (!email || !password || !name || !company_name || !rfc) {
-      return NextResponse.json(
-        { detail: "Todos los campos son obligatorios" },
-        { status: 400 }
-      );
-    }
-    if (password.length < 6) {
-      return NextResponse.json(
-        { detail: "La contraseña debe tener al menos 6 caracteres" },
-        { status: 400 }
-      );
-    }
-
-    const user = await registerUser(
-      email.toLowerCase().trim(),
-      password,
-      name,
-      company_name,
-      rfc.toUpperCase()
-    );
-
-    return NextResponse.json(
-      {
-        access_token: user.access_token,
-        token_type: "bearer",
-        user: {
-          id: user.id,
-          email: user.email,
-          name: user.name,
-          role: user.role,
-        },
-        tenant: {
-          id: String(user.company_id),
-          name: user.company_name,
-          rfc: user.company_rfc,
-        },
-      },
-      { status: 201 }
-    );
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Error al registrar";
-    return NextResponse.json({ detail: message }, { status: 400 });
+    body = await req.json();
+  } catch {
+    throw new ApiError('VALIDATION_ERROR', 'Request body debe ser JSON valido', 400);
   }
-}
+
+  const result = registerSchema.safeParse(body);
+  if (!result.success) {
+    throw new ApiError('VALIDATION_ERROR', 'Error de validacion', 400, {
+      fields: result.error.issues.map(i => ({ path: i.path.join('.'), message: i.message })),
+    });
+  }
+
+  const { email, password, full_name, company_name, company_rfc } = result.data;
+  const admin = getAdminClient();
+
+  // Check if RFC already exists
+  const { data: existingCompany } = await admin
+    .from('companies')
+    .select('id')
+    .eq('rfc', company_rfc.toUpperCase())
+    .single();
+
+  if (existingCompany) {
+    throw new ApiError('COMPANY_RFC_EXISTS', 'RFC de empresa ya existe', 409);
+  }
+
+  // Create user in Supabase Auth
+  const { data: authData, error: authError } = await admin.auth.admin.createUser({
+    email,
+    password,
+    email_confirm: true,
+    user_metadata: { full_name },
+  });
+
+  if (authError) {
+    if (authError.message.includes('already') || authError.message.includes('exists')) {
+      throw new ApiError('EMAIL_ALREADY_EXISTS', 'Email ya registrado', 409);
+    }
+    throw new ApiError('INTERNAL_ERROR', 'Error al crear usuario', 500);
+  }
+
+  const userId = authData.user.id;
+
+  // Create company
+  const { data: company, error: companyError } = await admin
+    .from('companies')
+    .insert({
+      name: company_name,
+      rfc: company_rfc.toUpperCase(),
+      onboarding_completed: false,
+    })
+    .select()
+    .single();
+
+  if (companyError) {
+    // Cleanup: delete the auth user
+    await admin.auth.admin.deleteUser(userId);
+    throw new ApiError('INTERNAL_ERROR', 'Error al crear empresa', 500);
+  }
+
+  // Create user_companies membership
+  const { error: memberError } = await admin.from('user_companies').insert({
+    user_id: userId,
+    company_id: company.id,
+    role: 'admin',
+    is_active: true,
+    status: 'active',
+  });
+
+  if (memberError) {
+    await admin.auth.admin.deleteUser(userId);
+    await admin.from('companies').delete().eq('id', company.id);
+    throw new ApiError('INTERNAL_ERROR', 'Error al crear membresia', 500);
+  }
+
+  // Sign in to get access token
+  const { data: signInData, error: signInError } = await admin.auth.admin.generateLink({
+    type: 'magiclink',
+    email,
+  });
+
+  // Generate a session for the user
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+
+  const { createClient } = await import('@supabase/supabase-js');
+  const anonClient = createClient(supabaseUrl, supabaseAnonKey);
+  const { data: session } = await anonClient.auth.signInWithPassword({ email, password });
+
+  return Response.json({
+    data: {
+      user: {
+        id: userId,
+        email,
+        full_name,
+      },
+      company: {
+        id: company.id,
+        name: company.name,
+        rfc: company.rfc,
+      },
+      access_token: session?.session?.access_token || null,
+    },
+  }, { status: 201 });
+}, { rateLimit: 'auth', public: true });

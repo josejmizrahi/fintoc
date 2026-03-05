@@ -1,0 +1,29 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "crons": [
+    {
+      "path": "/api/cron/sync-sat",
+      "schedule": "0 */6 * * *"
+    },
+    {
+      "path": "/api/cron/sync-odoo",
+      "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/cron/sync-fintoc",
+      "schedule": "*/30 * * * *"
+    },
+    {
+      "path": "/api/cron/check-overdue",
+      "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/cron/check-scheduled",
+      "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/cron/retry-webhooks",
+      "schedule": "*/5 * * * *"
+    }
+  ]
+}
