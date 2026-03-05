@@ -14,7 +14,11 @@ export const POST = createHandler(async (req) => {
     const result = satExtractSchema.safeParse(body);
     if (!result.success) throw new ApiError('VALIDATION_ERROR', 'Error de validacion', 400);
 
-    const { extractor, date_from, date_to } = result.data;
+    const { extractor, date_from, date_to } = result.data as {
+      extractor: syntage.Extractor;
+      date_from?: string;
+      date_to?: string;
+    };
     const admin = getAdminClient();
 
     const { data: integration } = await admin
