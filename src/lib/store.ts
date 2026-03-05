@@ -22,7 +22,7 @@ interface AuthState {
   companies: Company[];
   activeCompany: Company | null;
   role: Role;
-  loginWithToken: (token: string, user: UserData, company: Company, role?: Role) => void;
+  loginWithToken: (token: string, user: UserData, company: Company, role?: Role, refreshToken?: string) => void;
   setCompanies: (companies: Company[]) => void;
   switchCompany: (company: Company, role?: Role) => void;
   logout: () => void;
@@ -49,7 +49,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     (typeof window !== 'undefined'
       ? (localStorage.getItem('role') as Role)
       : null) || 'viewer',
-  loginWithToken: (token, user, company, role = 'admin') => {
+  loginWithToken: (token, user, company, role = 'admin', refreshToken?: string) => {
     if (!token) {
       console.error('loginWithToken called with null/empty token');
       return;
@@ -59,6 +59,9 @@ export const useAuthStore = create<AuthState>((set) => ({
     localStorage.setItem('activeCompany', JSON.stringify(company));
     localStorage.setItem('companies', JSON.stringify([company]));
     localStorage.setItem('role', role);
+    if (refreshToken) {
+      localStorage.setItem('refresh_token', refreshToken);
+    }
     set({
       isAuthenticated: true,
       token,
@@ -79,6 +82,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
   logout: () => {
     localStorage.removeItem('token');
+    localStorage.removeItem('refresh_token');
     localStorage.removeItem('user');
     localStorage.removeItem('activeCompany');
     localStorage.removeItem('companies');

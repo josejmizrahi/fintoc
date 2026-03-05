@@ -38,11 +38,51 @@ function getAuthHeaders(): Record<string, string> {
 // Prevent multiple concurrent 401 handlers from all triggering redirects
 let isRedirectingTo401 = false;
 
+/**
+ * Try to refresh the Supabase session using the stored refresh token.
+ * Returns the new access token on success, or null on failure.
+ */
+async function tryRefreshToken(): Promise<string | null> {
+  if (typeof window === 'undefined') return null;
+  const refreshToken = localStorage.getItem('refresh_token');
+  if (!refreshToken) return null;
+
+  try {
+    const res = await fetch(`${API_BASE}/api/auth/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data.access_token) {
+      localStorage.setItem('token', data.access_token);
+      if (data.refresh_token) {
+        localStorage.setItem('refresh_token', data.refresh_token);
+      }
+      return data.access_token;
+    }
+  } catch {
+    // Refresh failed — will proceed with logout
+  }
+  return null;
+}
+
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${url}`, {
+  let res = await fetch(`${API_BASE}${url}`, {
     ...options,
     headers: { ...getAuthHeaders(), ...options?.headers },
   });
+
+  // On 401, attempt a single token refresh before giving up
+  if (res.status === 401 && !url.includes('/api/auth/refresh')) {
+    const newToken = await tryRefreshToken();
+    if (newToken) {
+      const headers = { ...getAuthHeaders(), ...options?.headers };
+      headers['Authorization'] = `Bearer ${newToken}`;
+      res = await fetch(`${API_BASE}${url}`, { ...options, headers });
+    }
+  }
 
   if (res.status === 401) {
     const detail = await res.json().catch(() => ({}));
@@ -52,11 +92,9 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
       isRedirectingTo401 = true;
       // Store debug info so login page can show it
       sessionStorage.setItem('auth_debug', debugMsg);
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
-      localStorage.removeItem('activeCompany');
-      localStorage.removeItem('companies');
-      localStorage.removeItem('role');
+      // Use Zustand's logout to clear both localStorage AND store state atomically
+      const { useAuthStore } = await import('@/lib/store');
+      useAuthStore.getState().logout();
       // Delay redirect so we don't interrupt other requests
       setTimeout(() => {
         if (window.location.pathname !== '/login') {

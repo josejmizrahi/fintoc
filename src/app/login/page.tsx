@@ -57,6 +57,9 @@ function LoginPageInner() {
   const loginWithToken = useAuthStore((s) => s.loginWithToken);
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const [mounted, setMounted] = useState(false);
+  // Track whether a login/register submission is in progress to prevent
+  // the useEffect redirect from racing with the async onLogin flow.
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [view, setView] = useState<View>(searchParams.get('reset') === 'true' ? 'new-password' : 'auth');
   const [showPassword, setShowPassword] = useState(false);
 
@@ -70,11 +73,14 @@ function LoginPageInner() {
     }
   }, []);
 
+  // Only redirect if user was already authenticated when landing on this page
+  // (e.g. navigating to /login while logged in). Skip if a login submission is
+  // in progress — the onLogin handler will navigate after verification.
   useEffect(() => {
-    if (mounted && isAuthenticated) {
+    if (mounted && isAuthenticated && !isSubmitting) {
       router.replace('/');
     }
-  }, [mounted, isAuthenticated, router]);
+  }, [mounted, isAuthenticated, isSubmitting, router]);
 
   // Login form
   const loginForm = useForm<LoginValues>({
@@ -101,6 +107,7 @@ function LoginPageInner() {
   });
 
   async function onLogin(data: LoginValues) {
+    setIsSubmitting(true);
     try {
       const res = await api.auth.login(data);
       if (!res.access_token) {
@@ -113,18 +120,8 @@ function LoginPageInner() {
         user,
         { id: res.tenant?.id || res.company?.id, name: res.tenant?.name || res.company?.name, rfc: res.tenant?.rfc || res.company?.rfc },
         res.role || 'admin',
+        res.refresh_token,
       );
-      // Verify the full auth chain works before navigating
-      try {
-        const debugRes = await api.auth.debug();
-        if (debugRes.error) {
-          toast.error(`Auth check fallo: ${debugRes.error}`, { duration: 10000 });
-          return;
-        }
-      } catch (verifyErr) {
-        toast.error(`Token no valido: ${verifyErr instanceof Error ? verifyErr.message : 'Error desconocido'}`, { duration: 10000 });
-        return;
-      }
       toast.success('Sesion iniciada correctamente');
       if (res.onboarding_completed === false) {
         router.push('/onboarding');
@@ -133,10 +130,13 @@ function LoginPageInner() {
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Credenciales invalidas');
+    } finally {
+      setIsSubmitting(false);
     }
   }
 
   async function onRegister(data: RegisterValues) {
+    setIsSubmitting(true);
     try {
       const payload: Parameters<typeof api.auth.register>[0] = {
         email: data.email,
@@ -164,6 +164,8 @@ function LoginPageInner() {
       router.push('/onboarding');
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Error al registrar');
+    } finally {
+      setIsSubmitting(false);
     }
   }
 
