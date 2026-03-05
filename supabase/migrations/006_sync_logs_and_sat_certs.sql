@@ -50,6 +50,8 @@ ALTER TABLE integrations ADD COLUMN IF NOT EXISTS cert_serial TEXT;
 ALTER TABLE integrations ADD COLUMN IF NOT EXISTS cert_expires_at TIMESTAMPTZ;
 ALTER TABLE integrations ADD COLUMN IF NOT EXISTS cert_uploaded_at TIMESTAMPTZ;
 
--- ── Supabase Storage bucket for SAT certificates (run via dashboard if needed) ──
--- INSERT INTO storage.buckets (id, name, public) VALUES ('sat-certificates', 'sat-certificates', false)
--- ON CONFLICT DO NOTHING;
+-- ── Missing columns on cfdi_documents (used by upload-xml endpoint) ──
+
+ALTER TABLE cfdi_documents ADD COLUMN IF NOT EXISTS fecha_timbrado TIMESTAMPTZ;
+ALTER TABLE cfdi_documents ADD COLUMN IF NOT EXISTS xml_content TEXT;
+ALTER TABLE cfdi_documents ADD COLUMN IF NOT EXISTS nombre_receptor TEXT;
