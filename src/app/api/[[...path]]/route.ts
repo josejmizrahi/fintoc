@@ -666,9 +666,25 @@ async function dbPost(path: string, body: unknown, companyId: number | null): Pr
       const parsed = expenseSchema.safeParse(b);
       if (!parsed.success) return zodError(parsed.error);
       const v = parsed.data;
+      const cfdiUuid = (b.cfdi_uuid as string) || null;
+
+      // Fix #9: If expense has cfdi_uuid, validate against SAT
+      let satValidated: boolean | null = null;
+      if (cfdiUuid) {
+        try {
+          const { data: satInt } = await query("integrations", { match: { company_id: companyId, provider: "sat" }, single: true });
+          const companyRfc = (satInt?.config as Record<string, string>)?.rfcEmisor || "";
+          if (companyRfc) {
+            const resultado = await validateCfdiAgainstSat(cfdiUuid, companyRfc, companyRfc, String(v.amount));
+            satValidated = resultado === "Vigente";
+          }
+        } catch { /* SAT validation failed, leave as null */ }
+      }
+
       const { data } = await insert("expenses", {
         company_id: companyId, employee_name: v.employee_name, employee_email: v.employee_email || null,
         category: v.category, description: v.description || null, amount: v.amount, currency: v.currency,
+        cfdi_uuid: cfdiUuid, sat_validated: satValidated,
       });
       return data?.[0];
     }
@@ -864,13 +880,18 @@ async function dbPost(path: string, body: unknown, companyId: number | null): Pr
         return NextResponse.json({ detail: "Envía un arreglo de UUIDs" }, { status: 400 });
       }
       const { data: satInt } = await query("integrations", { match: { company_id: companyId, provider: "sat" }, single: true });
-      const rfcEmisor = (satInt?.config as Record<string, string>)?.rfcEmisor || "";
+      const companyRfc = (satInt?.config as Record<string, string>)?.rfcEmisor || "";
       const results: Array<{ uuid: string; estado: string }> = [];
       for (const uuid of uuids.slice(0, 100)) {
         try {
           const { data: inv } = await query("invoices", { match: { company_id: companyId, cfdi_uuid: uuid }, single: true });
           const total = inv ? String(Number(inv.amount_total) || 0) : "0";
-          const estado = await validateCfdiAgainstSat(uuid, rfcEmisor, rfcEmisor, total);
+          // Fix #6: Use correct RFC roles
+          const isReceivable = inv?.type === "receivable";
+          const partnerRfc = (inv?.partner_rfc as string) || companyRfc;
+          const satRfcEmisor = isReceivable ? companyRfc : partnerRfc;
+          const satRfcReceptor = isReceivable ? partnerRfc : companyRfc;
+          const estado = await validateCfdiAgainstSat(uuid, satRfcEmisor, satRfcReceptor, total);
           results.push({ uuid, estado });
           if (inv) await update("invoices", { sat_status: estado }, { id: inv.id });
         } catch {
@@ -894,25 +915,58 @@ async function dbPost(path: string, body: unknown, companyId: number | null): Pr
         return { id: existing.id, uuid: parsed.uuid, status: "already_exists", rfc_emisor: parsed.rfcEmisor, total: parsed.total };
       }
       const estado = await validateCfdiAgainstSat(parsed.uuid, parsed.rfcEmisor, parsed.rfcReceptor, String(parsed.total));
+
+      // Fix #10: Check if there's an existing invoice with this cfdi_uuid
+      const { data: linkedInvoice } = await query("invoices", { match: { company_id: companyId, cfdi_uuid: parsed.uuid }, single: true }).catch(() => ({ data: null }));
+
       const { data: inserted } = await insert("cfdi_documents", {
         company_id: companyId, uuid: parsed.uuid, rfc_emisor: parsed.rfcEmisor, rfc_receptor: parsed.rfcReceptor,
+        nombre_emisor: parsed.nombreEmisor || null, nombre_receptor: parsed.nombreReceptor || null,
+        tipo_comprobante: parsed.tipoComprobante || null,
         total: parsed.total, fecha_emision: parsed.fecha || null, fecha_timbrado: parsed.fechaTimbrado || null,
         sat_status: estado, xml_content: xmlContent,
+        invoice_id: linkedInvoice ? (linkedInvoice as Record<string, unknown>).id : null,
       });
       const doc = inserted?.[0];
-      return { id: doc?.id, uuid: parsed.uuid, rfc_emisor: parsed.rfcEmisor, total: parsed.total, estado, status: "processed" };
+
+      // Fix #10: If invoice exists, update its sat_status. If not, create one from XML data.
+      if (linkedInvoice) {
+        await update("invoices", { sat_status: estado }, { id: (linkedInvoice as Record<string, unknown>).id });
+      } else {
+        // Create invoice from XML data
+        const { data: satInt } = await query("integrations", { match: { company_id: companyId, provider: "sat" }, single: true }).catch(() => ({ data: null }));
+        const companyRfc = (satInt?.config as Record<string, string>)?.rfcEmisor || "";
+        const isEmitted = parsed.rfcEmisor === companyRfc;
+        const newInvoice = await insert("invoices", {
+          company_id: companyId,
+          name: parsed.uuid,
+          type: isEmitted ? "receivable" : "payable",
+          partner_name: isEmitted ? parsed.nombreReceptor : parsed.nombreEmisor,
+          partner_rfc: isEmitted ? parsed.rfcReceptor : parsed.rfcEmisor,
+          amount_total: parsed.total, amount_residual: parsed.total,
+          date_invoice: parsed.fecha || null,
+          status: "open", cfdi_uuid: parsed.uuid, sat_status: estado,
+          source: "sat_upload",
+        });
+        // Link the cfdi_document to the new invoice
+        if (newInvoice.data?.[0]?.id && doc?.id) {
+          await update("cfdi_documents", { invoice_id: newInvoice.data[0].id }, { id: doc.id });
+        }
+      }
+
+      return { id: doc?.id, uuid: parsed.uuid, rfc_emisor: parsed.rfcEmisor, total: parsed.total, estado, status: "processed", invoice_linked: !!linkedInvoice };
     }
 
     if (path === "sat/revalidate-all") {
       const { data: docs } = await query("cfdi_documents", { match: { company_id: companyId } });
       const { data: satInt } = await query("integrations", { match: { company_id: companyId, provider: "sat" }, single: true });
-      const rfcEmisor = (satInt?.config as Record<string, string>)?.rfcEmisor || "";
+      const companyRfc = (satInt?.config as Record<string, string>)?.rfcEmisor || "";
       let revalidated = 0, vigentes = 0, cancelados = 0, errores = 0;
       for (const doc of (docs || []).slice(0, 500)) {
         try {
           const uuid = doc.uuid as string;
           if (!uuid) continue;
-          const estado = await validateCfdiAgainstSat(uuid, (doc.rfc_emisor as string) || rfcEmisor, (doc.rfc_receptor as string) || rfcEmisor, String(Number(doc.total) || 0));
+          const estado = await validateCfdiAgainstSat(uuid, (doc.rfc_emisor as string) || companyRfc, (doc.rfc_receptor as string) || companyRfc, String(Number(doc.total) || 0));
           await update("cfdi_documents", { sat_status: estado, updated_at: new Date().toISOString() }, { id: doc.id });
           revalidated++;
           if (estado === "Vigente") vigentes++;
@@ -922,7 +976,12 @@ async function dbPost(path: string, body: unknown, companyId: number | null): Pr
       const { data: invoices } = await query("invoices", { match: { company_id: companyId } });
       for (const inv of (invoices || []).filter((i: Record<string, unknown>) => i.cfdi_uuid)) {
         try {
-          const estado = await validateCfdiAgainstSat(inv.cfdi_uuid as string, rfcEmisor, rfcEmisor, String(Number(inv.amount_total) || 0));
+          // Fix #6: Use correct RFC roles based on invoice type
+          const isReceivable = inv.type === "receivable";
+          const partnerRfc = (inv.partner_rfc as string) || companyRfc;
+          const satRfcEmisor = isReceivable ? companyRfc : partnerRfc;
+          const satRfcReceptor = isReceivable ? partnerRfc : companyRfc;
+          const estado = await validateCfdiAgainstSat(inv.cfdi_uuid as string, satRfcEmisor, satRfcReceptor, String(Number(inv.amount_total) || 0));
           await update("invoices", { sat_status: estado }, { id: inv.id });
           revalidated++;
           if (estado === "Vigente") vigentes++;

@@ -643,7 +643,14 @@ async function syncSat(companyId: number, config: Record<string, string>) {
       try {
         const uuid = inv.cfdi_uuid as string;
         const total = String(Number(inv.amount_total) || 0);
-        const satStatus = await validateCfdiAgainstSat(uuid, rfcEmisor, rfcEmisor, total);
+        // Fix #6: Use correct RFC roles based on invoice type
+        // Receivable (emitted): company is emisor, partner is receptor
+        // Payable (received): partner is emisor, company is receptor
+        const isReceivable = inv.type === "receivable";
+        const partnerRfc = (inv.partner_rfc as string) || rfcEmisor;
+        const satRfcEmisor = isReceivable ? rfcEmisor : partnerRfc;
+        const satRfcReceptor = isReceivable ? partnerRfc : rfcEmisor;
+        const satStatus = await validateCfdiAgainstSat(uuid, satRfcEmisor, satRfcReceptor, total);
         await update("invoices", { sat_status: satStatus }, { id: inv.id });
         validated++;
         if (satStatus === "Vigente") vigentes++;
