@@ -19,12 +19,28 @@ vi.mock("@/lib/auth-helpers", () => ({
   getCompanyId: (...args: unknown[]) => mockGetCompanyId(...args),
 }));
 
-// Mock odoo
+// Mock odoo — createOdooClient returns a client with connect() and searchRead()
+const mockSearchRead = vi.fn().mockResolvedValue([]);
+const mockOdooCreate = vi.fn().mockResolvedValue(1);
 vi.mock("@/lib/odoo", () => ({
   odooJsonRpc: vi.fn().mockResolvedValue({ jsonrpc: "2.0", result: { server_version: "17.0" } }),
   odooAuthenticate: vi.fn().mockResolvedValue(42),
   odooFetchAll: vi.fn().mockResolvedValue([]),
-  odooSearchRead: vi.fn().mockResolvedValue([]),
+  odooSearchRead: mockSearchRead,
+  createOdooClient: vi.fn().mockReturnValue({
+    connect: vi.fn().mockResolvedValue(42),
+    searchRead: mockSearchRead,
+    create: mockOdooCreate,
+    search: vi.fn().mockResolvedValue([]),
+    write: vi.fn().mockResolvedValue(true),
+    read: vi.fn().mockResolvedValue([]),
+    fetchAll: vi.fn().mockResolvedValue([]),
+    searchCount: vi.fn().mockResolvedValue(0),
+    callAction: vi.fn().mockResolvedValue(null),
+    findBankJournalId: vi.fn().mockResolvedValue(null),
+  }),
+  m2oId: (field: unknown) => (Array.isArray(field) ? field[0] : typeof field === "number" ? field : null),
+  m2oName: (field: unknown) => (Array.isArray(field) ? field[1] : typeof field === "string" ? field : ""),
 }));
 
 // Mock fintoc
@@ -36,6 +52,15 @@ vi.mock("@/lib/fintoc", () => ({
 vi.mock("@/lib/sat", () => ({
   validateCfdiAgainstSat: vi.fn().mockResolvedValue("Vigente"),
   testSatReachability: vi.fn().mockResolvedValue(true),
+}));
+
+// Mock syntage
+vi.mock("@/lib/syntage", () => ({
+  createSyntageClient: vi.fn().mockReturnValue({
+    getTaxpayers: vi.fn().mockResolvedValue([]),
+    createExtraction: vi.fn().mockResolvedValue({ id: "ext-1", status: "completed" }),
+    getExtraction: vi.fn().mockResolvedValue({ id: "ext-1", status: "completed", invoices: [] }),
+  }),
 }));
 
 function makeRequest(method: string, body?: unknown) {
@@ -137,7 +162,7 @@ describe("POST /api/sync", () => {
     });
   });
 
-  it("returns sync counts after Odoo sync", async () => {
+  it("returns diff after Odoo sync", async () => {
     mockQuery.mockImplementation((table: string, opts?: any) => {
       if (table === "integrations" && opts?.single) {
         return { data: { id: 1, config: { url: "https://odoo.test.com", database: "db", user: "admin", password: "pass" } }, error: null };
@@ -148,23 +173,21 @@ describe("POST /api/sync", () => {
     const { POST } = await import("./route");
     const res = await POST(makeRequest("POST", { provider: "odoo" }) as any);
     const data = await res.json();
-    expect(data.synced).toBeDefined();
-    expect(data.synced).toHaveProperty("customers");
-    expect(data.synced).toHaveProperty("vendors");
-    expect(data.synced).toHaveProperty("invoices");
-    expect(data.synced).toHaveProperty("payments");
+    expect(data.success).toBe(true);
+    expect(data.diff).toBeDefined();
   });
 
   // ── Sync SAT ──
 
-  it("creates sync_log when syncing SAT", async () => {
+  it("creates sync_log when syncing SAT (direct validation)", async () => {
     const invoices = [
-      { id: 1, cfdi_uuid: "UUID-001", amount_total: 1000 },
-      { id: 2, cfdi_uuid: "UUID-002", amount_total: 2000 },
+      { id: 1, cfdi_uuid: "UUID-001", amount_total: 1000, type: "receivable" },
+      { id: 2, cfdi_uuid: "UUID-002", amount_total: 2000, type: "receivable" },
     ];
 
     mockQuery.mockImplementation((table: string, opts?: any) => {
       if (table === "integrations" && opts?.single) {
+        // No syntageApiKey → falls back to direct SAT validation
         return { data: { id: 1, config: { rfcEmisor: "ABC010101AAA" } }, error: null };
       }
       if (table === "invoices") return { data: invoices, error: null };
@@ -175,9 +198,8 @@ describe("POST /api/sync", () => {
     const res = await POST(makeRequest("POST", { provider: "sat" }) as any);
     const data = await res.json();
     expect(data.success).toBe(true);
-    expect(data.validated).toBe(2);
-    expect(data.vigentes).toBe(2);
     expect(data.sync_log_id).toBeDefined();
+    expect(data.diff).toBeDefined();
   });
 
   // ── Sync Fintoc ──

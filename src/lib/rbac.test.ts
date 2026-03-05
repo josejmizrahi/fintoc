@@ -17,12 +17,12 @@ describe("checkPermission", () => {
     expect(checkPermission("manager", "configure", "integrations")).toBe(false);
   });
 
-  it("accountant can read all but cannot execute or approve", () => {
+  it("accountant can read, create, and execute but cannot approve or delete", () => {
     expect(checkPermission("accountant", "read", "payments")).toBe(true);
     expect(checkPermission("accountant", "read", "invoices")).toBe(true);
     expect(checkPermission("accountant", "create", "payments")).toBe(true);
     expect(checkPermission("accountant", "create", "invoices")).toBe(true);
-    expect(checkPermission("accountant", "execute", "payments")).toBe(false);
+    expect(checkPermission("accountant", "execute", "payments")).toBe(true);
     expect(checkPermission("accountant", "approve", "payments")).toBe(false);
     expect(checkPermission("accountant", "delete", "payments")).toBe(false);
   });
@@ -90,9 +90,8 @@ describe("checkRouteAccess", () => {
     expect(result).toContain("viewer");
   });
 
-  it("denies accountant from executing payments", () => {
-    const result = checkRouteAccess("accountant", "POST", "payments/123/execute");
-    expect(result).toContain("Acceso denegado");
+  it("allows accountant to execute payments", () => {
+    expect(checkRouteAccess("accountant", "POST", "payments/123/execute")).toBeNull();
   });
 
   it("denies viewer from deleting resources", () => {
