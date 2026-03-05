@@ -56,14 +56,19 @@ function LoginPageInner() {
   const searchParams = useSearchParams();
   const loginWithToken = useAuthStore((s) => s.loginWithToken);
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const [mounted, setMounted] = useState(false);
   const [view, setView] = useState<View>(searchParams.get('reset') === 'true' ? 'new-password' : 'auth');
   const [showPassword, setShowPassword] = useState(false);
 
   useEffect(() => {
-    if (isAuthenticated) {
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (mounted && isAuthenticated) {
       router.replace('/');
     }
-  }, [isAuthenticated, router]);
+  }, [mounted, isAuthenticated, router]);
 
   // Login form
   const loginForm = useForm<LoginValues>({
