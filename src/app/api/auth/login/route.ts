@@ -38,7 +38,7 @@ export const POST = createHandler(async (req) => {
   const userId = authData.user.id;
   const admin = getAdminClient();
 
-  // Get user's companies
+  // Get user's companies — only accept fully active memberships (matches withAuth)
   const { data: memberships, error: memberError } = await admin
     .from('user_companies')
     .select(`
@@ -49,18 +49,30 @@ export const POST = createHandler(async (req) => {
       companies:company_id (id, name, rfc, onboarding_completed)
     `)
     .eq('user_id', userId)
-    .in('status', ['active', 'invited']);
+    .eq('status', 'active');
 
   if (memberError || !memberships || memberships.length === 0) {
-    throw new ApiError('NO_COMPANIES', 'Usuario sin empresas asignadas', 403);
+    throw new ApiError('NO_COMPANIES', 'Usuario sin empresas asignadas. Contacta al administrador.', 403);
   }
 
-  const activeCompany = memberships.find(m => m.is_active);
-  const company = activeCompany?.companies || (memberships[0] as Record<string, unknown>).companies;
+  let activeCompany = memberships.find(m => m.is_active);
+
+  // If no company is marked as active, activate the first one so withAuth can find it
+  if (!activeCompany) {
+    const firstMembership = memberships[0] as Record<string, unknown>;
+    await admin
+      .from('user_companies')
+      .update({ is_active: true })
+      .eq('user_id', userId)
+      .eq('company_id', firstMembership.company_id);
+    activeCompany = { ...firstMembership, is_active: true } as typeof memberships[0];
+  }
+
+  const company = activeCompany.companies;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const companyObj = company as any;
-  const role = activeCompany?.role || (memberships[0] as Record<string, unknown>).role || 'admin';
+  const role = activeCompany.role || 'admin';
 
   return Response.json({
     user: {
