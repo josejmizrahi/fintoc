@@ -294,20 +294,20 @@ export default function FacturasPage() {
                         <TableCell className="font-medium">
                           {inv.name || `FAC-${inv.id}`}
                         </TableCell>
-                        <TableCell>{inv.partner || "-"}</TableCell>
+                        <TableCell>{inv.partner_name || "-"}</TableCell>
                         <TableCell className="text-right font-mono">
-                          {formatMXN(inv.amount_total ?? inv.amount ?? 0)}
+                          {formatMXN(inv.amount_total ?? 0)}
                         </TableCell>
                         <TableCell className="text-right font-mono">
                           {formatMXN(inv.amount_residual ?? 0)}
                         </TableCell>
                         <TableCell className="text-muted-foreground">
                           {formatDate(
-                            inv.invoice_date_due ?? inv.due_date
+                            inv.date_due
                           )}
                         </TableCell>
                         <TableCell>
-                          {cfdiBadge(inv.payment_state ?? (inv.cfdi_uuid ? "valid" : undefined))}
+                          {cfdiBadge(inv.sat_status ?? (inv.cfdi_uuid ? "valid" : undefined))}
                         </TableCell>
                         <TableCell className="text-right">
                           <Button
@@ -378,20 +378,20 @@ export default function FacturasPage() {
                         <TableCell className="font-medium">
                           {inv.name || `FAC-${inv.id}`}
                         </TableCell>
-                        <TableCell>{inv.partner || "-"}</TableCell>
+                        <TableCell>{inv.partner_name || "-"}</TableCell>
                         <TableCell className="text-right font-mono">
-                          {formatMXN(inv.amount_total ?? inv.amount ?? 0)}
+                          {formatMXN(inv.amount_total ?? 0)}
                         </TableCell>
                         <TableCell className="text-right font-mono">
                           {formatMXN(inv.amount_residual ?? 0)}
                         </TableCell>
                         <TableCell className="text-muted-foreground">
                           {formatDate(
-                            inv.invoice_date_due ?? inv.due_date
+                            inv.date_due
                           )}
                         </TableCell>
                         <TableCell>
-                          {cfdiBadge(inv.payment_state ?? (inv.cfdi_uuid ? "valid" : undefined))}
+                          {cfdiBadge(inv.sat_status ?? (inv.cfdi_uuid ? "valid" : undefined))}
                         </TableCell>
                       </TableRow>
                     ))}

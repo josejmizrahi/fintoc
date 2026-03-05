@@ -265,13 +265,13 @@ function VendorDetailDialog({
                           {bill.name || `FAC-${bill.id}`}
                         </TableCell>
                         <TableCell className="text-right font-mono">
-                          {formatMXN(bill.amount_total ?? bill.amount ?? 0)}
+                          {formatMXN(bill.amount_total ?? 0)}
                         </TableCell>
                         <TableCell className="text-right font-mono">
                           {formatMXN(bill.amount_residual ?? 0)}
                         </TableCell>
                         <TableCell className="text-muted-foreground">
-                          {formatDate(bill.invoice_date_due ?? bill.due_date)}
+                          {formatDate(bill.date_due)}
                         </TableCell>
                       </TableRow>
                     ))}

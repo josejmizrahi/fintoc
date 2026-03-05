@@ -114,7 +114,7 @@ const MOCK = {
       { id: 3, direction: "inbound", status: "confirmed", amount: 89000, currency: "MXN", reference_id: "PAY-003", partner_name: "TechCorp", created_at: now },
     ],
     overdue_invoice_list: [
-      { id: 3, name: "GHI11111", partner: "Global Trade MX", amount_total: 340000, amount_residual: 340000, invoice_date_due: "2026-02-28" },
+      { id: 3, name: "GHI11111", partner_name: "Global Trade MX", amount_total: 340000, amount_residual: 340000, date_due: "2026-02-28" },
     ],
     cash_flow_trend: [
       { date: "Lun", inflows: 250000, outflows: 180000 },
@@ -224,8 +224,8 @@ async function dbGet(path: string, companyId: number | null): Promise<unknown | 
           currency: p.currency, reference_id: p.reference_id, partner_name: p.partner_name, created_at: p.created_at,
         })),
         overdue_invoice_list: (overdueRes.data || []).map((inv: Record<string, unknown>) => ({
-          id: inv.id, name: inv.cfdi_uuid || `INV-${inv.id}`, partner: inv.partner_name,
-          amount_total: inv.amount_total, amount_residual: inv.amount_residual, invoice_date_due: inv.date_due,
+          id: inv.id, name: inv.name || inv.cfdi_uuid || `INV-${inv.id}`, partner_name: inv.partner_name,
+          amount_total: inv.amount_total, amount_residual: inv.amount_residual, date_due: inv.date_due,
         })),
         cash_flow_trend: MOCK.dashboard.cash_flow_trend,
       };

@@ -117,16 +117,16 @@ function CustomerInvoicesDialog({
                     {inv.name || `FAC-${inv.id}`}
                   </TableCell>
                   <TableCell className="text-right font-mono">
-                    {formatMXN(inv.amount_total ?? inv.amount ?? 0)}
+                    {formatMXN(inv.amount_total ?? 0)}
                   </TableCell>
                   <TableCell className="text-right font-mono">
                     {formatMXN(inv.amount_residual ?? 0)}
                   </TableCell>
                   <TableCell className="text-muted-foreground">
-                    {formatDate(inv.invoice_date_due ?? inv.due_date)}
+                    {formatDate(inv.date_due)}
                   </TableCell>
                   <TableCell>
-                    {inv.payment_state === "paid" ? (
+                    {inv.status === "paid" ? (
                       <Badge variant="default">Pagada</Badge>
                     ) : inv.amount_residual && inv.amount_residual > 0 ? (
                       <Badge variant="secondary">Pendiente</Badge>
