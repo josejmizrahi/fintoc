@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import { useAuthStore } from '@/lib/store';
 import { toast } from 'sonner';
 
 export const notificationKeys = {
@@ -9,17 +10,21 @@ export const notificationKeys = {
 };
 
 export function useNotifications() {
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   return useQuery({
     queryKey: notificationKeys.list(),
     queryFn: () => api.notifications.list(),
+    enabled: isAuthenticated,
   });
 }
 
 export function useUnreadCount() {
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   return useQuery({
     queryKey: notificationKeys.unreadCount(),
     queryFn: () => api.notifications.unreadCount(),
     refetchInterval: 30_000,
+    enabled: isAuthenticated,
   });
 }
 

@@ -13,6 +13,7 @@ import {
   Plug,
 } from 'lucide-react';
 import { api } from '@/lib/api';
+import { useAuthStore } from '@/lib/store';
 import { formatMoney, formatDate, formatRelative } from '@/lib/utils/format';
 import { StatusBadge } from '@/components/shared/status-badge';
 import { KpiCard } from '@/components/shared/kpi-card';
@@ -41,23 +42,27 @@ import {
 
 export default function DashboardPage() {
   const [period, setPeriod] = useState<'7d' | '30d' | '90d' | '12m'>('30d');
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
 
   const { data: dashboard, isLoading } = useQuery({
     queryKey: ['dashboard'],
     queryFn: () => api.dashboard(),
     staleTime: 30_000,
+    enabled: isAuthenticated,
   });
 
   const { data: cashFlow, isLoading: cashFlowLoading } = useQuery({
     queryKey: ['dashboard', 'cash-flow', period],
     queryFn: () => api.reports.cashFlow({ period }),
     staleTime: 60_000,
+    enabled: isAuthenticated,
   });
 
   const { data: onboarding } = useQuery({
     queryKey: ['onboarding', 'status'],
     queryFn: () => api.onboarding.status(),
     staleTime: 300_000,
+    enabled: isAuthenticated,
   });
 
   const showOnboarding = onboarding && !onboarding.onboarding_completed;

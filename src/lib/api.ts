@@ -35,6 +35,9 @@ function getAuthHeaders(): Record<string, string> {
   return headers;
 }
 
+// Prevent multiple concurrent 401 handlers from all triggering redirects
+let isRedirectingTo401 = false;
+
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${url}`, {
     ...options,
@@ -42,7 +45,8 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   });
 
   if (res.status === 401) {
-    if (typeof window !== 'undefined') {
+    if (typeof window !== 'undefined' && !isRedirectingTo401) {
+      isRedirectingTo401 = true;
       const detail = await res.json().catch(() => ({}));
       console.warn('[API 401]', url, detail);
       localStorage.removeItem('token');
@@ -50,10 +54,11 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
       localStorage.removeItem('activeCompany');
       localStorage.removeItem('companies');
       localStorage.removeItem('role');
-      // Use Next.js router-friendly redirect instead of hard reload
       if (window.location.pathname !== '/login') {
         window.location.href = '/login';
       }
+      // Reset after a short delay so future real 401s still work
+      setTimeout(() => { isRedirectingTo401 = false; }, 3000);
     }
     throw new ApiError(401, 'Sesion expirada. Inicia sesion nuevamente.');
   }
