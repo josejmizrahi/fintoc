@@ -19,10 +19,9 @@ import {
   GitCompare,
   BarChart3,
   Settings,
-  ChevronsLeft,
-  ChevronsRight,
   Check,
   ChevronsUpDown,
+  Plus,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuthStore, useSidebarStore } from '@/lib/store';
@@ -67,7 +66,7 @@ export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { collapsed, toggle } = useSidebarStore();
+  const { collapsed } = useSidebarStore();
   const { role, companies, activeCompany, switchCompany } = useAuthStore();
 
   const visibleItems = navItems.filter((item) => {
@@ -111,59 +110,6 @@ export function Sidebar() {
             </span>
           )}
         </Link>
-      </div>
-
-      {/* Company switcher */}
-      <div className="px-2 py-2 border-b">
-        {companies.length > 1 ? (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="outline"
-                className={cn(
-                  'w-full justify-between gap-2',
-                  collapsed && 'px-2',
-                )}
-              >
-                <div className="flex items-center gap-2 truncate">
-                  <Building2 className="size-4 shrink-0" />
-                  {!collapsed && (
-                    <span className="truncate text-sm">
-                      {activeCompany?.name || 'Empresa'}
-                    </span>
-                  )}
-                </div>
-                {!collapsed && <ChevronsUpDown className="size-4 shrink-0 opacity-50" />}
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-56">
-              <DropdownMenuLabel>Empresas</DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              {companies.map((c) => (
-                <DropdownMenuItem
-                  key={c.id}
-                  onSelect={() => handleSwitchCompany(c)}
-                  className="flex items-center justify-between"
-                >
-                  <span className="truncate">{c.name}</span>
-                  {c.id === activeCompany?.id && <Check className="size-4 text-primary shrink-0" />}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        ) : (
-          <div className={cn(
-            'flex items-center gap-2 px-3 py-2',
-            collapsed && 'justify-center px-2',
-          )}>
-            <Building2 className="size-4 shrink-0 text-muted-foreground" />
-            {!collapsed && (
-              <span className="text-sm font-medium truncate">
-                {activeCompany?.name || 'Empresa'}
-              </span>
-            )}
-          </div>
-        )}
       </div>
 
       <ScrollArea className="flex-1 px-2 py-2">
@@ -217,19 +163,67 @@ export function Sidebar() {
 
       <Separator />
 
-      <div className="flex items-center justify-center p-2">
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={toggle}
-          aria-label={collapsed ? 'Expandir menu' : 'Colapsar menu'}
-        >
-          {collapsed ? (
-            <ChevronsRight className="size-4" />
-          ) : (
-            <ChevronsLeft className="size-4" />
-          )}
-        </Button>
+      {/* Company switcher */}
+      <div className="p-2">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              className={cn(
+                'w-full gap-2 h-auto py-2',
+                collapsed ? 'justify-center px-2' : 'justify-between px-3',
+              )}
+            >
+              <div className="flex items-center gap-2 truncate">
+                <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+                  <Building2 className="size-4" />
+                </div>
+                {!collapsed && (
+                  <div className="flex flex-col items-start truncate">
+                    <span className="truncate text-sm font-medium">
+                      {activeCompany?.name || 'Empresa'}
+                    </span>
+                    {activeCompany?.rfc && (
+                      <span className="truncate text-[10px] text-muted-foreground">
+                        {activeCompany.rfc}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+              {!collapsed && <ChevronsUpDown className="size-4 shrink-0 opacity-50" />}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent side="top" align="start" className="w-56">
+            <DropdownMenuLabel>Empresa activa</DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={() => router.push('/configuracion')}>
+              <Settings className="size-4" />
+              Perfil de empresa
+            </DropdownMenuItem>
+            {companies.length > 1 && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel className="text-xs text-muted-foreground">Cambiar empresa</DropdownMenuLabel>
+                {companies.map((c) => (
+                  <DropdownMenuItem
+                    key={c.id}
+                    onSelect={() => handleSwitchCompany(c)}
+                    className="flex items-center justify-between"
+                  >
+                    <span className="truncate">{c.name}</span>
+                    {c.id === activeCompany?.id && <Check className="size-4 text-primary shrink-0" />}
+                  </DropdownMenuItem>
+                ))}
+              </>
+            )}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={() => router.push('/configuracion')}>
+              <Plus className="size-4" />
+              Crear nueva empresa
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </aside>
   );
