@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
+import { PermissionGate } from "@/components/shared/permission-gate";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { type ColumnDef } from "@tanstack/react-table";
 import { toast } from "sonner";
@@ -222,9 +223,18 @@ export default function SatPage() {
   const [selectedTaxpayer, setSelectedTaxpayer] = useState<string>("");
   const activeTaxpayer = selectedTaxpayer || taxpayers[0]?.id || "";
 
+  const permFallback = (
+    <div className="flex flex-col items-center justify-center gap-4 py-24 text-muted-foreground">
+      <ShieldAlert className="size-12" />
+      <p className="text-lg font-medium">Acceso restringido</p>
+      <p className="text-sm">No tienes permisos para ver SAT.</p>
+    </div>
+  );
+
   // Not connected? Show setup prompt
   if (statusQuery.isSuccess && !statusQuery.data?.ok) {
     return (
+      <PermissionGate permission="invoices:read" fallback={permFallback}>
       <div className="space-y-6 p-6">
         <h1 className="text-2xl font-bold">SAT via Syntage</h1>
         <EmptyState
@@ -234,10 +244,12 @@ export default function SatPage() {
           action={{ label: "Ir a Configuracion", onClick: () => window.location.href = "/configuracion" }}
         />
       </div>
+      </PermissionGate>
     );
   }
 
   return (
+    <PermissionGate permission="invoices:read" fallback={permFallback}>
     <div className="space-y-6 p-6">
       {/* Header */}
       <div className="flex items-center justify-between">
@@ -305,6 +317,7 @@ export default function SatPage() {
         </TabsContent>
       </Tabs>
     </div>
+    </PermissionGate>
   );
 }
 
