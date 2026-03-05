@@ -8,3 +8,4 @@
 
 export { handlePaymentsGet, handlePaymentsPost } from "./payments";
 export { handleSatGet, handleSatPost } from "./sat";
+export { handleOdooGet, handleOdooPost } from "./odoo";

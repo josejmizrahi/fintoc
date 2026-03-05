@@ -57,31 +57,6 @@ export interface DashboardData {
   overdue_invoice_list: Invoice[];
 }
 
-export interface Payment {
-  id: number;
-  direction: "inbound" | "outbound";
-  status: string;
-  amount: number;
-  currency: string;
-  clabe_destination?: string;
-  reference_id?: string;
-  partner_name?: string;
-  partner_rfc?: string;
-  fintoc_transfer_id?: string;
-  fintoc_payment_intent_id?: string;
-  cfdi_uuid?: string;
-  sat_status?: string;
-  executed_at?: string;
-  created_at?: string;
-  odoo_id?: number;
-  odoo_payment_id?: number;
-  complemento_emitido?: boolean;
-  complemento_uuid?: string;
-  jws_signed?: boolean;
-  bank_movement_id?: number;
-  source?: string;
-}
-
 export interface Invoice {
   id: number;
   name: string;
@@ -91,10 +66,13 @@ export interface Invoice {
   partner_rfc?: string;
   amount_total?: number;
   amount_residual?: number;
+  amount_tax?: number;
   date_invoice?: string;
   date_due?: string;
   status?: string;
+  payment_state?: string; // not_paid, in_payment, paid, partial, reversed
   cfdi_uuid?: string;
+  odoo_cfdi_uuid?: string; // UUID from Odoo l10n_mx_edi
   sat_status?: string;
   sat_validated?: boolean;
   payment_policy?: "PUE" | "PPD";
@@ -104,6 +82,8 @@ export interface Invoice {
   moneda?: string;
   tipo_cambio?: number;
   uso_cfdi?: string;
+  odoo_usage?: string; // Uso CFDI from Odoo
+  odoo_payment_method?: string; // Forma de pago from Odoo
   emisor_nombre?: string;
   receptor_nombre?: string;
   emisor_regimen?: string;
@@ -115,6 +95,9 @@ export interface Invoice {
   sat_last_check?: string;
   descuento?: number;
   lugar_expedicion?: string;
+  currency?: string;
+  move_type?: string; // out_invoice, in_invoice, out_refund, in_refund
+  invoice_line_count?: number;
   fintoc_institution_id?: string;
   odoo_id?: number;
   source?: string;
@@ -125,9 +108,14 @@ export interface Vendor {
   name: string;
   rfc?: string;
   email?: string;
+  phone?: string;
   clabe?: string;
   clabe_verified?: boolean;
   clabe_holder_name?: string;
+  bank_name?: string;
+  regimen_fiscal?: string;
+  supplier_rank?: number;
+  payment_term?: string;
   rfc_validated?: boolean;
   rfc_validated_at?: string;
   efos_status?: string;
@@ -141,9 +129,13 @@ export interface Customer {
   name: string;
   rfc?: string;
   email?: string;
+  phone?: string;
   clabe?: string;
   fintoc_account_number_id?: string;
   fintoc_clabe?: string;
+  regimen_fiscal?: string;
+  customer_rank?: number;
+  payment_term?: string;
   rfc_validated?: boolean;
   rfc_validated_at?: string;
   odoo_id?: number;
@@ -253,6 +245,12 @@ export interface Expense {
   status: string;
   cfdi_uuid?: string;
   sat_validated: boolean;
+  product_category?: string;
+  payment_mode?: string; // own_account, company_account
+  sheet_id?: number;
+  expense_reference?: string;
+  odoo_id?: number;
+  source?: string;
   created_at?: string;
 }
 
@@ -322,4 +320,84 @@ export interface ReconciliationEntry {
   status: string;
   cfdi_uuid?: string;
   sat_status?: string;
+}
+
+export interface OdooBankStatement {
+  id: number;
+  company_id: number;
+  odoo_statement_line_id?: number;
+  bank_movement_id?: number;
+  payment_id?: number;
+  journal_id?: number;
+  partner_id?: number;
+  date: string;
+  payment_ref?: string;
+  amount: number;
+  currency: string;
+  status: string; // pending, pushed, matched, error
+  odoo_match_status?: string; // auto_matched, manual_matched, unmatched
+  error_message?: string;
+  pushed_at?: string;
+  matched_at?: string;
+  created_at?: string;
+}
+
+export interface OdooPurchaseOrder {
+  id: number;
+  company_id: number;
+  odoo_id: number;
+  name: string;
+  partner_id?: number;
+  partner_name?: string;
+  partner_rfc?: string;
+  vendor_id?: number;
+  state?: string; // draft, sent, purchase, done, cancel
+  amount_total?: number;
+  amount_tax?: number;
+  currency?: string;
+  date_order?: string;
+  date_planned?: string;
+  invoice_status?: string; // no, to_invoice, invoiced
+  invoice_count?: number;
+  receipt_status?: string;
+  notes?: string;
+  source?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface OdooIdCache {
+  company_id: number;
+  cache_key: string;
+  odoo_id: number;
+  display_name?: string;
+  extra_data?: Record<string, unknown>;
+  fetched_at?: string;
+}
+
+export interface Payment {
+  id: number;
+  direction: "inbound" | "outbound";
+  status: string;
+  amount: number;
+  currency: string;
+  clabe_destination?: string;
+  reference_id?: string;
+  partner_name?: string;
+  partner_rfc?: string;
+  fintoc_transfer_id?: string;
+  fintoc_payment_intent_id?: string;
+  cfdi_uuid?: string;
+  sat_status?: string;
+  executed_at?: string;
+  created_at?: string;
+  odoo_id?: number;
+  odoo_payment_id?: number;
+  odoo_state?: string;
+  reconciled_invoice_ids?: number[];
+  complemento_emitido?: boolean;
+  complemento_uuid?: string;
+  jws_signed?: boolean;
+  bank_movement_id?: number;
+  source?: string;
 }
