@@ -4,6 +4,7 @@ import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useAuthStore } from "@/lib/store";
+import { api } from "@/lib/api";
 import {
   Card,
   CardHeader,
@@ -43,28 +44,11 @@ interface IntegrationStatus {
   config?: Record<string, string>;
 }
 
-// ── API helper ──
-
-function authHeaders() {
-  const token = localStorage.getItem("token");
-  return {
-    "Content-Type": "application/json",
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  };
-}
+// ── API helper (SAT file upload needs raw fetch) ──
 
 function authHeadersNoContentType(): Record<string, string> {
   const token = localStorage.getItem("token");
   return token ? { Authorization: `Bearer ${token}` } : {};
-}
-
-async function onboardingApi(method: "GET" | "POST", body?: unknown) {
-  const res = await fetch("/api/onboarding", {
-    method,
-    headers: authHeaders(),
-    ...(body ? { body: JSON.stringify(body) } : {}),
-  });
-  return res.json();
 }
 
 // ── Steps ──
@@ -101,10 +85,9 @@ export default function OnboardingPage() {
 
   // Load existing status and saved config on mount
   useEffect(() => {
-    onboardingApi("GET").then((data) => {
+    api.onboarding.status().then((data) => {
       if (data.integrations) {
         setStatuses(data.integrations);
-        // Populate form fields from saved config
         setConfig((prev) => {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const next = { ...prev } as any;
@@ -116,7 +99,6 @@ export default function OnboardingPage() {
           }
           return next as StepConfig;
         });
-        // Load SAT certificate file names
         const satIntegration = data.integrations.sat as IntegrationStatus | null;
         if (satIntegration?.config) {
           if (satIntegration.config.certFileName) setSatCerName(satIntegration.config.certFileName);
@@ -138,11 +120,7 @@ export default function OnboardingPage() {
   async function handleTest() {
     setLoading("test");
     try {
-      const res = await onboardingApi("POST", {
-        action: "test",
-        provider: currentStep.key,
-        config: config[currentStep.key],
-      });
+      const res = await api.onboarding.test(currentStep.key, config[currentStep.key]);
       if (res.success) {
         toast.success(res.message || "Conexion exitosa");
         setStatuses((prev) => ({
@@ -161,20 +139,14 @@ export default function OnboardingPage() {
   async function handleSaveAndContinue() {
     setLoading("save");
     try {
-      // Save config
-      await onboardingApi("POST", {
-        action: "save",
-        provider: currentStep.key,
-        config: config[currentStep.key],
-      });
+      await api.onboarding.save(currentStep.key, config[currentStep.key]);
 
       if (step < STEPS.length - 1) {
         setStep(step + 1);
         toast.success(`${currentStep.title} guardado`);
       } else {
-        // Complete onboarding
-        await onboardingApi("POST", { action: "complete" });
-        toast.success("Onboarding completado");
+        await api.onboarding.complete();
+        toast.success("Configuracion completada");
         router.push("/");
       }
     } catch (e) {
@@ -184,14 +156,12 @@ export default function OnboardingPage() {
   }
 
   async function handleSync() {
+    // Save config first, then trigger sync via dedicated /api/sync
     setLoading("sync");
     setSyncLogId(undefined);
     try {
-      const res = await onboardingApi("POST", {
-        action: "sync",
-        provider: currentStep.key,
-        config: config[currentStep.key],
-      });
+      await api.onboarding.save(currentStep.key, config[currentStep.key]);
+      const res = await api.sync.trigger(currentStep.key);
       if (res.sync_log_id) setSyncLogId(res.sync_log_id);
       if (res.success) {
         toast.success(res.message || "Sincronizacion exitosa");
@@ -262,7 +232,7 @@ export default function OnboardingPage() {
     if (step < STEPS.length - 1) {
       setStep(step + 1);
     } else {
-      onboardingApi("POST", { action: "complete" }).then(() => {
+      api.onboarding.complete().then(() => {
         router.push("/");
       });
     }

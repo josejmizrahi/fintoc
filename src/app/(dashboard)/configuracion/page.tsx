@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef } from "react";
 import { toast } from "sonner";
 import { useAuthStore } from "@/lib/store";
+import { api } from "@/lib/api";
 import {
   Card,
   CardHeader,
@@ -52,57 +53,12 @@ function defaultSettings(tenantName: string, tenantRfc: string): Settings {
 }
 
 // ---------------------------------------------------------------------------
-// API helpers
+// API helpers (SAT file upload needs raw fetch — everything else uses api.ts)
 // ---------------------------------------------------------------------------
-
-function authHeaders() {
-  const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
-  return {
-    "Content-Type": "application/json",
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  };
-}
 
 function authHeadersNoContentType(): Record<string, string> {
   const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
   return token ? { Authorization: `Bearer ${token}` } : {};
-}
-
-async function saveIntegration(provider: string, config: Record<string, string>) {
-  const res = await fetch("/api/onboarding", {
-    method: "POST",
-    headers: authHeaders(),
-    body: JSON.stringify({ action: "save", provider, config }),
-  });
-  return res.json();
-}
-
-async function testIntegration(provider: string, config: Record<string, string>) {
-  const res = await fetch("/api/onboarding", {
-    method: "POST",
-    headers: authHeaders(),
-    body: JSON.stringify({ action: "test", provider, config }),
-  });
-  return res.json();
-}
-
-async function syncIntegration(provider: string, config: Record<string, string>) {
-  const res = await fetch("/api/onboarding", {
-    method: "POST",
-    headers: authHeaders(),
-    body: JSON.stringify({ action: "sync", provider, config }),
-  });
-  return res.json();
-}
-
-async function loadIntegrations(): Promise<Record<string, { is_connected: boolean; last_sync_at?: string; last_sync_message?: string; cert_uploaded_at?: string; config?: Record<string, string> } | null>> {
-  try {
-    const res = await fetch("/api/onboarding", { headers: authHeaders() });
-    const data = await res.json();
-    return data.integrations || { odoo: null, fintoc: null, sat: null };
-  } catch {
-    return { odoo: null, fintoc: null, sat: null };
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -136,7 +92,8 @@ export default function ConfiguracionPage() {
   // Load from DB on mount
   useEffect(() => {
     const base = defaultSettings(tenantName, tenantId);
-    loadIntegrations().then((integrations) => {
+    api.onboarding.status().then((data) => {
+      const integrations = data.integrations || { odoo: null, fintoc: null, sat: null };
       const syncInfo: Record<string, string> = {};
       for (const provider of ["odoo", "fintoc", "sat"] as const) {
         const integration = integrations[provider] as { is_connected?: boolean; last_sync_at?: string; last_sync_message?: string; cert_uploaded_at?: string; config?: Record<string, string> } | null;
@@ -154,7 +111,6 @@ export default function ConfiguracionPage() {
             ? `${new Date(integration.last_sync_at).toLocaleString("es-MX")} — ${integration.last_sync_message}`
             : new Date(integration.last_sync_at).toLocaleString("es-MX");
         }
-        // Load SAT certificate file names
         if (provider === "sat" && integration?.config) {
           if (integration.config.certFileName) setSatCerName(integration.config.certFileName);
           if (integration.config.keyFileName) setSatKeyName(integration.config.keyFileName);
@@ -162,33 +118,33 @@ export default function ConfiguracionPage() {
       }
       setLastSync(syncInfo);
       setSettings(base);
-    });
+    }).catch(() => {});
   }, [tenantName, tenantId]);
 
   function update<K extends keyof Settings>(section: K, field: keyof Settings[K], value: string) {
     setSettings((prev) => ({ ...prev, [section]: { ...prev[section], [field]: value } }));
   }
 
-  // ------ Save handlers (now save to DB) ------
+  // ------ Save handlers ------
 
   async function handleSaveOdoo() {
-    await saveIntegration("odoo", settings.odoo);
+    await api.onboarding.save("odoo", settings.odoo);
     toast.success("Configuracion de Odoo guardada");
   }
 
   async function handleSaveFintoc() {
-    await saveIntegration("fintoc", settings.fintoc);
+    await api.onboarding.save("fintoc", settings.fintoc);
     toast.success("Configuracion de Fintoc guardada");
   }
 
   async function handleSaveSat() {
-    await saveIntegration("sat", settings.sat);
+    await api.onboarding.save("sat", settings.sat);
     toast.success("Configuracion de SAT guardada");
   }
 
   async function handleSaveGeneral() {
     try {
-      await saveIntegration("general", {
+      await api.onboarding.save("general", {
         companyName: settings.general.companyName,
         notificationEmail: settings.general.notificationEmail,
         slackWebhook: settings.general.slackWebhook,
@@ -203,12 +159,12 @@ export default function ConfiguracionPage() {
     }
   }
 
-  // ------ Test handlers (real API calls) ------
+  // ------ Test handlers ------
 
   async function handleTestOdoo() {
     setOdooStatus("testing");
     try {
-      const res = await testIntegration("odoo", settings.odoo);
+      const res = await api.onboarding.test("odoo", settings.odoo);
       if (res.success) {
         setOdooStatus("success");
         toast.success(res.message || "Conexion a Odoo exitosa");
@@ -225,7 +181,7 @@ export default function ConfiguracionPage() {
   async function handleTestFintoc() {
     setFintocStatus("testing");
     try {
-      const res = await testIntegration("fintoc", settings.fintoc);
+      const res = await api.onboarding.test("fintoc", settings.fintoc);
       if (res.success) {
         setFintocStatus("success");
         toast.success(res.message || "Conexion a Fintoc exitosa");
@@ -242,7 +198,7 @@ export default function ConfiguracionPage() {
   async function handleValidateSat() {
     setSatStatus("validating");
     try {
-      const res = await testIntegration("sat", settings.sat);
+      const res = await api.onboarding.test("sat", settings.sat);
       if (res.success) {
         setSatStatus("success");
         toast.success(res.message || "Certificado SAT validado correctamente");
@@ -256,20 +212,18 @@ export default function ConfiguracionPage() {
     }
   }
 
-  // ------ Sync handlers ------
+  // ------ Sync handlers (use dedicated /api/sync route) ------
 
   async function handleSyncOdoo() {
     setOdooStatus("syncing");
     setOdooSyncLogId(undefined);
     try {
-      const res = await syncIntegration("odoo", settings.odoo);
+      const res = await api.sync.trigger("odoo");
       if (res.sync_log_id) setOdooSyncLogId(res.sync_log_id);
       if (res.success) {
         setOdooStatus("success");
         toast.success(res.message || "Sincronizacion de Odoo completada");
-        if (res.synced) {
-          setLastSync(prev => ({ ...prev, odoo: `${new Date().toLocaleString("es-MX")} — ${res.message}` }));
-        }
+        setLastSync(prev => ({ ...prev, odoo: `${new Date().toLocaleString("es-MX")} — ${res.message}` }));
       } else {
         setOdooStatus("error");
         toast.error(res.message || "Error en sincronizacion de Odoo");
@@ -284,7 +238,7 @@ export default function ConfiguracionPage() {
     setFintocStatus("syncing");
     setFintocSyncLogId(undefined);
     try {
-      const res = await syncIntegration("fintoc", settings.fintoc);
+      const res = await api.sync.trigger("fintoc");
       if (res.sync_log_id) setFintocSyncLogId(res.sync_log_id);
       if (res.success) {
         setFintocStatus("success");
@@ -304,7 +258,7 @@ export default function ConfiguracionPage() {
     setSatStatus("syncing");
     setSatSyncLogId(undefined);
     try {
-      const res = await syncIntegration("sat", settings.sat);
+      const res = await api.sync.trigger("sat");
       if (res.sync_log_id) setSatSyncLogId(res.sync_log_id);
       if (res.success) {
         setSatStatus("success");

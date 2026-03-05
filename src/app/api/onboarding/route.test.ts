@@ -258,11 +258,9 @@ describe("POST /api/onboarding", () => {
     expect(data.message).toContain("RFC");
   });
 
-  // ── Sync Odoo (with sync_logs) ──
+  // ── Sync action is now handled by /api/sync ──
 
-  it("creates sync_log when syncing Odoo", async () => {
-    mockQuery.mockResolvedValue({ data: null, error: null });
-
+  it("rejects sync action (moved to /api/sync)", async () => {
     const { POST } = await import("./route");
     const res = await POST(makeRequest("POST", {
       action: "sync",
@@ -271,102 +269,7 @@ describe("POST /api/onboarding", () => {
     }) as any);
 
     const data = await res.json();
-    expect(data.success).toBe(true);
-    expect(data.sync_log_id).toBeDefined();
-
-    // Verify sync_log was created
-    const syncLogInsert = mockInsert.mock.calls.find(
-      (call) => call[0] === "sync_logs",
-    );
-    expect(syncLogInsert).toBeDefined();
-    expect(syncLogInsert![1]).toMatchObject({
-      company_id: 1,
-      provider: "odoo",
-      sync_type: "full",
-      status: "running",
-    });
-  });
-
-  it("returns sync counts after Odoo sync", async () => {
-    mockQuery.mockResolvedValue({ data: null, error: null });
-
-    const { POST } = await import("./route");
-    const res = await POST(makeRequest("POST", {
-      action: "sync",
-      provider: "odoo",
-      config: { url: "https://odoo.test.com", database: "db", user: "admin", password: "pass" },
-    }) as any);
-
-    const data = await res.json();
-    expect(data.synced).toBeDefined();
-    expect(data.synced).toHaveProperty("customers");
-    expect(data.synced).toHaveProperty("vendors");
-    expect(data.synced).toHaveProperty("invoices");
-    expect(data.synced).toHaveProperty("payments");
-  });
-
-  // ── Sync SAT (with sync_logs) ──
-
-  it("creates sync_log when syncing SAT", async () => {
-    const invoices = [
-      { id: 1, cfdi_uuid: "UUID-001", amount_total: 1000 },
-      { id: 2, cfdi_uuid: "UUID-002", amount_total: 2000 },
-    ];
-
-    mockQuery.mockImplementation((table: string) => {
-      if (table === "integrations") return { data: null, error: null };
-      if (table === "invoices") return { data: invoices, error: null };
-      return { data: null, error: null };
-    });
-
-    const { POST } = await import("./route");
-    const res = await POST(makeRequest("POST", {
-      action: "sync",
-      provider: "sat",
-      config: { rfcEmisor: "ABC010101AAA" },
-    }) as any);
-
-    const data = await res.json();
-    expect(data.success).toBe(true);
-    expect(data.validated).toBe(2);
-    expect(data.vigentes).toBe(2); // Both return "Vigente" from mock
-    expect(data.sync_log_id).toBeDefined();
-
-    // Verify sync_log was created with correct total_items
-    const syncLogInsert = mockInsert.mock.calls.find(
-      (call) => call[0] === "sync_logs",
-    );
-    expect(syncLogInsert).toBeDefined();
-    expect(syncLogInsert![1].total_items).toBe(2);
-  });
-
-  // ── Sync Fintoc (with sync_logs) ──
-
-  it("creates sync_log when syncing Fintoc", async () => {
-    mockQuery.mockResolvedValue({ data: null, error: null });
-
-    const { POST } = await import("./route");
-    const res = await POST(makeRequest("POST", {
-      action: "sync",
-      provider: "fintoc",
-      config: { secretKey: "sk_live_test" },
-    }) as any);
-
-    const data = await res.json();
-    expect(data.success).toBe(true);
-    expect(data.sync_log_id).toBeDefined();
-  });
-
-  it("returns error when Fintoc secret key missing", async () => {
-    const { POST } = await import("./route");
-    const res = await POST(makeRequest("POST", {
-      action: "sync",
-      provider: "fintoc",
-      config: { secretKey: "" },
-    }) as any);
-
-    const data = await res.json();
-    expect(data.success).toBe(false);
-    expect(data.message).toContain("Secret Key");
+    expect(res.status).toBe(400);
+    expect(data.detail).toContain("invalida");
   });
 });
