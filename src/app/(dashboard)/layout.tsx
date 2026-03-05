@@ -6,6 +6,7 @@ import { useAuthStore, useSidebarStore } from '@/lib/store';
 import { Sidebar } from '@/components/layout/sidebar';
 import { Header } from '@/components/layout/header';
 import { cn } from '@/lib/utils';
+import { Loader2 } from 'lucide-react';
 
 export default function ProtectedLayout({
   children,
@@ -27,7 +28,15 @@ export default function ProtectedLayout({
     }
   }, [mounted, isAuthenticated, router]);
 
-  if (!mounted || !isAuthenticated) {
+  if (!mounted) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <Loader2 className="size-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
     return null;
   }
 
