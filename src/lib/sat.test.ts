@@ -34,9 +34,9 @@ describe("escapeXml", () => {
 describe("parseCfdiXml", () => {
   const sampleXml = `<?xml version="1.0" encoding="UTF-8"?>
 <cfdi:Comprobante xmlns:cfdi="http://www.sat.gob.mx/cfd/4.0"
-  Fecha="2026-01-15T10:30:00" Total="15000.50">
-  <cfdi:Emisor Rfc="ABC010101AAA" Nombre="Empresa Emisora"/>
-  <cfdi:Receptor Rfc="XYZ020202BBB" Nombre="Empresa Receptora"/>
+  Fecha="2026-01-15T10:30:00" Total="15000.50" SubTotal="13000.00" Descuento="500.00" TipoDeComprobante="I">
+  <cfdi:Emisor Rfc="ABC010101AAA" Nombre="Empresa Emisora" RegimenFiscal="601"/>
+  <cfdi:Receptor Rfc="XYZ020202BBB" Nombre="Empresa Receptora" UsoCFDI="G03"/>
   <cfdi:Complemento>
     <tfd:TimbreFiscalDigital UUID="A1B2C3D4-E5F6-7890-ABCD-EF1234567890"
       FechaTimbrado="2026-01-15T10:31:00"/>
@@ -92,6 +92,50 @@ describe("parseCfdiXml", () => {
     const xml = `<tfd:TimbreFiscalDigital uuid="lowercase-uuid-1234" />`;
     const result = parseCfdiXml(xml);
     expect(result.uuid).toBe("lowercase-uuid-1234");
+  });
+
+  // New tests for extended XML parser (#11)
+  it("extracts tipo_comprobante", () => {
+    const result = parseCfdiXml(sampleXml);
+    expect(result.tipoComprobante).toBe("I");
+  });
+
+  it("extracts nombre_emisor", () => {
+    const result = parseCfdiXml(sampleXml);
+    expect(result.nombreEmisor).toBe("Empresa Emisora");
+  });
+
+  it("extracts nombre_receptor", () => {
+    const result = parseCfdiXml(sampleXml);
+    expect(result.nombreReceptor).toBe("Empresa Receptora");
+  });
+
+  it("extracts regimen_fiscal", () => {
+    const result = parseCfdiXml(sampleXml);
+    expect(result.regimenFiscal).toBe("601");
+  });
+
+  it("extracts uso_cfdi", () => {
+    const result = parseCfdiXml(sampleXml);
+    expect(result.usoCfdi).toBe("G03");
+  });
+
+  it("extracts subtotal and descuento", () => {
+    const result = parseCfdiXml(sampleXml);
+    expect(result.subtotal).toBe(13000);
+    expect(result.descuento).toBe(500);
+  });
+
+  it("returns empty strings for missing extended fields", () => {
+    const xml = `<cfdi:Comprobante Total="100"><cfdi:Emisor Rfc="AAA010101AAA"/></cfdi:Comprobante>`;
+    const result = parseCfdiXml(xml);
+    expect(result.tipoComprobante).toBe("");
+    expect(result.nombreEmisor).toBe("");
+    expect(result.nombreReceptor).toBe("");
+    expect(result.regimenFiscal).toBe("");
+    expect(result.usoCfdi).toBe("");
+    expect(result.subtotal).toBe(0);
+    expect(result.descuento).toBe(0);
   });
 });
 
