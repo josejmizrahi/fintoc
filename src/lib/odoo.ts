@@ -77,6 +77,73 @@ export async function odooSearchRead(
   return (result.result as Record<string, unknown>[]) || [];
 }
 
+/**
+ * Create a record in Odoo.
+ * Returns the new record ID.
+ */
+export async function odooCreate(
+  url: string,
+  db: string,
+  uid: number,
+  password: string,
+  model: string,
+  data: Record<string, unknown>,
+): Promise<number> {
+  const result = await odooJsonRpc(
+    url, "object", "execute_kw",
+    [db, uid, password, model, "create", [data]],
+    30000,
+  );
+  if (result.error)
+    throw new Error(result.error.data?.message || result.error.message);
+  return result.result as number;
+}
+
+/**
+ * Execute a method on Odoo records (e.g. action_post, action_cancel).
+ * Returns the method result.
+ */
+export async function odooExecute(
+  url: string,
+  db: string,
+  uid: number,
+  password: string,
+  model: string,
+  method: string,
+  ids: number[],
+  kwargs?: Record<string, unknown>,
+): Promise<unknown> {
+  const args: unknown[] = [db, uid, password, model, method, [ids]];
+  if (kwargs) args.push(kwargs);
+  const result = await odooJsonRpc(url, "object", "execute_kw", args, 30000);
+  if (result.error)
+    throw new Error(result.error.data?.message || result.error.message);
+  return result.result;
+}
+
+/**
+ * Search for record IDs in Odoo.
+ * Returns array of IDs.
+ */
+export async function odooSearch(
+  url: string,
+  db: string,
+  uid: number,
+  password: string,
+  model: string,
+  domain: unknown[][],
+  limit = 10,
+): Promise<number[]> {
+  const result = await odooJsonRpc(
+    url, "object", "execute_kw",
+    [db, uid, password, model, "search", [domain], { limit }],
+    15000,
+  );
+  if (result.error)
+    throw new Error(result.error.data?.message || result.error.message);
+  return (result.result as number[]) || [];
+}
+
 export async function odooFetchAll(
   url: string,
   db: string,

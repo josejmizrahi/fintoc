@@ -66,11 +66,20 @@ export interface Payment {
   clabe_destination?: string;
   reference_id?: string;
   partner_name?: string;
+  partner_rfc?: string;
   fintoc_transfer_id?: string;
+  fintoc_payment_intent_id?: string;
   cfdi_uuid?: string;
   sat_status?: string;
   executed_at?: string;
   created_at?: string;
+  odoo_id?: number;
+  odoo_payment_id?: number;
+  complemento_emitido?: boolean;
+  complemento_uuid?: string;
+  jws_signed?: boolean;
+  bank_movement_id?: number;
+  source?: string;
 }
 
 export interface Invoice {
@@ -79,6 +88,7 @@ export interface Invoice {
   type?: string;
   partner_name?: string;
   partner?: string;
+  partner_rfc?: string;
   amount_total?: number;
   amount_residual?: number;
   date_invoice?: string;
@@ -86,6 +96,10 @@ export interface Invoice {
   status?: string;
   cfdi_uuid?: string;
   sat_status?: string;
+  payment_policy?: "PUE" | "PPD";
+  fintoc_institution_id?: string;
+  odoo_id?: number;
+  source?: string;
 }
 
 export interface Vendor {
@@ -94,6 +108,10 @@ export interface Vendor {
   rfc?: string;
   email?: string;
   clabe?: string;
+  clabe_verified?: boolean;
+  clabe_holder_name?: string;
+  odoo_id?: number;
+  source?: string;
 }
 
 export interface Customer {
@@ -102,6 +120,27 @@ export interface Customer {
   rfc?: string;
   email?: string;
   clabe?: string;
+  fintoc_account_number_id?: string;
+  fintoc_clabe?: string;
+  odoo_id?: number;
+  source?: string;
+}
+
+export interface BankMovement {
+  id: number;
+  company_id: number;
+  fintoc_id?: string;
+  amount: number;
+  currency: string;
+  description?: string;
+  post_date?: string;
+  type: "credit" | "debit";
+  reference_id?: string;
+  sender_account?: string;
+  counterpart_name?: string;
+  counterpart_account?: string;
+  fintoc_account_number_id?: string;
+  created_at?: string;
 }
 
 export interface Expense {
