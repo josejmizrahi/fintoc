@@ -1,23 +1,49 @@
 /**
  * Shared auth helpers for API routes
- * Extracts company_id from JWT — used by catch-all, onboarding, reconciliation routes
+ * Extracts company_id from JWT via Supabase Auth + user_companies table
  */
 
 import { NextRequest } from "next/server";
-import { verifyToken } from "@/lib/auth-server";
+import { getAdminClient } from "@/lib/supabase/admin";
 
 export async function getCompanyId(req: NextRequest): Promise<number | null> {
   const auth = req.headers.get("authorization");
   if (!auth?.startsWith("Bearer ")) return null;
-  const payload = await verifyToken(auth.slice(7));
-  return payload ? Number(payload.company_id) : null;
+  const token = auth.slice(7);
+
+  const admin = getAdminClient();
+  const { data: { user }, error } = await admin.auth.getUser(token);
+  if (error || !user) return null;
+
+  const { data: membership } = await admin
+    .from("user_companies")
+    .select("company_id")
+    .eq("user_id", user.id)
+    .eq("is_active", true)
+    .eq("status", "active")
+    .single();
+
+  return membership ? Number(membership.company_id) : null;
 }
 
 export async function getUserRole(req: NextRequest): Promise<string | null> {
   const auth = req.headers.get("authorization");
   if (!auth?.startsWith("Bearer ")) return null;
-  const payload = await verifyToken(auth.slice(7));
-  return payload?.role || null;
+  const token = auth.slice(7);
+
+  const admin = getAdminClient();
+  const { data: { user }, error } = await admin.auth.getUser(token);
+  if (error || !user) return null;
+
+  const { data: membership } = await admin
+    .from("user_companies")
+    .select("role")
+    .eq("user_id", user.id)
+    .eq("is_active", true)
+    .eq("status", "active")
+    .single();
+
+  return membership?.role || null;
 }
 
 /** Config masking — hide sensitive fields before sending to frontend */

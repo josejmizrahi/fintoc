@@ -1,9 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
 import { maskConfig, resolveConfig } from "./auth-helpers";
 
-// Mock the auth-server module since it's not needed for these tests
-vi.mock("./auth-server", () => ({
-  verifyToken: vi.fn(),
+// Mock the supabase admin module since it's not needed for these tests
+vi.mock("@/lib/supabase/admin", () => ({
+  getAdminClient: vi.fn(),
 }));
 
 describe("maskConfig", () => {
