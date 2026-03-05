@@ -58,21 +58,26 @@ export const POST = createHandler(async (req) => {
   const activeCompany = memberships.find(m => m.is_active);
   const company = activeCompany?.companies || (memberships[0] as Record<string, unknown>).companies;
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const companyObj = company as any;
+  const role = activeCompany?.role || (memberships[0] as Record<string, unknown>).role || 'admin';
+
   return Response.json({
-    data: {
-      user: {
-        id: userId,
-        email: authData.user.email,
-        full_name: authData.user.user_metadata?.full_name || '',
-      },
-      companies: memberships.map((m: Record<string, unknown>) => ({
-        ...(m.companies as Record<string, unknown> || {}),
-        role: m.role,
-        is_active: m.is_active,
-      })),
-      active_company: company,
-      access_token: authData.session.access_token,
-      refresh_token: authData.session.refresh_token,
+    user: {
+      id: userId,
+      email: authData.user.email,
+      full_name: authData.user.user_metadata?.full_name || '',
     },
+    company: companyObj ? { id: companyObj.id, name: companyObj.name, rfc: companyObj.rfc } : null,
+    tenant: companyObj ? { id: companyObj.id, name: companyObj.name, rfc: companyObj.rfc } : null,
+    role,
+    onboarding_completed: companyObj?.onboarding_completed ?? true,
+    companies: memberships.map((m: Record<string, unknown>) => ({
+      ...(m.companies as Record<string, unknown> || {}),
+      role: m.role,
+      is_active: m.is_active,
+    })),
+    access_token: authData.session.access_token,
+    refresh_token: authData.session.refresh_token,
   });
 }, { rateLimit: 'auth', public: true });

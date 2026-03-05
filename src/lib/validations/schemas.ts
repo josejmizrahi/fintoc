@@ -13,9 +13,9 @@ export const emailSchema = z.string().email().transform(v => v.toLowerCase());
 export const registerSchema = z.object({
   email: emailSchema,
   password: z.string().min(8).regex(/[A-Z]/, 'Debe contener al menos 1 mayuscula').regex(/\d/, 'Debe contener al menos 1 numero'),
-  full_name: z.string().min(2).max(100),
+  full_name: z.string().min(2).max(100).optional(),
   company_name: z.string().min(2).max(200),
-  company_rfc: rfcSchema,
+  rfc: rfcSchema,
 });
 
 export const loginSchema = z.object({
