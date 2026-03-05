@@ -1,210 +1,152 @@
-import { NextRequest, NextResponse } from "next/server";
-import { hasDB, query, update, insert } from "@/lib/db";
-import { validateSyntageWebhook } from "@/lib/syntage";
+import { getAdminClient } from '@/lib/supabase/admin';
 
-/**
- * Syntage Webhook Handler
- * Receives events from Syntage (sat.ws) for:
- * - credential.updated: FIEL/CIEC status change
- * - extraction.updated: Extraction job completed/failed
- * - invoice.created: New CFDI detected
- * - invoice.updated: CFDI status change (e.g. cancelled)
- *
- * Signature: HMAC-SHA256 in X-Syntage-Signature header ("t=<ts>,s=<sig>")
- * See: https://docs.syntage.com/webhooks
- */
-
-interface SyntageWebhookEvent {
-  id: string;
-  type: string;
-  data: Record<string, unknown>;
-  created_at?: string;
-}
-
-export async function POST(req: NextRequest) {
-  const rawBody = await req.text();
-  const signature = req.headers.get("x-syntage-signature") || "";
-
-  let event: SyntageWebhookEvent;
+export async function POST(req: Request): Promise<Response> {
   try {
-    event = JSON.parse(rawBody);
+    const webhookSecret = req.headers.get('x-webhook-secret') || '';
+    const expectedSecret = process.env.SYNTAGE_WEBHOOK_SECRET;
+
+    if (!expectedSecret || webhookSecret !== expectedSecret) {
+      return Response.json({ error: 'Invalid signature' }, { status: 401 });
+    }
+
+    const payload = await req.json() as {
+      type: string;
+      data: Record<string, unknown>;
+    };
+
+    const admin = getAdminClient();
+
+    const { data: webhookLog } = await admin.from('webhook_logs').insert({
+      provider: 'syntage', event_type: payload.type, payload, processed: false,
+    }).select().single();
+
+    try {
+      switch (payload.type) {
+        case 'credential.updated': {
+          const credentialId = payload.data.id as string;
+          const status = payload.data.status as string;
+
+          const { data: integration } = await admin.from('integrations')
+            .select('id, company_id').eq('syntage_credential_id', credentialId).single();
+
+          if (integration) {
+            await admin.from('integrations').update({
+              status: status === 'valid' ? 'valid' : 'invalid',
+              syntage_taxpayer_id: payload.data.taxpayer_id as string || null,
+            }).eq('id', integration.id);
+
+            const { data: admins } = await admin.from('user_companies')
+              .select('user_id').eq('company_id', integration.company_id).eq('role', 'admin');
+
+            for (const a of (admins || [])) {
+              await admin.from('notifications').insert({
+                company_id: integration.company_id, user_id: a.user_id,
+                event_type: 'sat.credential_valid',
+                title: status === 'valid' ? 'FIEL validada exitosamente' : 'Error al validar FIEL',
+                message: status === 'valid' ? 'Tu FIEL fue validada con el SAT' : 'Error al validar FIEL',
+                read: false,
+              });
+            }
+          }
+          break;
+        }
+
+        case 'extraction.updated': {
+          const extractionId = payload.data.id as string;
+          const status = payload.data.status as string;
+          await admin.from('syntage_extractions').update({
+            status, records_found: (payload.data.records_found as number) || null,
+            error_message: (payload.data.error as string) || null,
+            completed_at: ['completed', 'failed'].includes(status) ? new Date().toISOString() : null,
+          }).eq('syntage_extraction_id', extractionId);
+          break;
+        }
+
+        case 'invoice.created':
+        case 'invoice.updated': {
+          const uuid = ((payload.data.uuid as string) || '').toLowerCase();
+          if (uuid) {
+            const satStatus = (payload.data.status as string) === 'active' ? 'vigente' :
+                             (payload.data.status as string) === 'cancelled' ? 'cancelado' :
+                             (payload.data.status as string) || 'vigente';
+
+            const { data: integration } = await admin.from('integrations')
+              .select('company_id')
+              .eq('syntage_taxpayer_id', payload.data.taxpayer_id as string)
+              .eq('provider', 'syntage').single();
+
+            if (integration) {
+              // Check if invoice exists
+              const { data: existing } = await admin.from('invoices')
+                .select('id').eq('uuid', uuid).eq('company_id', integration.company_id).single();
+
+              if (existing) {
+                await admin.from('invoices').update({
+                  sat_status: satStatus,
+                  efos_status: (payload.data.efos_status as string) || null,
+                  cancellable: (payload.data.cancellable as boolean) || null,
+                  validated_at: new Date().toISOString(),
+                }).eq('id', existing.id);
+              } else {
+                await admin.from('invoices').insert({
+                  company_id: integration.company_id, uuid, sat_status: satStatus,
+                  efos_status: (payload.data.efos_status as string) || null,
+                  syntage_invoice_id: payload.data.id as string,
+                  source: 'sat',
+                  type: (payload.data.type as string) === 'egreso' ? 'out_invoice' : 'in_invoice',
+                  amount_total: (payload.data.total as number) || 0,
+                  amount_paid: 0, amount_residual: (payload.data.total as number) || 0,
+                  invoice_date: (payload.data.issued_at as string)?.split('T')[0] || new Date().toISOString().split('T')[0],
+                  issuer_rfc: payload.data.issuer_rfc as string || null,
+                  receiver_rfc: payload.data.receiver_rfc as string || null,
+                  validated_at: new Date().toISOString(),
+                });
+              }
+
+              // Check EFOS
+              if ((payload.data.efos_status as string) === 'definitivo') {
+                const issuerRfc = payload.data.issuer_rfc as string;
+                if (issuerRfc) {
+                  await admin.from('vendors').update({ efos_status: 'definitivo' })
+                    .eq('company_id', integration.company_id).eq('rfc', issuerRfc.toUpperCase());
+
+                  const { data: admins } = await admin.from('user_companies')
+                    .select('user_id').eq('company_id', integration.company_id).eq('role', 'admin');
+                  for (const a of (admins || [])) {
+                    await admin.from('notifications').insert({
+                      company_id: integration.company_id, user_id: a.user_id,
+                      event_type: 'vendor.efos_detected',
+                      title: 'Proveedor en lista EFOS',
+                      message: `RFC ${issuerRfc} detectado en lista EFOS definitiva`,
+                      read: false,
+                    });
+                  }
+                }
+              }
+            }
+          }
+          break;
+        }
+
+        case 'tax_status.updated':
+        case 'tax_compliance_check.created':
+          // Log only - already captured in webhook_logs
+          break;
+      }
+
+      if (webhookLog) {
+        await admin.from('webhook_logs').update({ processed: true }).eq('id', webhookLog.id);
+      }
+    } catch (err) {
+      if (webhookLog) {
+        await admin.from('webhook_logs').update({
+          error: err instanceof Error ? err.message : 'Processing error',
+        }).eq('id', webhookLog.id);
+      }
+    }
+
+    return Response.json({ received: true });
   } catch {
-    return NextResponse.json({ detail: "Invalid JSON" }, { status: 400 });
+    return Response.json({ error: 'Internal error' }, { status: 500 });
   }
-
-  if (!hasDB()) {
-    return NextResponse.json({ received: true, warning: "No DB configured" });
-  }
-
-  // Find Syntage integration to validate signature & identify company
-  const { data: integrations } = await query("integrations", {
-    match: { provider: "sat" },
-  });
-
-  let companyId: number | null = null;
-
-  for (const int of integrations || []) {
-    const config = int.config as Record<string, string> | null;
-    const webhookSecret = config?.syntageWebhookSecret;
-    if (webhookSecret) {
-      if (validateSyntageWebhook(rawBody, signature, webhookSecret)) {
-        companyId = int.company_id as number;
-        break;
-      }
-    }
-  }
-
-  // If no signature match but only one SAT integration, accept it
-  if (!companyId && integrations?.length === 1) {
-    companyId = integrations[0].company_id as number;
-  }
-
-  if (!companyId) {
-    return NextResponse.json({ received: true, warning: "Company not identified" });
-  }
-
-  // Log webhook event
-  try {
-    await insert("webhook_events", {
-      company_id: companyId,
-      provider: "syntage",
-      event_type: event.type,
-      event_id: event.id || null,
-      payload: event.data,
-    });
-  } catch { /* duplicate event_id */ }
-
-  try {
-    switch (event.type) {
-      // ── Credential status changes ──
-      case "credential.updated": {
-        const credentialId = event.data.id as string;
-        const status = event.data.status as string;
-        if (credentialId) {
-          // Update local integration config with credential status
-          const { data: ints } = await query("integrations", {
-            match: { provider: "sat", company_id: companyId },
-            single: true,
-          });
-          if (ints) {
-            const config = (ints.config || {}) as Record<string, unknown>;
-            await update(
-              "integrations",
-              {
-                config: {
-                  ...config,
-                  credentialStatus: status,
-                  credentialId,
-                  lastCredentialUpdate: new Date().toISOString(),
-                },
-                updated_at: new Date().toISOString(),
-              },
-              { provider: "sat", company_id: companyId },
-            );
-          }
-        }
-        break;
-      }
-
-      // ── Extraction completed/failed ──
-      case "extraction.updated": {
-        const extractionId = event.data.id as string;
-        const status = event.data.status as string;
-
-        // If extraction succeeded, trigger a sync to pull new data
-        if (status === "success" && extractionId) {
-          // Create a sync log entry so frontend shows activity
-          await insert("sync_logs", {
-            company_id: companyId,
-            provider: "sat",
-            sync_type: "webhook_extraction",
-            status: "success",
-            total_items: 0,
-            processed_items: 0,
-            details: {
-              extraction_id: extractionId,
-              extraction_status: status,
-              triggered_by: "webhook",
-            },
-            started_at: new Date().toISOString(),
-            completed_at: new Date().toISOString(),
-          });
-        }
-        break;
-      }
-
-      // ── New invoice detected ──
-      case "invoice.created": {
-        const invoiceUuid = event.data.uuid as string;
-        const rfc = event.data.rfc as string;
-
-        if (invoiceUuid) {
-          // Check if we already have this CFDI
-          const { data: existing } = await query("invoices", {
-            match: { uuid: invoiceUuid, company_id: companyId },
-            single: true,
-          });
-
-          if (!existing) {
-            // Insert basic record — full sync will fill in details
-            await insert("invoices", {
-              company_id: companyId,
-              uuid: invoiceUuid,
-              source: "syntage",
-              rfc_emisor: (event.data.issuer_rfc as string) || rfc || null,
-              rfc_receptor: (event.data.receiver_rfc as string) || null,
-              total: event.data.total != null ? Number(event.data.total) : null,
-              currency: (event.data.currency as string) || "MXN",
-              status: (event.data.sat_status as string) || "vigente",
-              type: (event.data.type as string) || "income",
-              issued_at: (event.data.issued_at as string) || new Date().toISOString(),
-              created_at: new Date().toISOString(),
-            });
-          }
-        }
-        break;
-      }
-
-      // ── Invoice status update (e.g. cancellation) ──
-      case "invoice.updated": {
-        const invoiceUuid = event.data.uuid as string;
-        const satStatus = event.data.sat_status as string;
-
-        if (invoiceUuid && satStatus) {
-          await update(
-            "invoices",
-            {
-              status: satStatus,
-              updated_at: new Date().toISOString(),
-            },
-            { uuid: invoiceUuid, company_id: companyId },
-          );
-        }
-        break;
-      }
-
-      default:
-        // Unknown event — already logged in webhook_events
-        break;
-    }
-
-    // Mark as processed
-    if (event.id) {
-      await update("webhook_events", { processed: true }, {
-        event_id: event.id,
-        company_id: companyId,
-      }).catch(() => {});
-    }
-  } catch (err) {
-    console.error("Syntage webhook processing error:", err);
-    if (event.id) {
-      await update("webhook_events", {
-        processed: false,
-        error_message: err instanceof Error ? err.message : "Processing error",
-      }, { event_id: event.id, company_id: companyId }).catch(() => {});
-    }
-    return NextResponse.json({ received: true, error: "Processing error" }, { status: 500 });
-  }
-
-  return NextResponse.json({ received: true, event_type: event.type });
 }

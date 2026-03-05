@@ -1,24 +1,44 @@
-import { NextRequest, NextResponse } from "next/server";
-import { verifyToken } from "@/lib/auth-server";
+import { createHandler } from '@/lib/middleware/route-handler';
+import { withAuth } from '@/lib/middleware/auth';
+import { getAdminClient } from '@/lib/supabase/admin';
 
-export async function GET(req: NextRequest) {
-  const auth = req.headers.get("authorization");
-  if (!auth?.startsWith("Bearer ")) {
-    return NextResponse.json({ detail: "No autenticado" }, { status: 401 });
-  }
+export const GET = createHandler(async (req) => {
+  return withAuth(async (_req, ctx) => {
+    const admin = getAdminClient();
 
-  const payload = await verifyToken(auth.slice(7));
-  if (!payload) {
-    return NextResponse.json({ detail: "Token inválido" }, { status: 401 });
-  }
+    // Get user details
+    const { data: user } = await admin.auth.admin.getUserById(ctx.user_id);
 
-  return NextResponse.json({
-    id: Number(payload.sub),
-    email: payload.email,
-    name: payload.name,
-    role: payload.role,
-    company_id: Number(payload.company_id),
-    company_name: payload.company_name,
-    company_rfc: payload.company_rfc,
-  });
-}
+    // Get all companies for this user
+    const { data: memberships } = await admin
+      .from('user_companies')
+      .select(`
+        company_id,
+        role,
+        is_active,
+        status,
+        companies:company_id (id, name, rfc, onboarding_completed)
+      `)
+      .eq('user_id', ctx.user_id)
+      .in('status', ['active', 'invited']);
+
+    const activeCompany = memberships?.find(m => m.is_active);
+
+    return Response.json({
+      data: {
+        id: ctx.user_id,
+        email: ctx.email,
+        full_name: user?.user?.user_metadata?.full_name || '',
+        companies: (memberships || []).map((m: Record<string, unknown>) => ({
+          ...(m.companies as Record<string, unknown> || {}),
+          role: m.role,
+          is_active: m.is_active,
+        })),
+        active_company: activeCompany
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          ? { ...((activeCompany.companies as any) || {}), role: activeCompany.role }
+          : null,
+      },
+    });
+  })(req, { params: Promise.resolve({}) });
+});
