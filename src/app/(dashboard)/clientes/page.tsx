@@ -12,6 +12,7 @@ import {
   ExternalLink,
   Loader2,
   Check,
+  Plus,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -28,9 +29,12 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 
 /* ---------- helpers ---------- */
@@ -225,6 +229,92 @@ function ClabeDialog({ open, onOpenChange, customer }: ClabeDialogProps) {
   );
 }
 
+/* ---------- Create Customer Dialog ---------- */
+
+interface CreateCustomerDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onSuccess: () => void;
+}
+
+function CreateCustomerDialog({ open, onOpenChange, onSuccess }: CreateCustomerDialogProps) {
+  const [name, setName] = useState("");
+  const [rfc, setRfc] = useState("");
+  const [email, setEmail] = useState("");
+  const [clabe, setClabe] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  function resetForm() {
+    setName("");
+    setRfc("");
+    setEmail("");
+    setClabe("");
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!name.trim()) {
+      toast.error("El nombre del cliente es requerido");
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.customers.create({
+        name: name.trim(),
+        rfc: rfc.trim() || undefined,
+        email: email.trim() || undefined,
+        clabe: clabe.trim() || undefined,
+      });
+      toast.success("Cliente creado exitosamente");
+      resetForm();
+      onOpenChange(false);
+      onSuccess();
+    } catch (err: any) {
+      toast.error(err.message || "Error al crear cliente");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Nuevo Cliente</DialogTitle>
+          <DialogDescription>
+            Ingresa los datos del cliente.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="grid gap-4 py-2">
+          <div className="grid gap-2">
+            <Label htmlFor="customer-name">Nombre *</Label>
+            <Input id="customer-name" placeholder="Nombre del cliente" value={name} onChange={(e) => setName(e.target.value)} />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="customer-rfc">RFC</Label>
+            <Input id="customer-rfc" placeholder="XAXX010101000" maxLength={13} value={rfc} onChange={(e) => setRfc(e.target.value.toUpperCase())} className="font-mono" />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="customer-email">Email</Label>
+            <Input id="customer-email" type="email" placeholder="cliente@empresa.com" value={email} onChange={(e) => setEmail(e.target.value)} />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="customer-clabe">CLABE (18 dígitos)</Label>
+            <Input id="customer-clabe" placeholder="000000000000000000" maxLength={18} value={clabe} onChange={(e) => setClabe(e.target.value.replace(/\D/g, "").slice(0, 18))} className="font-mono tracking-wider" />
+          </div>
+          <DialogFooter className="pt-2">
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancelar</Button>
+            <Button type="submit" disabled={saving || !name.trim()}>
+              {saving && <Loader2 className="mr-2 size-4 animate-spin" />}
+              Crear
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 /* ---------- Main Page ---------- */
 
 export default function ClientesPage() {
@@ -233,6 +323,9 @@ export default function ClientesPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [searching, setSearching] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Create dialog
+  const [createOpen, setCreateOpen] = useState(false);
 
   // Invoices dialog
   const [invoicesOpen, setInvoicesOpen] = useState(false);
@@ -319,6 +412,10 @@ export default function ClientesPage() {
             Consulta y busca clientes, sus facturas y CLABEs.
           </p>
         </div>
+        <Button onClick={() => setCreateOpen(true)}>
+          <Plus className="mr-2 size-4" />
+          Nuevo Cliente
+        </Button>
       </div>
 
       {/* Search bar */}
@@ -429,6 +526,13 @@ export default function ClientesPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Create Customer Dialog */}
+      <CreateCustomerDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        onSuccess={fetchCustomers}
+      />
 
       {/* Customer Invoices Dialog */}
       <CustomerInvoicesDialog

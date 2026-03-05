@@ -13,6 +13,7 @@ import {
   Check,
   Loader2,
   X,
+  Plus,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -29,6 +30,7 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -286,11 +288,100 @@ function VendorDetailDialog({
   );
 }
 
+/* ---------- Create Vendor Dialog ---------- */
+
+interface CreateVendorDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onSuccess: () => void;
+}
+
+function CreateVendorDialog({ open, onOpenChange, onSuccess }: CreateVendorDialogProps) {
+  const [name, setName] = useState("");
+  const [rfc, setRfc] = useState("");
+  const [email, setEmail] = useState("");
+  const [clabe, setClabe] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  function resetForm() {
+    setName("");
+    setRfc("");
+    setEmail("");
+    setClabe("");
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!name.trim()) {
+      toast.error("El nombre del proveedor es requerido");
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.vendors.create({
+        name: name.trim(),
+        rfc: rfc.trim() || undefined,
+        email: email.trim() || undefined,
+        clabe: clabe.trim() || undefined,
+      });
+      toast.success("Proveedor creado exitosamente");
+      resetForm();
+      onOpenChange(false);
+      onSuccess();
+    } catch (err: any) {
+      toast.error(err.message || "Error al crear proveedor");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Nuevo Proveedor</DialogTitle>
+          <DialogDescription>
+            Ingresa los datos del proveedor.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="grid gap-4 py-2">
+          <div className="grid gap-2">
+            <Label htmlFor="vendor-name">Nombre *</Label>
+            <Input id="vendor-name" placeholder="Nombre del proveedor" value={name} onChange={(e) => setName(e.target.value)} />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="vendor-rfc">RFC</Label>
+            <Input id="vendor-rfc" placeholder="XAXX010101000" maxLength={13} value={rfc} onChange={(e) => setRfc(e.target.value.toUpperCase())} className="font-mono" />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="vendor-email">Email</Label>
+            <Input id="vendor-email" type="email" placeholder="proveedor@empresa.com" value={email} onChange={(e) => setEmail(e.target.value)} />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="vendor-clabe">CLABE (18 dígitos)</Label>
+            <Input id="vendor-clabe" placeholder="000000000000000000" maxLength={18} value={clabe} onChange={(e) => setClabe(e.target.value.replace(/\D/g, "").slice(0, 18))} className="font-mono tracking-wider" />
+          </div>
+          <DialogFooter className="pt-2">
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancelar</Button>
+            <Button type="submit" disabled={saving || !name.trim()}>
+              {saving && <Loader2 className="mr-2 size-4 animate-spin" />}
+              Crear
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 /* ---------- Main Page ---------- */
 
 export default function ProveedoresPage() {
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Create dialog
+  const [createOpen, setCreateOpen] = useState(false);
 
   // Edit CLABE dialog
   const [editClabeOpen, setEditClabeOpen] = useState(false);
@@ -364,6 +455,10 @@ export default function ProveedoresPage() {
             Gestiona proveedores, CLABEs y facturas por pagar.
           </p>
         </div>
+        <Button onClick={() => setCreateOpen(true)}>
+          <Plus className="mr-2 size-4" />
+          Nuevo Proveedor
+        </Button>
       </div>
 
       {/* Vendors Table */}
@@ -465,6 +560,13 @@ export default function ProveedoresPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Create Vendor Dialog */}
+      <CreateVendorDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        onSuccess={fetchVendors}
+      />
 
       {/* Edit CLABE Dialog */}
       <EditClabeDialog

@@ -758,6 +758,34 @@ async function dbPost(path: string, body: unknown, companyId: number | null): Pr
       return data?.[0];
     }
 
+    // Vendors — create
+    if (path === "vendors" || path === "vendors/") {
+      const name = (b.name as string) || "";
+      if (!name.trim()) return NextResponse.json({ detail: "Nombre del proveedor requerido" }, { status: 400 });
+      const { data } = await insert("vendors", {
+        company_id: companyId, name: name.trim(),
+        rfc: (b.rfc as string)?.trim() || null,
+        email: (b.email as string)?.trim() || null,
+        clabe: (b.clabe as string)?.replace(/\D/g, "").slice(0, 18) || null,
+        is_active: true,
+      });
+      return data?.[0];
+    }
+
+    // Customers — create
+    if (path === "customers" || path === "customers/") {
+      const name = (b.name as string) || "";
+      if (!name.trim()) return NextResponse.json({ detail: "Nombre del cliente requerido" }, { status: 400 });
+      const { data } = await insert("customers", {
+        company_id: companyId, name: name.trim(),
+        rfc: (b.rfc as string)?.trim() || null,
+        email: (b.email as string)?.trim() || null,
+        clabe: (b.clabe as string)?.replace(/\D/g, "").slice(0, 18) || null,
+        is_active: true,
+      });
+      return data?.[0];
+    }
+
     // Vendor/Customer CLABE
     m = matchPath(path, "vendors/:id/clabe");
     if (m) {

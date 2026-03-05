@@ -112,6 +112,8 @@ export const api = {
   vendors: {
     list: () => request<any[]>("/api/vendors/"),
     get: (id: number) => request<any>(`/api/vendors/${id}`),
+    create: (data: { name: string; rfc?: string; email?: string; clabe?: string }) =>
+      request<any>("/api/vendors/", { method: "POST", body: JSON.stringify(data) }),
     clabe: (id: number) => request<any>(`/api/vendors/${id}/clabe`),
     setClabe: (id: number, clabe: string) => request<any>(`/api/vendors/${id}/clabe?clabe=${clabe}`, { method: "POST" }),
     verify: (id: number) => request<any>(`/api/vendors/${id}/verify-clabe`, { method: "POST" }),
@@ -123,6 +125,8 @@ export const api = {
     list: () => request<any[]>("/api/customers/"),
     search: (q: string) => request<any[]>(`/api/customers/search?q=${q}`),
     get: (id: number) => request<any>(`/api/customers/${id}`),
+    create: (data: { name: string; rfc?: string; email?: string; clabe?: string }) =>
+      request<any>("/api/customers/", { method: "POST", body: JSON.stringify(data) }),
     clabe: (id: number) => request<any>(`/api/customers/${id}/clabe`),
     invoices: (id: number) => request<any[]>(`/api/customers/${id}/invoices`),
   },
