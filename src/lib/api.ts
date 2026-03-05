@@ -42,11 +42,6 @@ export function setAuthInvalidationHandler(handler: (reason: string) => void) {
 }
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
-  // Fail fast if no token is available (don't even make the request)
-  if (typeof window !== 'undefined' && !localStorage.getItem('token')) {
-    throw new ApiError(401, 'No hay token de autenticacion');
-  }
-
   const res = await fetch(`${API_BASE}${url}`, {
     ...options,
     headers: { ...getAuthHeaders(), ...options?.headers },
