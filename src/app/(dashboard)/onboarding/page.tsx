@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useAuthStore } from "@/lib/store";
@@ -17,13 +17,14 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { FintocWidget } from "@/components/fintoc-widget";
+import { SyncStatus } from "@/components/sync-status";
 
 // ── Types ──
 
 interface StepConfig {
   odoo: { url: string; database: string; user: string; password: string };
   fintoc: { secretKey: string; publicKey: string; webhookSecret: string; linkToken: string; accountId: string };
-  sat: { rfcEmisor: string };
+  sat: { rfcEmisor: string; keyPassword: string };
 }
 
 interface IntegrationStatus {
@@ -31,6 +32,8 @@ interface IntegrationStatus {
   last_sync_at: string | null;
   last_sync_status: string | null;
   last_sync_message: string | null;
+  cert_uploaded_at?: string | null;
+  config?: Record<string, string>;
 }
 
 // ── API helper ──
@@ -41,6 +44,11 @@ function authHeaders() {
     "Content-Type": "application/json",
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
   };
+}
+
+function authHeadersNoContentType(): Record<string, string> {
+  const token = localStorage.getItem("token");
+  return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
 async function onboardingApi(method: "GET" | "POST", body?: unknown) {
@@ -57,30 +65,44 @@ async function onboardingApi(method: "GET" | "POST", body?: unknown) {
 const STEPS = [
   { key: "odoo" as const, title: "Odoo ERP", desc: "Conecta tu ERP para sincronizar clientes, proveedores y facturas." },
   { key: "fintoc" as const, title: "Fintoc / Banco", desc: "Configura pagos SPEI y consulta de movimientos bancarios." },
-  { key: "sat" as const, title: "SAT", desc: "Configura tu RFC para validacion de CFDI." },
+  { key: "sat" as const, title: "SAT", desc: "Configura tu RFC y certificados CSD para validacion de CFDI." },
 ];
 
 export default function OnboardingPage() {
   const router = useRouter();
   const tenantName = useAuthStore((s) => s.tenantName);
   const [step, setStep] = useState(0);
-  const [loading, setLoading] = useState<"test" | "sync" | "save" | null>(null);
+  const [loading, setLoading] = useState<"test" | "sync" | "save" | "upload" | null>(null);
   const [statuses, setStatuses] = useState<Record<string, IntegrationStatus | null>>({
     odoo: null, fintoc: null, sat: null,
   });
+  const [syncLogId, setSyncLogId] = useState<number | undefined>();
 
   const [config, setConfig] = useState<StepConfig>({
     odoo: { url: "", database: "", user: "", password: "" },
     fintoc: { secretKey: "", publicKey: "", webhookSecret: "", linkToken: "", accountId: "" },
-    sat: { rfcEmisor: "" },
+    sat: { rfcEmisor: "", keyPassword: "" },
   });
+
+  // SAT file upload state
+  const [satCerFile, setSatCerFile] = useState<File | null>(null);
+  const [satKeyFile, setSatKeyFile] = useState<File | null>(null);
+  const [satCerName, setSatCerName] = useState<string>("");
+  const [satKeyName, setSatKeyName] = useState<string>("");
+  const cerInputRef = useRef<HTMLInputElement>(null);
+  const keyInputRef = useRef<HTMLInputElement>(null);
 
   // Load existing status on mount
   useEffect(() => {
     onboardingApi("GET").then((data) => {
-      if (data.integrations) setStatuses(data.integrations);
-      if (data.onboarding_completed) {
-        // Already completed, but let them revisit
+      if (data.integrations) {
+        setStatuses(data.integrations);
+        // Load SAT certificate file names
+        const satIntegration = data.integrations.sat as IntegrationStatus | null;
+        if (satIntegration?.config) {
+          if (satIntegration.config.certFileName) setSatCerName(satIntegration.config.certFileName);
+          if (satIntegration.config.keyFileName) setSatKeyName(satIntegration.config.keyFileName);
+        }
       }
     }).catch(() => {});
   }, []);
@@ -144,12 +166,14 @@ export default function OnboardingPage() {
 
   async function handleSync() {
     setLoading("sync");
+    setSyncLogId(undefined);
     try {
       const res = await onboardingApi("POST", {
         action: "sync",
         provider: currentStep.key,
         config: config[currentStep.key],
       });
+      if (res.sync_log_id) setSyncLogId(res.sync_log_id);
       if (res.success) {
         toast.success(res.message || "Sincronizacion exitosa");
         if (res.synced) {
@@ -173,6 +197,44 @@ export default function OnboardingPage() {
       }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Error en sincronizacion");
+    }
+    setLoading(null);
+  }
+
+  async function handleUploadSatFiles() {
+    if (!satCerFile && !satKeyFile) {
+      toast.error("Selecciona al menos un archivo (.cer o .key)");
+      return;
+    }
+
+    setLoading("upload");
+    try {
+      const formData = new FormData();
+      if (satCerFile) formData.append("cer", satCerFile);
+      if (satKeyFile) formData.append("key", satKeyFile);
+      if (config.sat.keyPassword) formData.append("keyPassword", config.sat.keyPassword);
+      if (config.sat.rfcEmisor) formData.append("rfcEmisor", config.sat.rfcEmisor);
+
+      const res = await fetch("/api/sat/upload", {
+        method: "POST",
+        headers: authHeadersNoContentType(),
+        body: formData,
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        toast.success(data.message || "Archivos subidos exitosamente");
+        if (data.files?.cer) setSatCerName(data.files.cer.name);
+        if (data.files?.key) setSatKeyName(data.files.key.name);
+        setSatCerFile(null);
+        setSatKeyFile(null);
+        if (cerInputRef.current) cerInputRef.current.value = "";
+        if (keyInputRef.current) keyInputRef.current.value = "";
+      } else {
+        toast.error(data.message || data.detail || "Error al subir archivos");
+      }
+    } catch {
+      toast.error("Error de conexion al subir archivos");
     }
     setLoading(null);
   }
@@ -329,15 +391,110 @@ export default function OnboardingPage() {
 
           {/* SAT fields */}
           {currentStep.key === "sat" && (
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-2 sm:col-span-2">
-                <Label>RFC Emisor</Label>
-                <Input
-                  placeholder="XAXX010101000"
-                  value={config.sat.rfcEmisor}
-                  onChange={(e) => updateField("sat", "rfcEmisor", e.target.value.toUpperCase())}
-                  maxLength={13}
-                />
+            <div className="space-y-6">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label>RFC Emisor</Label>
+                  <Input
+                    placeholder="XAXX010101000"
+                    value={config.sat.rfcEmisor}
+                    onChange={(e) => updateField("sat", "rfcEmisor", e.target.value.toUpperCase())}
+                    maxLength={13}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Contrasena de llave privada</Label>
+                  <Input
+                    type="password"
+                    placeholder="••••••••"
+                    value={config.sat.keyPassword}
+                    onChange={(e) => updateField("sat", "keyPassword", e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <Separator />
+
+              <div>
+                <p className="text-sm font-medium mb-3">Certificados de Sello Digital (CSD)</p>
+                <p className="text-xs text-muted-foreground mb-4">
+                  Sube tus archivos .cer y .key del SAT para firmar y validar CFDIs.
+                </p>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="onb-sat-cer">Certificado (.cer)</Label>
+                    <Input
+                      ref={cerInputRef}
+                      id="onb-sat-cer"
+                      type="file"
+                      accept=".cer"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          if (!file.name.toLowerCase().endsWith(".cer")) {
+                            toast.error("Solo se aceptan archivos .cer");
+                            e.target.value = "";
+                            return;
+                          }
+                          setSatCerFile(file);
+                        }
+                      }}
+                    />
+                    {satCerName && !satCerFile && (
+                      <p className="text-xs text-muted-foreground flex items-center gap-1">
+                        <span className="inline-block w-2 h-2 rounded-full bg-green-500" />
+                        Cargado: {satCerName}
+                      </p>
+                    )}
+                    {satCerFile && (
+                      <p className="text-xs text-blue-600">
+                        Seleccionado: {satCerFile.name} ({(satCerFile.size / 1024).toFixed(1)} KB)
+                      </p>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="onb-sat-key">Llave privada (.key)</Label>
+                    <Input
+                      ref={keyInputRef}
+                      id="onb-sat-key"
+                      type="file"
+                      accept=".key"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          if (!file.name.toLowerCase().endsWith(".key")) {
+                            toast.error("Solo se aceptan archivos .key");
+                            e.target.value = "";
+                            return;
+                          }
+                          setSatKeyFile(file);
+                        }
+                      }}
+                    />
+                    {satKeyName && !satKeyFile && (
+                      <p className="text-xs text-muted-foreground flex items-center gap-1">
+                        <span className="inline-block w-2 h-2 rounded-full bg-green-500" />
+                        Cargado: {satKeyName}
+                      </p>
+                    )}
+                    {satKeyFile && (
+                      <p className="text-xs text-blue-600">
+                        Seleccionado: {satKeyFile.name} ({(satKeyFile.size / 1024).toFixed(1)} KB)
+                      </p>
+                    )}
+                  </div>
+                </div>
+                {(satCerFile || satKeyFile) && (
+                  <div className="mt-3">
+                    <Button
+                      variant="outline"
+                      onClick={handleUploadSatFiles}
+                      disabled={loading !== null}
+                    >
+                      {loading === "upload" ? "Subiendo..." : "Subir certificados"}
+                    </Button>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -353,6 +510,15 @@ export default function OnboardingPage() {
                 )}
               </p>
             </>
+          )}
+
+          {/* Sync Status */}
+          {(loading === "sync" || syncLogId) && (
+            <SyncStatus
+              provider={currentStep.key}
+              syncLogId={syncLogId}
+              isRunning={loading === "sync"}
+            />
           )}
 
           <Separator />
@@ -384,6 +550,16 @@ export default function OnboardingPage() {
                 disabled={loading !== null}
               >
                 {loading === "sync" ? "Sincronizando..." : "Sincronizar cuentas"}
+              </Button>
+            )}
+
+            {currentStep.key === "sat" && isConnected && (
+              <Button
+                variant="outline"
+                onClick={handleSync}
+                disabled={loading !== null}
+              >
+                {loading === "sync" ? "Validando CFDIs..." : "Revalidar CFDIs"}
               </Button>
             )}
 

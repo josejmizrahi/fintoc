@@ -5,6 +5,37 @@ import { odooJsonRpc, odooAuthenticate, odooFetchAll } from "@/lib/odoo";
 import { fintocGet } from "@/lib/fintoc";
 import { validateCfdiAgainstSat, testSatReachability } from "@/lib/sat";
 
+// ── Sync log helpers ──
+
+async function createSyncLog(companyId: number, provider: string, syncType: string, totalItems = 0) {
+  const { data } = await insert("sync_logs", {
+    company_id: companyId,
+    provider,
+    sync_type: syncType,
+    status: "running",
+    total_items: totalItems,
+    processed_items: 0,
+    started_at: new Date().toISOString(),
+  });
+  return data?.[0]?.id as number | undefined;
+}
+
+async function updateSyncLog(logId: number | undefined, fields: Record<string, unknown>) {
+  if (!logId) return;
+  await update("sync_logs", fields, { id: logId }).catch(() => {});
+}
+
+async function completeSyncLog(logId: number | undefined, status: string, processed: number, details: Record<string, unknown>, errorMessage?: string) {
+  if (!logId) return;
+  await update("sync_logs", {
+    status,
+    processed_items: processed,
+    details,
+    error_message: errorMessage || null,
+    completed_at: new Date().toISOString(),
+  }, { id: logId }).catch(() => {});
+}
+
 // ── GET /api/onboarding — integration status + masked configs ──
 
 export async function GET(req: NextRequest) {
@@ -21,12 +52,20 @@ export async function GET(req: NextRequest) {
   const { data: integrations } = await query("integrations", { match: { company_id: companyId } });
   const map: Record<string, unknown> = { odoo: null, fintoc: null, sat: null };
   for (const i of integrations || []) {
+    const cfg = maskConfig(i.config as Record<string, string> | null);
+    // Include cert file info if present
+    if (i.provider === "sat" && cfg) {
+      const rawCfg = i.config as Record<string, string> | null;
+      if (rawCfg?.certFileName) cfg.certFileName = rawCfg.certFileName;
+      if (rawCfg?.keyFileName) cfg.keyFileName = rawCfg.keyFileName;
+    }
     map[i.provider as string] = {
       is_connected: i.is_connected,
       last_sync_at: i.last_sync_at,
       last_sync_status: i.last_sync_status,
       last_sync_message: i.last_sync_message,
-      config: maskConfig(i.config as Record<string, string> | null),
+      cert_uploaded_at: i.cert_uploaded_at,
+      config: cfg,
     };
   }
 
@@ -111,7 +150,7 @@ async function testOdoo(companyId: number, config: Record<string, string>) {
   }
 }
 
-// ── Odoo: Full sync ──
+// ── Odoo: Full sync (with sync_logs tracking) ──
 
 async function syncOdoo(companyId: number, config: Record<string, string>) {
   const { url, database, user, password } = config;
@@ -119,14 +158,18 @@ async function syncOdoo(companyId: number, config: Record<string, string>) {
     return NextResponse.json({ success: false, message: "Configuracion de Odoo incompleta" });
   }
 
+  const logId = await createSyncLog(companyId, "odoo", "full");
   const errors: string[] = [];
+
   try {
     const uid = await odooAuthenticate(url, database, user, password);
     let syncedCustomers = 0, syncedVendors = 0, syncedInvoices = 0, updatedInvoices = 0, syncedPayments = 0;
+    let totalProcessed = 0;
 
     // Customers
     try {
       const customers = await odooFetchAll(url, database, uid, password, "res.partner", [["customer_rank", ">", 0]], ["id", "name", "vat", "email"]);
+      await updateSyncLog(logId, { total_items: customers.length, details: { phase: "customers", total_fetched: customers.length } });
       for (const c of customers) {
         if (!c.name) continue;
         const rfc = (c.vat as string) || null;
@@ -137,7 +180,9 @@ async function syncOdoo(companyId: number, config: Record<string, string>) {
           await insert("customers", { company_id: companyId, name: c.name, rfc, email: (c.email as string) || null });
           syncedCustomers++;
         }
+        totalProcessed++;
       }
+      await updateSyncLog(logId, { processed_items: totalProcessed, details: { phase: "vendors", customers: syncedCustomers } });
     } catch (e) { errors.push(`Clientes: ${e instanceof Error ? e.message : "error"}`); }
 
     // Vendors
@@ -153,7 +198,9 @@ async function syncOdoo(companyId: number, config: Record<string, string>) {
           await insert("vendors", { company_id: companyId, name: v.name, rfc, email: (v.email as string) || null });
           syncedVendors++;
         }
+        totalProcessed++;
       }
+      await updateSyncLog(logId, { processed_items: totalProcessed, details: { phase: "invoices", customers: syncedCustomers, vendors: syncedVendors } });
     } catch (e) { errors.push(`Proveedores: ${e instanceof Error ? e.message : "error"}`); }
 
     // Invoices
@@ -196,7 +243,9 @@ async function syncOdoo(companyId: number, config: Record<string, string>) {
           }, { id: (existing as Record<string, unknown>).id });
           updatedInvoices++;
         }
+        totalProcessed++;
       }
+      await updateSyncLog(logId, { processed_items: totalProcessed, details: { phase: "payments", customers: syncedCustomers, vendors: syncedVendors, invoices: syncedInvoices, updated: updatedInvoices } });
     } catch (e) { errors.push(`Facturas: ${e instanceof Error ? e.message : "error"}`); }
 
     // Payments
@@ -217,24 +266,33 @@ async function syncOdoo(companyId: number, config: Record<string, string>) {
           });
           syncedPayments++;
         }
+        totalProcessed++;
       }
     } catch (e) { errors.push(`Pagos: ${e instanceof Error ? e.message : "error"}`); }
 
     const syncMsg = `Clientes: +${syncedCustomers}, Proveedores: +${syncedVendors}, Facturas: +${syncedInvoices} (${updatedInvoices} act.), Pagos: +${syncedPayments}${errors.length ? ` | Errores: ${errors.join("; ")}` : ""}`;
+    const status = errors.length ? "partial" : "success";
+
     await update("integrations", {
       is_connected: true, last_sync_at: new Date().toISOString(),
-      last_sync_status: errors.length ? "partial" : "success", last_sync_message: syncMsg, updated_at: new Date().toISOString(),
+      last_sync_status: status, last_sync_message: syncMsg, updated_at: new Date().toISOString(),
     }, { company_id: companyId, provider: "odoo" });
+
+    await completeSyncLog(logId, status, totalProcessed, {
+      customers: syncedCustomers, vendors: syncedVendors, invoices: syncedInvoices, updated: updatedInvoices, payments: syncedPayments,
+    }, errors.length ? errors.join("; ") : undefined);
 
     return NextResponse.json({
       success: true, message: "Sincronizacion completada",
       synced: { customers: syncedCustomers, vendors: syncedVendors, invoices: syncedInvoices, updated: updatedInvoices, payments: syncedPayments },
+      sync_log_id: logId,
       errors: errors.length ? errors : undefined,
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Error desconocido";
     await update("integrations", { last_sync_status: "error", last_sync_message: msg, last_sync_at: new Date().toISOString(), updated_at: new Date().toISOString() }, { company_id: companyId, provider: "odoo" }).catch(() => {});
-    return NextResponse.json({ success: false, message: `Error en sincronizacion: ${msg}` });
+    await completeSyncLog(logId, "error", 0, {}, msg);
+    return NextResponse.json({ success: false, message: `Error en sincronizacion: ${msg}`, sync_log_id: logId });
   }
 }
 
@@ -261,7 +319,7 @@ async function testFintoc(companyId: number, config: Record<string, string>) {
   }
 }
 
-// ── Fintoc: Full sync ──
+// ── Fintoc: Full sync (with sync_logs tracking) ──
 
 async function syncFintoc(companyId: number, config: Record<string, string>) {
   const { secretKey, linkToken } = config;
@@ -269,13 +327,16 @@ async function syncFintoc(companyId: number, config: Record<string, string>) {
     return NextResponse.json({ success: false, message: "Falta la Secret Key de Fintoc" });
   }
 
+  const logId = await createSyncLog(companyId, "fintoc", "full");
   const errors: string[] = [];
   let totalAccounts = 0, totalMovements = 0, newPayments = 0, totalInvoices = 0;
+  let totalProcessed = 0;
   const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
 
   try {
     const accounts = await fintocGet("/accounts", secretKey) as Array<Record<string, unknown>>;
     totalAccounts = Array.isArray(accounts) ? accounts.length : 0;
+    await updateSyncLog(logId, { details: { phase: "movements", accounts: totalAccounts } });
 
     for (const account of (Array.isArray(accounts) ? accounts : [])) {
       const accountId = account.id as string;
@@ -300,13 +361,16 @@ async function syncFintoc(companyId: number, config: Record<string, string>) {
             });
             newPayments++;
           }
+          totalProcessed++;
         }
+        await updateSyncLog(logId, { processed_items: totalProcessed, total_items: totalMovements, details: { phase: "movements", accounts: totalAccounts, movements: totalMovements, new_payments: newPayments } });
       } catch { errors.push(`Movimientos cuenta ${accountId}: error`); }
     }
 
     // Fiscal invoices
     if (linkToken) {
       try {
+        await updateSyncLog(logId, { details: { phase: "invoices", accounts: totalAccounts, movements: totalMovements, new_payments: newPayments } });
         const invoices = await fintocGet("/invoices", secretKey, { link_token: linkToken }) as Array<Record<string, unknown>>;
         if (Array.isArray(invoices)) {
           totalInvoices = invoices.length;
@@ -328,26 +392,35 @@ async function syncFintoc(companyId: number, config: Record<string, string>) {
                 date_invoice: (inv.date as string) || null, status: "open", cfdi_uuid: cfdiUuid, source: "fintoc_fiscal",
               });
             }
+            totalProcessed++;
           }
         }
       } catch (e) { errors.push(`Facturas fiscales: ${e instanceof Error ? e.message : "error"}`); }
     }
 
     const syncMsg = `${totalAccounts} cuentas, ${totalMovements} movimientos (${newPayments} nuevos)${totalInvoices > 0 ? `, ${totalInvoices} facturas fiscales` : ""}${errors.length ? ` | ${errors.join("; ")}` : ""}`;
+    const status = errors.length ? "partial" : "success";
+
     await update("integrations", {
       is_connected: true, last_sync_at: new Date().toISOString(),
-      last_sync_status: errors.length ? "partial" : "success", last_sync_message: syncMsg, updated_at: new Date().toISOString(),
+      last_sync_status: status, last_sync_message: syncMsg, updated_at: new Date().toISOString(),
     }, { company_id: companyId, provider: "fintoc" });
+
+    await completeSyncLog(logId, status, totalProcessed, {
+      accounts: totalAccounts, movements: totalMovements, new_payments: newPayments, invoices: totalInvoices,
+    }, errors.length ? errors.join("; ") : undefined);
 
     return NextResponse.json({
       success: true, message: "Sincronizacion de Fintoc completada",
       synced: { accounts: totalAccounts, movements: totalMovements, new_payments: newPayments, invoices: totalInvoices },
+      sync_log_id: logId,
       errors: errors.length ? errors : undefined,
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Error desconocido";
     await update("integrations", { last_sync_status: "error", last_sync_message: msg, last_sync_at: new Date().toISOString(), updated_at: new Date().toISOString() }, { company_id: companyId, provider: "fintoc" }).catch(() => {});
-    return NextResponse.json({ success: false, message: `Error: ${msg}` });
+    await completeSyncLog(logId, "error", 0, {}, msg);
+    return NextResponse.json({ success: false, message: `Error: ${msg}`, sync_log_id: logId });
   }
 }
 
@@ -360,20 +433,33 @@ async function testSat(companyId: number, config: Record<string, string>) {
   const rfcRegex = /^[A-Z&Ñ]{3,4}\d{6}[A-Z0-9]{3}$/;
   if (!rfcRegex.test(rfcEmisor)) return NextResponse.json({ success: false, message: "Formato de RFC invalido" });
 
+  // Check if certificates are uploaded
+  const { data: existing } = await query("integrations", { match: { company_id: companyId, provider: "sat" }, single: true });
+  const cfg = (existing?.config as Record<string, string>) || {};
+  const hasCert = !!cfg.certBase64;
+  const hasKey = !!cfg.keyBase64;
+
   const reachable = await testSatReachability(rfcEmisor);
+  const certInfo = hasCert && hasKey ? " | Certificados: cargados" : hasCert ? " | Solo .cer cargado" : hasKey ? " | Solo .key cargado" : " | Sin certificados";
+
   await update("integrations", {
     is_connected: true, last_sync_status: reachable ? "configured" : "warning",
-    last_sync_message: reachable ? `RFC: ${rfcEmisor} — Servicio SAT verificado` : `RFC: ${rfcEmisor} — SAT no responde`,
+    last_sync_message: reachable
+      ? `RFC: ${rfcEmisor} — Servicio SAT verificado${certInfo}`
+      : `RFC: ${rfcEmisor} — SAT no responde${certInfo}`,
     updated_at: new Date().toISOString(),
   }, { company_id: companyId, provider: "sat" }).catch(() => {});
 
   return NextResponse.json({
     success: true,
-    message: reachable ? `RFC ${rfcEmisor} configurado — servicio SAT verificado` : `RFC ${rfcEmisor} configurado — SAT temporalmente no disponible`,
+    message: reachable
+      ? `RFC ${rfcEmisor} configurado — servicio SAT verificado${certInfo}`
+      : `RFC ${rfcEmisor} configurado — SAT temporalmente no disponible${certInfo}`,
+    certificates: { cer: hasCert, key: hasKey },
   });
 }
 
-// ── SAT: Sync ──
+// ── SAT: Sync (with sync_logs tracking) ──
 
 async function syncSat(companyId: number, config: Record<string, string>) {
   const { rfcEmisor } = config;
@@ -382,6 +468,8 @@ async function syncSat(companyId: number, config: Record<string, string>) {
   try {
     const { data: invoices } = await query("invoices", { match: { company_id: companyId } });
     const withCfdi = (invoices || []).filter((inv: Record<string, unknown>) => inv.cfdi_uuid);
+
+    const logId = await createSyncLog(companyId, "sat", "revalidate", withCfdi.length);
     let validated = 0, vigentes = 0, cancelados = 0, errorsCount = 0;
 
     for (const inv of withCfdi) {
@@ -394,15 +482,31 @@ async function syncSat(companyId: number, config: Record<string, string>) {
         if (satStatus === "Vigente") vigentes++;
         else if (satStatus === "Cancelado") cancelados++;
       } catch { errorsCount++; }
+
+      // Update progress after each validation
+      await updateSyncLog(logId, {
+        processed_items: validated + errorsCount,
+        details: { validated, vigentes, cancelados, errors: errorsCount },
+      });
     }
 
     const syncMsg = `${validated} validados: ${vigentes} vigentes, ${cancelados} cancelados${errorsCount > 0 ? `, ${errorsCount} errores` : ""}`;
+    const status = errorsCount > 0 ? "partial" : "success";
+
     await update("integrations", {
       is_connected: true, last_sync_at: new Date().toISOString(),
-      last_sync_status: "success", last_sync_message: syncMsg, updated_at: new Date().toISOString(),
+      last_sync_status: status, last_sync_message: syncMsg, updated_at: new Date().toISOString(),
     }, { company_id: companyId, provider: "sat" });
 
-    return NextResponse.json({ success: true, message: `Validacion SAT completada: ${syncMsg}`, validated, vigentes, cancelados, errors: errorsCount });
+    await completeSyncLog(logId, status, validated + errorsCount, {
+      total_cfdis: withCfdi.length, validated, vigentes, cancelados, errors: errorsCount,
+    }, errorsCount > 0 ? `${errorsCount} errores de validacion` : undefined);
+
+    return NextResponse.json({
+      success: true, message: `Validacion SAT completada: ${syncMsg}`,
+      validated, vigentes, cancelados, errors: errorsCount,
+      sync_log_id: logId,
+    });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Error desconocido";
     return NextResponse.json({ success: false, message: `Error en validacion SAT: ${msg}` });
