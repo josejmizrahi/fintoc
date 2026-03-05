@@ -324,6 +324,7 @@ function IntegrationCard({
   provider,
   isConnected,
   lastSync,
+  onEdit,
   onTest,
   onSync,
   onDisconnect,
@@ -334,6 +335,7 @@ function IntegrationCard({
   provider: string;
   isConnected: boolean;
   lastSync?: string;
+  onEdit: () => void;
   onTest: () => void;
   onSync: () => void;
   onDisconnect: () => void;
@@ -362,6 +364,14 @@ function IntegrationCard({
           <Button
             variant="outline"
             size="sm"
+            onClick={onEdit}
+          >
+            <Settings className="size-3.5 mr-1" />
+            {isConnected ? "Editar" : "Configurar"}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
             onClick={onTest}
             disabled={isTesting || isSyncing}
           >
@@ -376,7 +386,7 @@ function IntegrationCard({
             variant="outline"
             size="sm"
             onClick={onSync}
-            disabled={isTesting || isSyncing}
+            disabled={isTesting || isSyncing || !isConnected}
           >
             {isSyncing ? (
               <Loader2 className="size-3.5 animate-spin mr-1" />
@@ -385,18 +395,288 @@ function IntegrationCard({
             )}
             Sincronizar
           </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onDisconnect}
-            disabled={isTesting || isSyncing}
-          >
-            <Unplug className="size-3.5 mr-1" />
-            Desconectar
-          </Button>
+          {isConnected && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onDisconnect}
+              disabled={isTesting || isSyncing}
+              className="text-destructive hover:text-destructive"
+            >
+              <Unplug className="size-3.5 mr-1" />
+              Desconectar
+            </Button>
+          )}
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+/* ---------- Edit Integration Dialogs ---------- */
+
+function OdooEditDialog({
+  open,
+  onOpenChange,
+  onSaved,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  onSaved: () => void;
+}) {
+  const form = useForm({
+    defaultValues: { url: "", database: "", user: "", apiKey: "" },
+  });
+
+  const saveMutation = useMutation({
+    mutationFn: (data: Record<string, string>) =>
+      api.onboarding.save("odoo", data),
+    onSuccess: () => {
+      toast.success("Credenciales de Odoo guardadas");
+      onSaved();
+      onOpenChange(false);
+    },
+    onError: (err: Error) => toast.error(err.message || "Error al guardar"),
+  });
+
+  const testMutation = useMutation({
+    mutationFn: (data: Record<string, string>) =>
+      api.onboarding.test("odoo", data),
+    onSuccess: (data) => {
+      if (data.success) toast.success(data.message || "Conexion exitosa");
+      else toast.error(data.message || "Error de conexion");
+    },
+    onError: () => toast.error("Error de conexion"),
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Configurar Odoo</DialogTitle>
+          <DialogDescription>
+            Ingresa las credenciales de tu instancia Odoo.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-4 py-2">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label>URL *</Label>
+              <Input placeholder="https://mi-empresa.odoo.com" {...form.register("url")} />
+            </div>
+            <div className="space-y-2">
+              <Label>Base de datos *</Label>
+              <Input placeholder="mi_empresa_db" {...form.register("database")} />
+            </div>
+            <div className="space-y-2">
+              <Label>Usuario *</Label>
+              <Input placeholder="admin@empresa.com" {...form.register("user")} />
+            </div>
+            <div className="space-y-2">
+              <Label>API Key *</Label>
+              <Input type="password" placeholder="••••••••" {...form.register("apiKey")} />
+            </div>
+          </div>
+        </div>
+        <DialogFooter className="gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            disabled={testMutation.isPending}
+            onClick={() => {
+              const v = form.getValues();
+              testMutation.mutate({ url: v.url, database: v.database, user: v.user, password: v.apiKey });
+            }}
+          >
+            {testMutation.isPending && <Loader2 className="size-4 animate-spin mr-2" />}
+            Probar
+          </Button>
+          <Button
+            disabled={saveMutation.isPending}
+            onClick={() => {
+              const v = form.getValues();
+              saveMutation.mutate({ url: v.url, database: v.database, user: v.user, password: v.apiKey });
+            }}
+          >
+            {saveMutation.isPending && <Loader2 className="size-4 animate-spin mr-2" />}
+            Guardar
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function FintocEditDialog({
+  open,
+  onOpenChange,
+  onSaved,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  onSaved: () => void;
+}) {
+  const form = useForm({
+    defaultValues: { secretKey: "" },
+  });
+
+  const saveMutation = useMutation({
+    mutationFn: (data: Record<string, string>) =>
+      api.onboarding.save("fintoc", data),
+    onSuccess: () => {
+      toast.success("Credenciales de Fintoc guardadas");
+      onSaved();
+      onOpenChange(false);
+    },
+    onError: (err: Error) => toast.error(err.message || "Error al guardar"),
+  });
+
+  const testMutation = useMutation({
+    mutationFn: (data: Record<string, string>) =>
+      api.onboarding.test("fintoc", data),
+    onSuccess: (data) => {
+      if (data.success) toast.success(data.message || "Conexion exitosa");
+      else toast.error(data.message || "Error de conexion");
+    },
+    onError: () => toast.error("Error de conexion"),
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Configurar Fintoc</DialogTitle>
+          <DialogDescription>
+            Ingresa tu Secret Key de Fintoc para pagos SPEI y movimientos bancarios.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-4 py-2">
+          <div className="space-y-2">
+            <Label>Secret Key *</Label>
+            <Input type="password" placeholder="sk_live_..." {...form.register("secretKey")} />
+          </div>
+        </div>
+        <DialogFooter className="gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            disabled={testMutation.isPending}
+            onClick={() => testMutation.mutate(form.getValues())}
+          >
+            {testMutation.isPending && <Loader2 className="size-4 animate-spin mr-2" />}
+            Probar
+          </Button>
+          <Button
+            disabled={saveMutation.isPending}
+            onClick={() => saveMutation.mutate(form.getValues())}
+          >
+            {saveMutation.isPending && <Loader2 className="size-4 animate-spin mr-2" />}
+            Guardar
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function SatEditDialog({
+  open,
+  onOpenChange,
+  onSaved,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  onSaved: () => void;
+}) {
+  const form = useForm({
+    defaultValues: { syntageApiKey: "", rfcEmisor: "" },
+  });
+
+  const saveMutation = useMutation({
+    mutationFn: async (data: Record<string, string>) => {
+      // Save Syntage API key via dedicated endpoint
+      await api.sat.syntage.saveConfig({ syntageApiKey: data.syntageApiKey });
+      // Save RFC via onboarding save
+      await api.onboarding.save("sat", data);
+    },
+    onSuccess: () => {
+      toast.success("Configuracion SAT/Syntage guardada");
+      onSaved();
+      onOpenChange(false);
+    },
+    onError: (err: Error) => toast.error(err.message || "Error al guardar"),
+  });
+
+  const testMutation = useMutation({
+    mutationFn: () => api.sat.syntage.status(),
+    onSuccess: (data: any) => {
+      if (data.ok) toast.success(`Syntage conectado — ${data.taxpayers} contribuyentes, ${data.credentials} credenciales`);
+      else toast.error(data.error || "Error de conexion con Syntage");
+    },
+    onError: () => toast.error("Error de conexion con Syntage"),
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Configurar SAT via Syntage</DialogTitle>
+          <DialogDescription>
+            Syntage se conecta al SAT para descargar CFDIs, declaraciones y mas.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-4 py-2">
+          <div className="space-y-2">
+            <Label>API Key de Syntage *</Label>
+            <Input type="password" placeholder="sk_live_..." {...form.register("syntageApiKey")} />
+            <p className="text-xs text-muted-foreground">
+              Obten tu API Key en{" "}
+              <a href="https://app.syntage.com" target="_blank" rel="noopener" className="underline">
+                app.syntage.com
+              </a>
+            </p>
+          </div>
+          <div className="space-y-2">
+            <Label>RFC</Label>
+            <Input
+              placeholder="XAXX010101000"
+              maxLength={13}
+              {...form.register("rfcEmisor", {
+                onChange: (e) => { e.target.value = e.target.value.toUpperCase(); },
+              })}
+            />
+          </div>
+        </div>
+        <DialogFooter className="gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            disabled={testMutation.isPending}
+            onClick={() => {
+              // First save, then test
+              const v = form.getValues();
+              if (v.syntageApiKey) {
+                api.sat.syntage.saveConfig({ syntageApiKey: v.syntageApiKey })
+                  .then(() => testMutation.mutate())
+                  .catch(() => testMutation.mutate());
+              } else {
+                toast.error("Ingresa una API Key primero");
+              }
+            }}
+          >
+            {testMutation.isPending && <Loader2 className="size-4 animate-spin mr-2" />}
+            Probar
+          </Button>
+          <Button
+            disabled={saveMutation.isPending}
+            onClick={() => saveMutation.mutate(form.getValues())}
+          >
+            {saveMutation.isPending && <Loader2 className="size-4 animate-spin mr-2" />}
+            Guardar
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -410,6 +690,8 @@ export default function ConfiguracionPage() {
     provider: string;
     action: "test" | "sync";
   } | null>(null);
+  const [editingProvider, setEditingProvider] = useState<string | null>(null);
+  const [disconnectProvider, setDisconnectProvider] = useState<string | null>(null);
 
   /* ----- Queries ----- */
 
@@ -493,6 +775,20 @@ export default function ConfiguracionPage() {
     onError: () => {
       toast.error("Error de sincronizacion");
       setIntegrationAction(null);
+    },
+  });
+
+  const disconnectMutation = useMutation({
+    mutationFn: (provider: string) =>
+      api.onboarding.save(provider, { _disconnect: "true" }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: configKeys.integrations() });
+      toast.success("Integracion desconectada");
+      setDisconnectProvider(null);
+    },
+    onError: (err: Error) => {
+      toast.error(err.message || "Error al desconectar");
+      setDisconnectProvider(null);
     },
   });
 
@@ -730,6 +1026,7 @@ export default function ConfiguracionPage() {
                       ? formatRelative(integrations.odoo.last_sync_at)
                       : undefined
                   }
+                  onEdit={() => setEditingProvider("odoo")}
                   onTest={() => {
                     setIntegrationAction({ provider: "odoo", action: "test" });
                     testMutation.mutate("odoo");
@@ -738,9 +1035,7 @@ export default function ConfiguracionPage() {
                     setIntegrationAction({ provider: "odoo", action: "sync" });
                     syncMutation.mutate("odoo");
                   }}
-                  onDisconnect={() =>
-                    toast.info("Desconectar desde la pagina de onboarding")
-                  }
+                  onDisconnect={() => setDisconnectProvider("odoo")}
                   isTesting={
                     integrationAction?.provider === "odoo" &&
                     integrationAction?.action === "test" &&
@@ -761,23 +1056,16 @@ export default function ConfiguracionPage() {
                       ? formatRelative(integrations.fintoc.last_sync_at)
                       : undefined
                   }
+                  onEdit={() => setEditingProvider("fintoc")}
                   onTest={() => {
-                    setIntegrationAction({
-                      provider: "fintoc",
-                      action: "test",
-                    });
+                    setIntegrationAction({ provider: "fintoc", action: "test" });
                     testMutation.mutate("fintoc");
                   }}
                   onSync={() => {
-                    setIntegrationAction({
-                      provider: "fintoc",
-                      action: "sync",
-                    });
+                    setIntegrationAction({ provider: "fintoc", action: "sync" });
                     syncMutation.mutate("fintoc");
                   }}
-                  onDisconnect={() =>
-                    toast.info("Desconectar desde la pagina de onboarding")
-                  }
+                  onDisconnect={() => setDisconnectProvider("fintoc")}
                   isTesting={
                     integrationAction?.provider === "fintoc" &&
                     integrationAction?.action === "test" &&
@@ -790,7 +1078,7 @@ export default function ConfiguracionPage() {
                   }
                 />
                 <IntegrationCard
-                  name="SAT"
+                  name="SAT / Syntage"
                   provider="sat"
                   isConnected={integrations.sat?.is_connected === true}
                   lastSync={
@@ -798,6 +1086,7 @@ export default function ConfiguracionPage() {
                       ? formatRelative(integrations.sat.last_sync_at)
                       : undefined
                   }
+                  onEdit={() => setEditingProvider("sat")}
                   onTest={() => {
                     setIntegrationAction({ provider: "sat", action: "test" });
                     testMutation.mutate("sat");
@@ -806,9 +1095,7 @@ export default function ConfiguracionPage() {
                     setIntegrationAction({ provider: "sat", action: "sync" });
                     syncMutation.mutate("sat");
                   }}
-                  onDisconnect={() =>
-                    toast.info("Desconectar desde la pagina de onboarding")
-                  }
+                  onDisconnect={() => setDisconnectProvider("sat")}
                   isTesting={
                     integrationAction?.provider === "sat" &&
                     integrationAction?.action === "test" &&
@@ -1094,6 +1381,39 @@ export default function ConfiguracionPage() {
             if (deactivateId) deactivateMutation.mutate(deactivateId);
           }}
           loading={deactivateMutation.isPending}
+        />
+
+        {/* Disconnect Confirm */}
+        <ConfirmDialog
+          open={!!disconnectProvider}
+          onOpenChange={(open) => {
+            if (!open) setDisconnectProvider(null);
+          }}
+          title="Desconectar Integracion"
+          description={`Se eliminaran las credenciales de ${disconnectProvider === "odoo" ? "Odoo" : disconnectProvider === "fintoc" ? "Fintoc" : "SAT/Syntage"}. Los datos sincronizados se conservan.`}
+          confirmLabel="Desconectar"
+          variant="destructive"
+          onConfirm={() => {
+            if (disconnectProvider) disconnectMutation.mutate(disconnectProvider);
+          }}
+          loading={disconnectMutation.isPending}
+        />
+
+        {/* Edit Integration Dialogs */}
+        <OdooEditDialog
+          open={editingProvider === "odoo"}
+          onOpenChange={(open) => { if (!open) setEditingProvider(null); }}
+          onSaved={() => queryClient.invalidateQueries({ queryKey: configKeys.integrations() })}
+        />
+        <FintocEditDialog
+          open={editingProvider === "fintoc"}
+          onOpenChange={(open) => { if (!open) setEditingProvider(null); }}
+          onSaved={() => queryClient.invalidateQueries({ queryKey: configKeys.integrations() })}
+        />
+        <SatEditDialog
+          open={editingProvider === "sat"}
+          onOpenChange={(open) => { if (!open) setEditingProvider(null); }}
+          onSaved={() => queryClient.invalidateQueries({ queryKey: configKeys.integrations() })}
         />
       </div>
     </PermissionGate>
