@@ -96,7 +96,25 @@ export interface Invoice {
   status?: string;
   cfdi_uuid?: string;
   sat_status?: string;
+  sat_validated?: boolean;
   payment_policy?: "PUE" | "PPD";
+  tipo_comprobante?: string;
+  metodo_pago?: string;
+  forma_pago?: string;
+  moneda?: string;
+  tipo_cambio?: number;
+  uso_cfdi?: string;
+  emisor_nombre?: string;
+  receptor_nombre?: string;
+  emisor_regimen?: string;
+  receptor_regimen?: string;
+  es_cancelable?: string;
+  estatus_cancelacion?: string;
+  efos_status?: string;
+  xml_storage_path?: string;
+  sat_last_check?: string;
+  descuento?: number;
+  lugar_expedicion?: string;
   fintoc_institution_id?: string;
   odoo_id?: number;
   source?: string;
@@ -110,6 +128,10 @@ export interface Vendor {
   clabe?: string;
   clabe_verified?: boolean;
   clabe_holder_name?: string;
+  rfc_validated?: boolean;
+  rfc_validated_at?: string;
+  efos_status?: string;
+  efos_checked_at?: string;
   odoo_id?: number;
   source?: string;
 }
@@ -122,8 +144,86 @@ export interface Customer {
   clabe?: string;
   fintoc_account_number_id?: string;
   fintoc_clabe?: string;
+  rfc_validated?: boolean;
+  rfc_validated_at?: string;
   odoo_id?: number;
   source?: string;
+}
+
+export interface CfdiDocument {
+  id: number;
+  company_id: number;
+  uuid: string;
+  invoice_id?: number;
+  tipo_comprobante?: string;
+  rfc_emisor?: string;
+  nombre_emisor?: string;
+  rfc_receptor?: string;
+  nombre_receptor?: string;
+  total?: number;
+  subtotal?: number;
+  moneda?: string;
+  tipo_cambio?: number;
+  forma_pago?: string;
+  metodo_pago?: string;
+  uso_cfdi?: string;
+  lugar_expedicion?: string;
+  descuento?: number;
+  emisor_regimen?: string;
+  receptor_regimen?: string;
+  sat_status?: string;
+  efos_status?: string;
+  is_cancelable?: string;
+  cancellation_status?: string;
+  fecha_emision?: string;
+  fecha_timbrado?: string;
+  sat_last_check?: string;
+  conceptos?: unknown[];
+  impuestos_trasladados?: number;
+  impuestos_retenidos?: number;
+  complemento_pago?: unknown;
+  complemento_nomina?: unknown;
+  xml_storage_path?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface SatDownloadRequest {
+  id: number;
+  company_id: number;
+  request_id?: string;
+  request_type: "emitidos" | "recibidos";
+  solicitud_type: "CFDI" | "Metadata";
+  fecha_inicio: string;
+  fecha_fin: string;
+  rfc_emisor?: string;
+  rfc_receptor?: string;
+  tipo_comprobante?: string;
+  estado_comprobante?: string;
+  status: string;
+  num_cfdis?: number;
+  num_packages?: number;
+  packages_downloaded?: number;
+  error_message?: string;
+  sat_message?: string;
+  created_at?: string;
+  completed_at?: string;
+}
+
+export interface SatCancellationRequest {
+  id: number;
+  company_id: number;
+  cfdi_uuid: string;
+  invoice_id?: number;
+  motivo: string;
+  uuid_sustitucion?: string;
+  status: string;
+  requires_acceptance?: boolean;
+  acceptance_deadline?: string;
+  error_message?: string;
+  requested_by?: string;
+  created_at?: string;
+  resolved_at?: string;
 }
 
 export interface BankMovement {

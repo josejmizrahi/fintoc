@@ -178,10 +178,26 @@ export const api = {
   // SAT
   sat: {
     validate: (data: any) => request<any>("/api/sat/validate", { method: "POST", body: JSON.stringify(data) }),
+    validateFull: (data: any) => request<any>("/api/sat/validate/full", { method: "POST", body: JSON.stringify(data) }),
     validateBulk: (data: any) => request<any>("/api/sat/validate/bulk", { method: "POST", body: JSON.stringify(data) }),
     uploadXml: (data: any) => request<any>("/api/sat/upload-xml", { method: "POST", body: JSON.stringify(data) }),
     documents: () => request<any[]>("/api/sat/documents"),
     revalidateAll: () => request<any>("/api/sat/revalidate-all", { method: "POST" }),
+    // EFOS / Risk
+    efosRisk: () => request<any>("/api/sat/efos-risk"),
+    // RFC Validation
+    validateRfc: (data: any) => request<any>("/api/sat/validate-rfc", { method: "POST", body: JSON.stringify(data) }),
+    validateRfcBulk: (data: any) => request<any>("/api/sat/validate-rfc/bulk", { method: "POST", body: JSON.stringify(data) }),
+    // Descarga Masiva
+    descargaSolicitud: (data: any) => request<any>("/api/sat/descarga/solicitud", { method: "POST", body: JSON.stringify(data) }),
+    descargaVerificar: (data: any) => request<any>("/api/sat/descarga/verificar", { method: "POST", body: JSON.stringify(data) }),
+    descargaDescargar: (data: any) => request<any>("/api/sat/descarga/descargar", { method: "POST", body: JSON.stringify(data) }),
+    descargaRequests: () => request<any[]>("/api/sat/descarga/requests"),
+    // Cancellation
+    cancelar: (data: any) => request<any>("/api/sat/cancelar", { method: "POST", body: JSON.stringify(data) }),
+    cancelaciones: () => request<any[]>("/api/sat/cancelaciones"),
+    aceptarCancelacion: (data: any) => request<any>("/api/sat/cancelacion/aceptar", { method: "POST", body: JSON.stringify(data) }),
+    rechazarCancelacion: (data: any) => request<any>("/api/sat/cancelacion/rechazar", { method: "POST", body: JSON.stringify(data) }),
   },
 
   // Reports
