@@ -13,7 +13,6 @@ import {
   Loader2,
   ArrowRight,
   ArrowLeft,
-  Upload,
   Landmark,
   ShieldCheck,
   Server,
@@ -32,11 +31,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 
-import { StatusBadge } from "@/components/shared/status-badge";
-import { EmptyState } from "@/components/shared/empty-state";
-
 import { api } from "@/lib/api";
-import { formatDate } from "@/lib/utils/format";
 
 /* ---------- Step definitions ---------- */
 
@@ -56,7 +51,7 @@ const STEPS = [
   {
     key: "sat" as const,
     title: "Conectar SAT",
-    description: "Configura tu RFC y certificados CSD para validacion de CFDI.",
+    description: "Conecta con el SAT via Syntage para descargar CFDIs, declaraciones y mas.",
     icon: ShieldCheck,
   },
 ];
@@ -75,11 +70,12 @@ const fintocSchema = z.object({
 });
 
 const satSchema = z.object({
+  syntageApiKey: z.string().min(1, "API Key de Syntage requerida"),
   rfcEmisor: z
     .string()
     .min(12, "RFC debe tener entre 12 y 13 caracteres")
     .max(13, "RFC debe tener entre 12 y 13 caracteres"),
-  keyPassword: z.string().min(1, "Contrasena requerida"),
+  fielPassword: z.string().min(1, "Contrasena de FIEL requerida"),
 });
 
 type OdooForm = z.infer<typeof odooSchema>;
@@ -190,7 +186,7 @@ export default function OnboardingPage() {
 
   const satForm = useForm<SatForm>({
     resolver: zodResolver(satSchema),
-    defaultValues: { rfcEmisor: "", keyPassword: "" },
+    defaultValues: { syntageApiKey: "", rfcEmisor: "", fielPassword: "" },
   });
 
   /* ----- Test Connection Mutation ----- */
@@ -270,11 +266,18 @@ export default function OnboardingPage() {
     const valid = await satForm.trigger();
     if (!valid) return;
     const values = satForm.getValues();
+
+    // First save Syntage API key, then test connection via Syntage
+    try {
+      await api.sat.syntage.saveConfig({ syntageApiKey: values.syntageApiKey });
+    } catch { /* will fail on test if key is bad */ }
+
     testConnection.mutate({
       provider: "sat",
       config: {
+        syntageApiKey: values.syntageApiKey,
         rfcEmisor: values.rfcEmisor,
-        keyPassword: values.keyPassword,
+        fielPassword: values.fielPassword,
       },
     });
   }
@@ -314,8 +317,9 @@ export default function OnboardingPage() {
       await saveMutation.mutateAsync({
         provider: "sat",
         config: {
+          syntageApiKey: satValues.syntageApiKey,
           rfcEmisor: satValues.rfcEmisor,
-          keyPassword: satValues.keyPassword,
+          fielPassword: satValues.fielPassword,
         },
       });
 
@@ -460,35 +464,62 @@ export default function OnboardingPage() {
             </div>
           )}
 
-          {/* Step 3: SAT */}
+          {/* Step 3: SAT via Syntage */}
           {currentStep.key === "sat" && (
             <div className="space-y-6">
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-2 sm:col-span-2">
-                  <Label htmlFor="sat-rfc">RFC Emisor *</Label>
-                  <Input
-                    id="sat-rfc"
-                    placeholder="XAXX010101000"
-                    maxLength={13}
-                    {...satForm.register("rfcEmisor", {
-                      onChange: (e) => {
-                        e.target.value = e.target.value.toUpperCase();
-                      },
-                    })}
-                  />
-                  {satForm.formState.errors.rfcEmisor && (
-                    <p className="text-xs text-destructive">
-                      {satForm.formState.errors.rfcEmisor.message}
-                    </p>
-                  )}
-                </div>
+              <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
+                Se usa <strong>Syntage</strong> (api.syntage.com) como intermediario.
+                Sube tu FIEL y Syntage se encarga de validarla contra el SAT.
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="sat-syntage-key">API Key de Syntage *</Label>
+                <Input
+                  id="sat-syntage-key"
+                  type="password"
+                  placeholder="sk_live_..."
+                  {...satForm.register("syntageApiKey")}
+                />
+                {satForm.formState.errors.syntageApiKey && (
+                  <p className="text-xs text-destructive">
+                    {satForm.formState.errors.syntageApiKey.message}
+                  </p>
+                )}
+                <p className="text-xs text-muted-foreground">
+                  Obten tu API Key en{" "}
+                  <a href="https://app.syntage.com" target="_blank" rel="noopener" className="underline">
+                    app.syntage.com
+                  </a>
+                </p>
               </div>
 
               <Separator />
 
+              <div className="space-y-2">
+                <Label htmlFor="sat-rfc">RFC *</Label>
+                <Input
+                  id="sat-rfc"
+                  placeholder="XAXX010101000"
+                  maxLength={13}
+                  {...satForm.register("rfcEmisor", {
+                    onChange: (e) => {
+                      e.target.value = e.target.value.toUpperCase();
+                    },
+                  })}
+                />
+                {satForm.formState.errors.rfcEmisor && (
+                  <p className="text-xs text-destructive">
+                    {satForm.formState.errors.rfcEmisor.message}
+                  </p>
+                )}
+              </div>
+
               <div>
                 <p className="text-sm font-medium mb-3">
-                  Certificados de Sello Digital (CSD)
+                  e.FIRMA (FIEL)
+                </p>
+                <p className="text-xs text-muted-foreground mb-3">
+                  Syntage usa tu FIEL para conectarse al SAT de forma segura. Los archivos se envian directamente a Syntage.
                 </p>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="space-y-2">
@@ -541,34 +572,31 @@ export default function OnboardingPage() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="sat-password">Contrasena de llave privada *</Label>
+                <Label htmlFor="sat-password">Contrasena de FIEL *</Label>
                 <Input
                   id="sat-password"
                   type="password"
                   placeholder="••••••••"
-                  {...satForm.register("keyPassword")}
+                  {...satForm.register("fielPassword")}
                 />
-                {satForm.formState.errors.keyPassword && (
+                {satForm.formState.errors.fielPassword && (
                   <p className="text-xs text-destructive">
-                    {satForm.formState.errors.keyPassword.message}
+                    {satForm.formState.errors.fielPassword.message}
                   </p>
                 )}
               </div>
 
               {isConnected && testResult && (
-                <div className="rounded-lg border p-4 space-y-2">
-                  <p className="text-sm font-medium">Certificado validado:</p>
+                <div className="rounded-lg border border-green-200 bg-green-50 p-4 space-y-2">
+                  <p className="text-sm font-medium text-green-800">Syntage conectado</p>
                   {testResult.rfc && (
                     <div className="flex items-center gap-2 text-sm">
                       <span className="text-muted-foreground">RFC:</span>
                       <span className="font-mono">{testResult.rfc}</span>
                     </div>
                   )}
-                  {testResult.vigencia && (
-                    <div className="flex items-center gap-2 text-sm">
-                      <span className="text-muted-foreground">Vigencia:</span>
-                      <span>{testResult.vigencia}</span>
-                    </div>
+                  {testResult.message && (
+                    <p className="text-xs text-green-700">{testResult.message}</p>
                   )}
                 </div>
               )}

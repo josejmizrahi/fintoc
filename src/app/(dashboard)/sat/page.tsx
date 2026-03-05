@@ -1,33 +1,33 @@
 "use client";
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { type ColumnDef } from "@tanstack/react-table";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { type z } from "zod";
 import { toast } from "sonner";
 import {
-  Search,
+  ScrollText,
   FileText,
-  Upload,
+  Download,
+  RefreshCw,
+  Loader2,
   CheckCircle2,
   XCircle,
   AlertTriangle,
-  ShieldAlert,
   Shield,
-  Loader2,
-  Download,
-  RefreshCw,
-  Link as LinkIcon,
+  ShieldAlert,
+  Clock,
   Eye,
+  FileDown,
+  Play,
+  Square,
+  Calendar,
+  Building2,
+  Search,
 } from "lucide-react";
 
 import { api } from "@/lib/api";
 import { formatMoney, formatDate } from "@/lib/utils/format";
-import { satValidateSchema } from "@/lib/utils/validation";
 import { TIPO_COMPROBANTE } from "@/lib/sat";
-import type { CfdiDocument } from "@/types";
 
 import { DataTable } from "@/components/shared/data-table";
 import { EmptyState } from "@/components/shared/empty-state";
@@ -46,7 +46,6 @@ import {
   CardDescription,
 } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
-import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import {
   Dialog,
@@ -56,14 +55,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from "@/components/ui/form";
 import {
   Select,
   SelectContent,
@@ -82,1136 +73,1076 @@ import {
 /* Types                                                               */
 /* ------------------------------------------------------------------ */
 
-type SatValidateInput = z.infer<typeof satValidateSchema>;
-
-interface ValidationResult {
-  estado?: string;
-  esCancelable?: string;
-  estatusCancelacion?: string;
-  fechaTimbrado?: string;
-  efosStatus?: string;
-  efosCode?: string;
-  hasEfosIssue?: boolean;
-  isValid?: boolean;
-}
-
-interface BulkValidationResult {
+interface SyntageInvoice {
+  id: string;
   uuid: string;
-  emisor?: string;
-  estado_anterior?: string;
-  estado_nuevo?: string;
-  efos_status?: string;
-  changed?: boolean;
+  type: string;
+  status: string;
+  issuer: { rfc: string; name: string; fiscalRegime?: string };
+  receiver: { rfc: string; name: string; cfdiUse?: string };
+  total: number;
+  subtotal: number;
+  currency: string;
+  paymentMethod?: string;
+  paymentForm?: string;
+  issuedAt: string;
+  certifiedAt: string;
+  cancelledAt?: string;
+  blacklistStatus?: string;
+}
+
+interface SyntageExtraction {
+  id: string;
+  status: string;
+  extractor: string;
+  taxpayer: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface SyntageTaxpayer {
+  id: string;
+  rfc: string;
+  name?: string;
 }
 
 /* ------------------------------------------------------------------ */
-/* Semaforo helper: green / yellow / red                               */
+/* Helpers                                                             */
 /* ------------------------------------------------------------------ */
 
-type SemaforoColor = "green" | "yellow" | "red";
+const TIPO_LABELS: Record<string, string> = {
+  I: "Ingreso",
+  E: "Egreso",
+  P: "Pago",
+  N: "Nomina",
+  T: "Traslado",
+  ...TIPO_COMPROBANTE,
+};
 
-function getSemaforoColor(result: ValidationResult): SemaforoColor {
-  const estado = result.estado?.toLowerCase() ?? "";
-  const efos = result.efosStatus?.toLowerCase() ?? "";
-
-  if (estado === "cancelado") return "red";
-  if (efos === "definitive" || efos === "definitivo" || efos === "203")
-    return "red";
-  if (efos === "presumed" || efos === "201") return "yellow";
-  if (estado === "vigente") return "green";
-  return "yellow";
+function cfdiTypeBadge(type: string) {
+  const colors: Record<string, string> = {
+    I: "bg-green-100 text-green-800",
+    E: "bg-red-100 text-red-800",
+    P: "bg-blue-100 text-blue-800",
+    N: "bg-purple-100 text-purple-800",
+    T: "bg-gray-100 text-gray-800",
+  };
+  return (
+    <Badge variant="outline" className={colors[type] || "bg-gray-100 text-gray-800"}>
+      {TIPO_LABELS[type] || type}
+    </Badge>
+  );
 }
 
-const SEMAFORO_STYLES: Record<SemaforoColor, string> = {
-  green:
-    "border-green-300 bg-green-50 dark:border-green-800 dark:bg-green-950",
-  yellow:
-    "border-yellow-300 bg-yellow-50 dark:border-yellow-800 dark:bg-yellow-950",
-  red: "border-red-300 bg-red-50 dark:border-red-800 dark:bg-red-950",
-};
-
-const SEMAFORO_RING: Record<SemaforoColor, string> = {
-  green: "ring-green-500",
-  yellow: "ring-yellow-500",
-  red: "ring-red-500",
-};
-
-const SEMAFORO_BG: Record<SemaforoColor, string> = {
-  green: "bg-green-500",
-  yellow: "bg-yellow-500",
-  red: "bg-red-500",
-};
-
-/* ------------------------------------------------------------------ */
-/* SAT Status Badge                                                    */
-/* ------------------------------------------------------------------ */
-
-function SatStatusBadge({ status }: { status?: string }) {
-  const s = status?.toLowerCase() ?? "";
-  if (s === "vigente")
-    return (
-      <Badge className="bg-green-600 hover:bg-green-700 text-white">
-        Vigente
-      </Badge>
-    );
-  if (s === "cancelado") return <Badge variant="destructive">Cancelado</Badge>;
-  if (s === "no encontrado")
-    return (
-      <Badge className="bg-yellow-500 hover:bg-yellow-600 text-white">
-        No encontrado
-      </Badge>
-    );
-  return <Badge variant="outline">{status || "Desconocido"}</Badge>;
-}
-
-/* ------------------------------------------------------------------ */
-/* EFOS Badge                                                          */
-/* ------------------------------------------------------------------ */
-
-function EfosBadge({ status }: { status?: string }) {
-  if (!status || status === "unknown")
-    return <Badge variant="outline">Sin verificar</Badge>;
-  if (status === "clean" || status === "200")
-    return (
-      <Badge className="bg-green-600 text-white">
-        <Shield className="mr-1 size-3" />
-        Limpio
-      </Badge>
-    );
-  if (status === "presumed" || status === "201")
-    return (
-      <Badge className="bg-yellow-500 text-white">
-        <ShieldAlert className="mr-1 size-3" />
-        Presunto
-      </Badge>
-    );
-  if (status === "definitive" || status === "definitivo" || status === "203")
-    return (
-      <Badge variant="destructive">
-        <ShieldAlert className="mr-1 size-3" />
-        Definitivo
-      </Badge>
-    );
-  if (status === "disproved" || status === "202")
-    return <Badge className="bg-blue-600 text-white">Desvirtuado</Badge>;
-  if (status === "favorable" || status === "204")
-    return <Badge className="bg-blue-600 text-white">Favorable</Badge>;
+function satStatusBadge(status: string) {
+  if (!status) return <Badge variant="outline" className="text-muted-foreground">Sin validar</Badge>;
+  if (status === "Vigente") return <Badge className="bg-green-100 text-green-800 hover:bg-green-200">Vigente</Badge>;
+  if (status === "Cancelado") return <Badge variant="destructive">Cancelado</Badge>;
   return <Badge variant="outline">{status}</Badge>;
 }
 
-/* ------------------------------------------------------------------ */
-/* Upload XML Dialog                                                   */
-/* ------------------------------------------------------------------ */
-
-function UploadXmlDialog({
-  open,
-  onOpenChange,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-}) {
-  const queryClient = useQueryClient();
-  const [xmlContent, setXmlContent] = useState("");
-
-  const uploadMutation = useMutation({
-    mutationFn: (data: { xml_content: string }) => api.sat.uploadXml(data),
-    onSuccess: () => {
-      toast.success("XML procesado exitosamente");
-      queryClient.invalidateQueries({ queryKey: ["sat", "documents"] });
-      setXmlContent("");
-      onOpenChange(false);
-    },
-    onError: (err: Error) => {
-      toast.error(err.message || "Error al subir XML");
-    },
-  });
-
-  function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (!file.name.toLowerCase().endsWith(".xml")) {
-      toast.error("Solo se aceptan archivos .xml");
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = (ev) => setXmlContent((ev.target?.result as string) || "");
-    reader.readAsText(file);
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>Subir XML CFDI</DialogTitle>
-          <DialogDescription>
-            Sube un archivo XML para procesar y registrar el CFDI.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="grid gap-4 py-2">
-          <div className="grid gap-2">
-            <Label>Selecciona un archivo XML</Label>
-            <Input type="file" accept=".xml" onChange={handleFileUpload} />
-          </div>
-          {xmlContent && (
-            <div className="rounded-md border p-2 max-h-32 overflow-y-auto">
-              <pre className="text-xs font-mono text-muted-foreground whitespace-pre-wrap">
-                {xmlContent.slice(0, 500)}
-                {xmlContent.length > 500 ? "..." : ""}
-              </pre>
-            </div>
-          )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => onOpenChange(false)}>
-              Cancelar
-            </Button>
-            <Button
-              onClick={() => uploadMutation.mutate({ xml_content: xmlContent })}
-              disabled={!xmlContent || uploadMutation.isPending}
-            >
-              {uploadMutation.isPending && (
-                <Loader2 className="mr-2 size-4 animate-spin" />
-              )}
-              <Upload className="mr-2 size-4" />
-              Subir XML
-            </Button>
-          </DialogFooter>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
+function extractionStatusBadge(status: string) {
+  const map: Record<string, { class: string; label: string }> = {
+    pending: { class: "bg-gray-100 text-gray-800", label: "Pendiente" },
+    waiting: { class: "bg-yellow-100 text-yellow-800", label: "En espera" },
+    running: { class: "bg-blue-100 text-blue-800 animate-pulse", label: "Ejecutando..." },
+    finished: { class: "bg-green-100 text-green-800", label: "Completada" },
+    failed: { class: "bg-red-100 text-red-800", label: "Fallida" },
+    stopping: { class: "bg-orange-100 text-orange-800", label: "Deteniendo..." },
+    stopped: { class: "bg-gray-100 text-gray-800", label: "Detenida" },
+    cancelled: { class: "bg-gray-100 text-gray-800", label: "Cancelada" },
+  };
+  const info = map[status] || { class: "bg-gray-100 text-gray-800", label: status };
+  return <Badge variant="outline" className={info.class}>{info.label}</Badge>;
 }
 
-/* ------------------------------------------------------------------ */
-/* Descarga Masiva Dialog (3-step wizard)                              */
-/* ------------------------------------------------------------------ */
-
-function DescargaMasivaDialog({
-  open,
-  onOpenChange,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-}) {
-  const [step, setStep] = useState(1);
-  const [fechaInicio, setFechaInicio] = useState("");
-  const [fechaFin, setFechaFin] = useState("");
-  const [tipo, setTipo] = useState("recibidos");
-  const [formato, setFormato] = useState("CFDI");
-  const [tipoComp, setTipoComp] = useState("");
-
-  const solicitudMutation = useMutation({
-    mutationFn: (data: {
-      request_type: string;
-      solicitud_type: string;
-      fecha_inicio: string;
-      fecha_fin: string;
-      tipo_comprobante?: string;
-    }) => api.sat.descargaSolicitud(data),
-    onSuccess: (result: { message?: string }) => {
-      toast.success(result.message || "Solicitud creada exitosamente");
-      setStep(3);
-    },
-    onError: (err: Error) => {
-      toast.error(err.message || "Error al crear solicitud");
-    },
-  });
-
-  function handleSubmit() {
-    solicitudMutation.mutate({
-      request_type: tipo,
-      solicitud_type: formato,
-      fecha_inicio: `${fechaInicio}T00:00:00`,
-      fecha_fin: `${fechaFin}T23:59:59`,
-      tipo_comprobante: tipoComp || undefined,
-    });
-  }
-
-  function handleClose() {
-    setStep(1);
-    setFechaInicio("");
-    setFechaFin("");
-    onOpenChange(false);
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>
-            <Download className="inline mr-2 size-5" />
-            Descarga Masiva SAT
-          </DialogTitle>
-          <DialogDescription>
-            Paso {step} de 3 &mdash; Requiere certificado FIEL configurado.
-          </DialogDescription>
-        </DialogHeader>
-
-        {step === 1 && (
-          <div className="grid gap-4 py-2">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="grid gap-2">
-                <Label>Fecha Inicio</Label>
-                <Input
-                  type="date"
-                  value={fechaInicio}
-                  onChange={(e) => setFechaInicio(e.target.value)}
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label>Fecha Fin</Label>
-                <Input
-                  type="date"
-                  value={fechaFin}
-                  onChange={(e) => setFechaFin(e.target.value)}
-                />
-              </div>
-            </div>
-            <div className="grid gap-2">
-              <Label>Tipo</Label>
-              <Select value={tipo} onValueChange={setTipo}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="recibidos">Recibidos</SelectItem>
-                  <SelectItem value="emitidos">Emitidos</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={handleClose}>
-                Cancelar
-              </Button>
-              <Button
-                onClick={() => setStep(2)}
-                disabled={!fechaInicio || !fechaFin}
-              >
-                Siguiente
-              </Button>
-            </DialogFooter>
-          </div>
-        )}
-
-        {step === 2 && (
-          <div className="grid gap-4 py-2">
-            <div className="grid gap-2">
-              <Label>Formato</Label>
-              <Select value={formato} onValueChange={setFormato}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="CFDI">XML Completo</SelectItem>
-                  <SelectItem value="Metadata">Solo Metadata</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="grid gap-2">
-              <Label>Tipo de Comprobante</Label>
-              <Select value={tipoComp} onValueChange={setTipoComp}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Todos" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="">Todos</SelectItem>
-                  <SelectItem value="I">Ingreso</SelectItem>
-                  <SelectItem value="E">Egreso</SelectItem>
-                  <SelectItem value="P">Pago</SelectItem>
-                  <SelectItem value="N">Nomina</SelectItem>
-                  <SelectItem value="T">Traslado</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="rounded-md border p-3 text-sm text-muted-foreground">
-              <p>
-                <strong>Resumen:</strong> {tipo} del {fechaInicio} al{" "}
-                {fechaFin}, formato {formato}
-                {tipoComp ? `, tipo ${tipoComp}` : ", todos los tipos"}.
-              </p>
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setStep(1)}>
-                Atras
-              </Button>
-              <Button
-                onClick={handleSubmit}
-                disabled={solicitudMutation.isPending}
-              >
-                {solicitudMutation.isPending && (
-                  <Loader2 className="mr-2 size-4 animate-spin" />
-                )}
-                Solicitar Descarga
-              </Button>
-            </DialogFooter>
-          </div>
-        )}
-
-        {step === 3 && (
-          <div className="py-4 text-center space-y-4">
-            <CheckCircle2 className="size-12 text-green-600 mx-auto" />
-            <p className="text-sm text-muted-foreground">
-              Solicitud enviada al SAT. El proceso puede tardar varios minutos.
-              Revisa el estado en la tabla de documentos.
-            </p>
-            <Button onClick={handleClose}>Cerrar</Button>
-          </div>
-        )}
-      </DialogContent>
-    </Dialog>
-  );
+function complianceBadge(result: string) {
+  if (result === "positive") return <Badge className="bg-green-100 text-green-800">Positiva</Badge>;
+  if (result === "negative") return <Badge variant="destructive">Negativa</Badge>;
+  if (result === "no_obligations") return <Badge variant="outline">Sin obligaciones</Badge>;
+  if (result === "activity_suspended") return <Badge className="bg-yellow-100 text-yellow-800">Actividad suspendida</Badge>;
+  return <Badge variant="outline">{result}</Badge>;
 }
 
+const EXTRACTOR_LABELS: Record<string, string> = {
+  invoice: "Facturas CFDI",
+  annual_tax_return: "Declaracion Anual",
+  monthly_tax_return: "Declaracion Mensual",
+  electronic_accounting: "Contabilidad Electronica",
+  tax_status: "Constancia Fiscal",
+  tax_compliance: "Opinion Cumplimiento",
+  tax_retention: "Retenciones",
+  rpc: "Registro Publico",
+  buro_de_credito_report: "Buro de Credito",
+};
+
 /* ------------------------------------------------------------------ */
-/* Link / Vincular Dialog                                              */
+/* Query Keys                                                          */
 /* ------------------------------------------------------------------ */
 
-function VincularDialog({
-  open,
-  onOpenChange,
-  document,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  document: CfdiDocument | null;
-}) {
-  const queryClient = useQueryClient();
-  const [invoiceId, setInvoiceId] = useState("");
+const satKeys = {
+  all: ["sat-syntage"] as const,
+  status: () => [...satKeys.all, "status"] as const,
+  taxpayers: () => [...satKeys.all, "taxpayers"] as const,
+  credentials: () => [...satKeys.all, "credentials"] as const,
+  invoices: (taxpayerId: string, params: Record<string, string>) =>
+    [...satKeys.all, "invoices", taxpayerId, params] as const,
+  extractions: () => [...satKeys.all, "extractions"] as const,
+  taxReturns: (taxpayerId: string) => [...satKeys.all, "tax-returns", taxpayerId] as const,
+  taxCompliance: (taxpayerId: string) => [...satKeys.all, "tax-compliance", taxpayerId] as const,
+  taxStatus: (taxpayerId: string) => [...satKeys.all, "tax-status", taxpayerId] as const,
+  taxRetentions: (taxpayerId: string) => [...satKeys.all, "tax-retentions", taxpayerId] as const,
+};
 
-  const linkMutation = useMutation({
-    mutationFn: (data: { uuid: string; invoice_id: string }) =>
-      api.sat.validate(data as any),
-    onSuccess: () => {
-      toast.success("CFDI vinculado exitosamente");
-      queryClient.invalidateQueries({ queryKey: ["sat", "documents"] });
-      setInvoiceId("");
-      onOpenChange(false);
-    },
-    onError: (err: Error) => {
-      toast.error(err.message || "Error al vincular CFDI");
-    },
-  });
-
-  if (!document) return null;
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>Vincular CFDI</DialogTitle>
-          <DialogDescription>
-            Asocia el CFDI <span className="font-mono">{document.uuid}</span>{" "}
-            con una factura del sistema.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="grid gap-4 py-2">
-          <div className="grid gap-2">
-            <Label>ID de Factura</Label>
-            <Input
-              placeholder="Ingresa el ID de la factura"
-              value={invoiceId}
-              onChange={(e) => setInvoiceId(e.target.value)}
-            />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => onOpenChange(false)}>
-              Cancelar
-            </Button>
-            <Button
-              onClick={() =>
-                linkMutation.mutate({
-                  uuid: document.uuid,
-                  invoice_id: invoiceId,
-                })
-              }
-              disabled={!invoiceId || linkMutation.isPending}
-            >
-              {linkMutation.isPending && (
-                <Loader2 className="mr-2 size-4 animate-spin" />
-              )}
-              <LinkIcon className="mr-2 size-4" />
-              Vincular
-            </Button>
-          </DialogFooter>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-/* ================================================================== */
+/* ------------------------------------------------------------------ */
 /* Main Page                                                           */
-/* ================================================================== */
+/* ------------------------------------------------------------------ */
 
-export default function SATPage() {
+export default function SatPage() {
+  const [activeTab, setActiveTab] = useState("facturas");
   const queryClient = useQueryClient();
 
-  /* ---- UI state ---- */
-  const [activeTab, setActiveTab] = useState("validar");
-  const [search, setSearch] = useState("");
-  const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
-  const [descargaDialogOpen, setDescargaDialogOpen] = useState(false);
-  const [showOnlyChanges, setShowOnlyChanges] = useState(false);
-  const [vincularOpen, setVincularOpen] = useState(false);
-  const [vincularDoc, setVincularDoc] = useState<CfdiDocument | null>(null);
-
-  /* ---- Validation result ---- */
-  const [validationResult, setValidationResult] =
-    useState<ValidationResult | null>(null);
-
-  /* ---- Bulk validation ---- */
-  const [bulkResults, setBulkResults] = useState<BulkValidationResult[]>([]);
-  const [bulkProgress, setBulkProgress] = useState(0);
-
-  /* ================================================================ */
-  /* Tab 1 - Validar CFDI                                             */
-  /* ================================================================ */
-
-  const validateForm = useForm<SatValidateInput>({
-    resolver: zodResolver(satValidateSchema),
-    defaultValues: { uuid: "", rfc_emisor: "", rfc_receptor: "", total: 0 },
+  // ── Connection status ──
+  const statusQuery = useQuery({
+    queryKey: satKeys.status(),
+    queryFn: () => api.sat.syntage.status(),
+    staleTime: 60_000,
+    retry: false,
   });
 
-  const validateMutation = useMutation({
-    mutationFn: (data: SatValidateInput) => api.sat.validate(data),
-    onSuccess: (result: ValidationResult) => {
-      setValidationResult(result);
-      toast.success("Validacion completada");
-    },
-    onError: (err: Error) => {
-      toast.error(err.message || "Error al validar CFDI");
-    },
+  // ── Taxpayers ──
+  const taxpayersQuery = useQuery({
+    queryKey: satKeys.taxpayers(),
+    queryFn: () => api.sat.syntage.taxpayers(),
+    staleTime: 60_000,
+    enabled: statusQuery.data?.ok === true,
   });
 
-  const onValidateSubmit = useCallback(
-    (data: SatValidateInput) => {
-      setValidationResult(null);
-      validateMutation.mutate(data);
-    },
-    [validateMutation],
-  );
+  const taxpayers: SyntageTaxpayer[] = taxpayersQuery.data?.taxpayers || [];
+  const [selectedTaxpayer, setSelectedTaxpayer] = useState<string>("");
+  const activeTaxpayer = selectedTaxpayer || taxpayers[0]?.id || "";
 
-  /* ================================================================ */
-  /* Tab 2 - Validacion Masiva                                        */
-  /* ================================================================ */
-
-  const bulkValidateMutation = useMutation({
-    mutationFn: () => api.sat.validateBulk(),
-    onMutate: () => {
-      setBulkProgress(10);
-      setBulkResults([]);
-    },
-    onSuccess: (result: { results?: BulkValidationResult[]; total?: number }) => {
-      setBulkProgress(100);
-      const results = (result as any).results ?? result ?? [];
-      setBulkResults(Array.isArray(results) ? results : []);
-      toast.success("Validacion masiva completada");
-    },
-    onError: (err: Error) => {
-      setBulkProgress(0);
-      toast.error(err.message || "Error en validacion masiva");
-    },
-  });
-
-  const filteredBulkResults = useMemo(() => {
-    if (!showOnlyChanges) return bulkResults;
-    return bulkResults.filter((r) => r.changed);
-  }, [bulkResults, showOnlyChanges]);
-
-  const bulkColumns: ColumnDef<BulkValidationResult>[] = useMemo(
-    () => [
-      {
-        accessorKey: "uuid",
-        header: "UUID",
-        cell: ({ row }) => (
-          <span className="font-mono text-xs max-w-[160px] truncate block">
-            {row.original.uuid}
-          </span>
-        ),
-      },
-      {
-        accessorKey: "emisor",
-        header: "Emisor",
-        cell: ({ row }) => (
-          <span className="text-sm">{row.original.emisor || "-"}</span>
-        ),
-      },
-      {
-        accessorKey: "estado_anterior",
-        header: "Estado Anterior",
-        cell: ({ row }) => (
-          <SatStatusBadge status={row.original.estado_anterior} />
-        ),
-      },
-      {
-        accessorKey: "estado_nuevo",
-        header: "Estado Nuevo",
-        cell: ({ row }) => (
-          <SatStatusBadge status={row.original.estado_nuevo} />
-        ),
-      },
-      {
-        accessorKey: "efos_status",
-        header: "EFOS",
-        cell: ({ row }) => <EfosBadge status={row.original.efos_status} />,
-      },
-      {
-        id: "cambio",
-        header: "Cambio?",
-        cell: ({ row }) =>
-          row.original.changed ? (
-            <Badge variant="destructive">Si</Badge>
-          ) : (
-            <Badge variant="outline">No</Badge>
-          ),
-      },
-    ],
-    [],
-  );
-
-  /* ================================================================ */
-  /* Tab 3 - Documentos CFDI                                          */
-  /* ================================================================ */
-
-  const documentsQuery = useQuery({
-    queryKey: ["sat", "documents", search],
-    queryFn: () => api.sat.documents(search ? { search } : undefined),
-    staleTime: 30_000,
-  });
-
-  const documents = (documentsQuery.data ?? []) as CfdiDocument[];
-
-  const documentColumns: ColumnDef<CfdiDocument>[] = useMemo(
-    () => [
-      {
-        accessorKey: "uuid",
-        header: "UUID",
-        cell: ({ row }) => (
-          <span className="font-mono text-xs max-w-[160px] truncate block">
-            {row.original.uuid || "-"}
-          </span>
-        ),
-      },
-      {
-        id: "emisor",
-        header: "Emisor",
-        cell: ({ row }) => (
-          <div>
-            <p className="text-sm truncate max-w-[150px]">
-              {row.original.nombre_emisor || "-"}
-            </p>
-            <p className="font-mono text-xs text-muted-foreground">
-              {row.original.rfc_emisor || ""}
-            </p>
-          </div>
-        ),
-      },
-      {
-        id: "receptor",
-        header: "Receptor",
-        cell: ({ row }) => (
-          <div>
-            <p className="text-sm truncate max-w-[150px]">
-              {row.original.nombre_receptor || "-"}
-            </p>
-            <p className="font-mono text-xs text-muted-foreground">
-              {row.original.rfc_receptor || ""}
-            </p>
-          </div>
-        ),
-      },
-      {
-        accessorKey: "tipo_comprobante",
-        header: "Tipo",
-        cell: ({ row }) => {
-          const tipo = row.original.tipo_comprobante;
-          const label = tipo ? TIPO_COMPROBANTE[tipo] || tipo : "-";
-          const colors: Record<string, string> = {
-            I: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
-            E: "bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200",
-            P: "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200",
-            N: "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200",
-            T: "bg-cyan-100 text-cyan-800 dark:bg-cyan-900 dark:text-cyan-200",
-          };
-          return tipo ? (
-            <Badge variant="outline" className={colors[tipo] || ""}>
-              {tipo} - {label}
-            </Badge>
-          ) : (
-            <span className="text-muted-foreground">-</span>
-          );
-        },
-      },
-      {
-        accessorKey: "total",
-        header: "Total",
-        cell: ({ row }) => (
-          <span className="font-mono text-sm">
-            {row.original.total != null
-              ? formatMoney(row.original.total)
-              : "-"}
-          </span>
-        ),
-      },
-      {
-        accessorKey: "fecha_emision",
-        header: "Fecha",
-        cell: ({ row }) => (
-          <span className="text-muted-foreground text-sm">
-            {row.original.fecha_emision
-              ? formatDate(row.original.fecha_emision)
-              : row.original.fecha_timbrado
-                ? formatDate(row.original.fecha_timbrado)
-                : "-"}
-          </span>
-        ),
-      },
-      {
-        id: "vinculado",
-        header: "Vinculado?",
-        cell: ({ row }) =>
-          row.original.invoice_id ? (
-            <Badge
-              variant="outline"
-              className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
-            >
-              <LinkIcon className="mr-1 size-3" />
-              Si
-            </Badge>
-          ) : (
-            <Badge variant="outline" className="text-muted-foreground">
-              No
-            </Badge>
-          ),
-      },
-      {
-        id: "acciones",
-        header: "Acciones",
-        enableSorting: false,
-        cell: ({ row }) => (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="sm">
-                Acciones
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem>
-                <Eye className="mr-2 size-4" />
-                Ver Detalle
-              </DropdownMenuItem>
-              <DropdownMenuItem>
-                <Download className="mr-2 size-4" />
-                Descargar XML
-              </DropdownMenuItem>
-              {!row.original.invoice_id && (
-                <DropdownMenuItem
-                  onClick={() => {
-                    setVincularDoc(row.original);
-                    setVincularOpen(true);
-                  }}
-                >
-                  <LinkIcon className="mr-2 size-4" />
-                  Vincular
-                </DropdownMenuItem>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        ),
-      },
-    ],
-    [],
-  );
-
-  /* ---- Semaforo visual helpers ---- */
-
-  function renderSemaforoIcon() {
-    if (!validationResult) return null;
-    const color = getSemaforoColor(validationResult);
+  // Not connected? Show setup prompt
+  if (statusQuery.isSuccess && !statusQuery.data?.ok) {
     return (
-      <div className="flex flex-col items-center gap-1.5">
-        <div
-          className={`size-14 rounded-full ${SEMAFORO_BG[color]} ring-4 ${SEMAFORO_RING[color]} ring-offset-2 ring-offset-background flex items-center justify-center`}
-        >
-          {color === "green" && (
-            <CheckCircle2 className="size-8 text-white" />
-          )}
-          {color === "yellow" && (
-            <AlertTriangle className="size-8 text-white" />
-          )}
-          {color === "red" && <XCircle className="size-8 text-white" />}
-        </div>
-        <span className="text-xs font-medium capitalize">{color === "green" ? "Valido" : color === "yellow" ? "Alerta" : "Invalido"}</span>
+      <div className="space-y-6 p-6">
+        <h1 className="text-2xl font-bold">SAT via Syntage</h1>
+        <EmptyState
+          icon={ScrollText}
+          title="Syntage no configurado"
+          description="Conecta tu API Key de Syntage en Configuracion > Integraciones para acceder a los datos del SAT."
+          action={{ label: "Ir a Configuracion", onClick: () => window.location.href = "/configuracion" }}
+        />
       </div>
     );
   }
 
-  /* ================================================================ */
-  /* Render                                                            */
-  /* ================================================================ */
-
   return (
-    <div className="flex flex-col gap-6">
+    <div className="space-y-6 p-6">
       {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">SAT / CFDI</h1>
-        <p className="text-muted-foreground text-sm">
-          Validacion de CFDI, verificacion masiva y gestion de documentos
-          fiscales.
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">SAT via Syntage</h1>
+          <p className="text-sm text-muted-foreground">
+            Gestion fiscal completa: facturas, declaraciones, cumplimiento y retenciones
+          </p>
+        </div>
+        <div className="flex items-center gap-3">
+          {/* Taxpayer selector */}
+          {taxpayers.length > 1 && (
+            <Select value={activeTaxpayer} onValueChange={setSelectedTaxpayer}>
+              <SelectTrigger className="w-[200px]">
+                <SelectValue placeholder="Contribuyente" />
+              </SelectTrigger>
+              <SelectContent>
+                {taxpayers.map((tp) => (
+                  <SelectItem key={tp.id} value={tp.id}>
+                    {tp.name || tp.rfc}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          {taxpayers.length === 1 && (
+            <Badge variant="outline" className="text-sm">
+              RFC: {taxpayers[0].rfc}
+            </Badge>
+          )}
+          {statusQuery.data?.ok && (
+            <Badge className="bg-green-100 text-green-800">Syntage conectado</Badge>
+          )}
+        </div>
       </div>
 
       {/* Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList>
-          <TabsTrigger value="validar">
-            <Search className="mr-1.5 size-4" />
-            Validar CFDI
-          </TabsTrigger>
-          <TabsTrigger value="masiva">
-            <RefreshCw className="mr-1.5 size-4" />
-            Validacion Masiva
-          </TabsTrigger>
-          <TabsTrigger value="documentos">
-            <FileText className="mr-1.5 size-4" />
-            Documentos CFDI
-          </TabsTrigger>
+          <TabsTrigger value="facturas">Facturas CFDI</TabsTrigger>
+          <TabsTrigger value="extractions">Extractions</TabsTrigger>
+          <TabsTrigger value="status">Status Fiscal</TabsTrigger>
+          <TabsTrigger value="retenciones">Retenciones</TabsTrigger>
+          <TabsTrigger value="declaraciones">Declaraciones</TabsTrigger>
         </TabsList>
 
-        {/* ============================================================ */}
-        {/* Tab 1: Validar CFDI                                          */}
-        {/* ============================================================ */}
-        <TabsContent value="validar">
-          <div className="grid gap-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Validar CFDI Individual</CardTitle>
-                <CardDescription>
-                  Verifica el estado de un CFDI ante el SAT, incluyendo
-                  verificacion EFOS (Lista 69-B).
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <Form {...validateForm}>
-                  <form
-                    onSubmit={validateForm.handleSubmit(onValidateSubmit)}
-                    className="grid gap-4"
-                  >
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <FormField
-                        control={validateForm.control}
-                        name="uuid"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>UUID</FormLabel>
-                            <FormControl>
-                              <Input
-                                placeholder="XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX"
-                                className="font-mono"
-                                {...field}
-                              />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={validateForm.control}
-                        name="total"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Total</FormLabel>
-                            <FormControl>
-                              <Input
-                                type="number"
-                                step="0.01"
-                                min="0"
-                                placeholder="0.00"
-                                {...field}
-                                onChange={(e) =>
-                                  field.onChange(
-                                    parseFloat(e.target.value) || 0,
-                                  )
-                                }
-                              />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <FormField
-                        control={validateForm.control}
-                        name="rfc_emisor"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>RFC Emisor</FormLabel>
-                            <FormControl>
-                              <Input
-                                placeholder="XAXX010101000"
-                                className="font-mono uppercase"
-                                {...field}
-                                onChange={(e) =>
-                                  field.onChange(e.target.value.toUpperCase())
-                                }
-                              />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={validateForm.control}
-                        name="rfc_receptor"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>RFC Receptor</FormLabel>
-                            <FormControl>
-                              <Input
-                                placeholder="XAXX010101000"
-                                className="font-mono uppercase"
-                                {...field}
-                                onChange={(e) =>
-                                  field.onChange(e.target.value.toUpperCase())
-                                }
-                              />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                    </div>
-                    <div className="flex justify-end">
-                      <Button
-                        type="submit"
-                        disabled={validateMutation.isPending}
-                      >
-                        {validateMutation.isPending ? (
-                          <Loader2 className="mr-2 size-4 animate-spin" />
-                        ) : (
-                          <Search className="mr-2 size-4" />
-                        )}
-                        Validar
-                      </Button>
-                    </div>
-                  </form>
-                </Form>
-              </CardContent>
-            </Card>
-
-            {/* Validation Result with Semaforo */}
-            {validationResult && (
-              <Card
-                className={
-                  SEMAFORO_STYLES[getSemaforoColor(validationResult)]
-                }
-              >
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-base">
-                    Resultado de Validacion
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="flex items-start gap-6">
-                    {/* Semaforo visual */}
-                    {renderSemaforoIcon()}
-
-                    {/* Details grid */}
-                    <div className="flex-1 grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                      <div>
-                        <p className="text-muted-foreground mb-1">Estado SAT</p>
-                        <SatStatusBadge
-                          status={validationResult.estado || ""}
-                        />
-                      </div>
-                      <div>
-                        <p className="text-muted-foreground mb-1">
-                          Es Cancelable
-                        </p>
-                        <p className="font-medium">
-                          {validationResult.esCancelable || "-"}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-muted-foreground mb-1">EFOS</p>
-                        <EfosBadge
-                          status={validationResult.efosStatus || ""}
-                        />
-                        {validationResult.efosCode && (
-                          <p className="text-xs text-muted-foreground mt-1">
-                            Codigo: {validationResult.efosCode}
-                          </p>
-                        )}
-                      </div>
-                      <div>
-                        <p className="text-muted-foreground mb-1">
-                          Fecha Timbrado
-                        </p>
-                        <p className="font-medium text-xs font-mono">
-                          {validationResult.fechaTimbrado
-                            ? formatDate(validationResult.fechaTimbrado)
-                            : "-"}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-
-                  {validationResult.hasEfosIssue && (
-                    <div className="mt-4 p-3 bg-red-100 dark:bg-red-900 rounded-md text-sm text-red-700 dark:text-red-300">
-                      <ShieldAlert className="inline size-4 mr-1" />
-                      ALERTA: Emisor con estatus EFOS problematico.
-                      {(validationResult.efosStatus === "definitive" ||
-                        validationResult.efosStatus === "203") &&
-                        " Facturas NO deducibles."}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            )}
-          </div>
+        <TabsContent value="facturas" className="space-y-4">
+          <InvoicesTab taxpayerId={activeTaxpayer} />
         </TabsContent>
 
-        {/* ============================================================ */}
-        {/* Tab 2: Validacion Masiva                                     */}
-        {/* ============================================================ */}
-        <TabsContent value="masiva">
-          <div className="grid gap-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Validacion Masiva</CardTitle>
-                <CardDescription>
-                  Valida todas las facturas registradas contra el SAT. Se
-                  verificara el estado CFDI y EFOS de cada una.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="flex items-center justify-between">
-                  <Button
-                    onClick={() => bulkValidateMutation.mutate()}
-                    disabled={bulkValidateMutation.isPending}
-                    size="lg"
-                  >
-                    {bulkValidateMutation.isPending ? (
-                      <Loader2 className="mr-2 size-4 animate-spin" />
-                    ) : (
-                      <RefreshCw className="mr-2 size-4" />
-                    )}
-                    Validar Todas las Facturas
-                  </Button>
-
-                  {bulkResults.length > 0 && (
-                    <div className="flex items-center gap-2">
-                      <Label htmlFor="show-changes" className="text-sm">
-                        Solo mostrar cambios
-                      </Label>
-                      <Switch
-                        id="show-changes"
-                        checked={showOnlyChanges}
-                        onCheckedChange={setShowOnlyChanges}
-                      />
-                    </div>
-                  )}
-                </div>
-
-                {bulkValidateMutation.isPending && (
-                  <div className="mt-4 space-y-2">
-                    <Progress value={bulkProgress} />
-                    <p className="text-xs text-muted-foreground text-center">
-                      Validando{" "}
-                      {bulkProgress < 100
-                        ? `${Math.round((bulkProgress / 100) * (bulkResults.length || 1))}/${bulkResults.length || "N"}`
-                        : "completado"}
-                      ...
-                    </p>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            {bulkResults.length > 0 && (
-              <DataTable
-                columns={bulkColumns}
-                data={filteredBulkResults}
-                isLoading={bulkValidateMutation.isPending}
-                emptyState={
-                  <EmptyState
-                    icon={Search}
-                    title="Sin resultados"
-                    description={
-                      showOnlyChanges
-                        ? "No se detectaron cambios en la validacion."
-                        : "No hay resultados de validacion masiva."
-                    }
-                  />
-                }
-              />
-            )}
-          </div>
+        <TabsContent value="extractions" className="space-y-4">
+          <ExtractionsTab taxpayerId={activeTaxpayer} />
         </TabsContent>
 
-        {/* ============================================================ */}
-        {/* Tab 3: Documentos CFDI                                       */}
-        {/* ============================================================ */}
-        <TabsContent value="documentos">
-          <DataTable
-            columns={documentColumns}
-            data={documents}
-            isLoading={documentsQuery.isLoading}
-            toolbar={
-              <div className="flex items-center justify-between gap-4">
-                <SearchInput
-                  value={search}
-                  onChange={setSearch}
-                  placeholder="Buscar por UUID, RFC o emisor..."
-                  className="w-full max-w-sm"
-                />
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    onClick={() => setUploadDialogOpen(true)}
-                  >
-                    <Upload className="mr-2 size-4" />
-                    Subir XML
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => setDescargaDialogOpen(true)}
-                  >
-                    <Download className="mr-2 size-4" />
-                    Descarga Masiva SAT
-                  </Button>
-                </div>
-              </div>
-            }
-            emptyState={
-              <EmptyState
-                icon={FileText}
-                title="Sin documentos CFDI"
-                description="No hay documentos CFDI registrados. Sube un XML o solicita una descarga masiva."
-                action={{
-                  label: "Subir XML",
-                  onClick: () => setUploadDialogOpen(true),
-                }}
-              />
-            }
-          />
+        <TabsContent value="status" className="space-y-4">
+          <TaxStatusTab taxpayerId={activeTaxpayer} />
+        </TabsContent>
+
+        <TabsContent value="retenciones" className="space-y-4">
+          <RetentionsTab taxpayerId={activeTaxpayer} />
+        </TabsContent>
+
+        <TabsContent value="declaraciones" className="space-y-4">
+          <TaxReturnsTab taxpayerId={activeTaxpayer} />
         </TabsContent>
       </Tabs>
-
-      {/* Dialogs */}
-      <UploadXmlDialog
-        open={uploadDialogOpen}
-        onOpenChange={setUploadDialogOpen}
-      />
-      <DescargaMasivaDialog
-        open={descargaDialogOpen}
-        onOpenChange={setDescargaDialogOpen}
-      />
-      <VincularDialog
-        open={vincularOpen}
-        onOpenChange={setVincularOpen}
-        document={vincularDoc}
-      />
     </div>
+  );
+}
+
+/* ================================================================== */
+/* TAB 1: FACTURAS CFDI                                                */
+/* ================================================================== */
+
+function InvoicesTab({ taxpayerId }: { taxpayerId: string }) {
+  const queryClient = useQueryClient();
+  const [search, setSearch] = useState("");
+  const [typeFilter, setTypeFilter] = useState<string>("all");
+  const [page, setPage] = useState(1);
+  const [selectedInvoice, setSelectedInvoice] = useState<SyntageInvoice | null>(null);
+  const [showExtractDialog, setShowExtractDialog] = useState(false);
+
+  const params: Record<string, string> = {
+    page: String(page),
+    itemsPerPage: "25",
+  };
+
+  const invoicesQuery = useQuery({
+    queryKey: satKeys.invoices(taxpayerId, params),
+    queryFn: () => api.sat.syntage.invoices(taxpayerId, params),
+    enabled: !!taxpayerId,
+    staleTime: 30_000,
+    placeholderData: (prev: unknown) => prev,
+  });
+
+  const extractMutation = useMutation({
+    mutationFn: (data: { extractor?: string; options?: unknown }) =>
+      api.sat.syntage.extract(taxpayerId, data.extractor, data.options as any),
+    onSuccess: () => {
+      toast.success("Extraction creada. Syntage descargara las facturas del SAT.");
+      queryClient.invalidateQueries({ queryKey: satKeys.extractions() });
+      setShowExtractDialog(false);
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const invoices: SyntageInvoice[] = invoicesQuery.data?.invoices || [];
+  const total = invoicesQuery.data?.total || 0;
+
+  // Client-side search/filter on current page
+  const filtered = useMemo(() => {
+    let result = invoices;
+    if (search) {
+      const q = search.toLowerCase();
+      result = result.filter(
+        (inv) =>
+          inv.uuid?.toLowerCase().includes(q) ||
+          inv.issuer?.name?.toLowerCase().includes(q) ||
+          inv.issuer?.rfc?.toLowerCase().includes(q) ||
+          inv.receiver?.name?.toLowerCase().includes(q) ||
+          inv.receiver?.rfc?.toLowerCase().includes(q),
+      );
+    }
+    if (typeFilter !== "all") {
+      result = result.filter((inv) => inv.type === typeFilter);
+    }
+    return result;
+  }, [invoices, search, typeFilter]);
+
+  const columns: ColumnDef<SyntageInvoice>[] = [
+    {
+      accessorKey: "uuid",
+      header: "UUID",
+      cell: ({ row }) => (
+        <span className="font-mono text-xs" title={row.original.uuid}>
+          {row.original.uuid?.substring(0, 8)}...
+        </span>
+      ),
+    },
+    {
+      id: "emisor",
+      header: "Emisor",
+      cell: ({ row }) => (
+        <div>
+          <p className="text-sm font-medium truncate max-w-[180px]">{row.original.issuer?.name}</p>
+          <p className="text-xs text-muted-foreground">{row.original.issuer?.rfc}</p>
+        </div>
+      ),
+    },
+    {
+      id: "receptor",
+      header: "Receptor",
+      cell: ({ row }) => (
+        <div>
+          <p className="text-sm font-medium truncate max-w-[180px]">{row.original.receiver?.name}</p>
+          <p className="text-xs text-muted-foreground">{row.original.receiver?.rfc}</p>
+        </div>
+      ),
+    },
+    {
+      accessorKey: "type",
+      header: "Tipo",
+      cell: ({ row }) => cfdiTypeBadge(row.original.type),
+    },
+    {
+      accessorKey: "total",
+      header: "Total",
+      cell: ({ row }) => (
+        <span className="text-right font-medium">
+          {formatMoney(row.original.total, row.original.currency)}
+        </span>
+      ),
+    },
+    {
+      accessorKey: "issuedAt",
+      header: "Fecha",
+      cell: ({ row }) => (
+        <span className="text-sm">{row.original.issuedAt ? formatDate(row.original.issuedAt) : "-"}</span>
+      ),
+    },
+    {
+      accessorKey: "paymentMethod",
+      header: "Metodo",
+      cell: ({ row }) => {
+        const pm = row.original.paymentMethod;
+        if (!pm) return <span className="text-muted-foreground">-</span>;
+        return (
+          <Badge variant="outline" className={pm === "PPD" ? "bg-orange-100 text-orange-800" : "bg-blue-100 text-blue-800"}>
+            {pm}
+          </Badge>
+        );
+      },
+    },
+    {
+      accessorKey: "status",
+      header: "Estado SAT",
+      cell: ({ row }) => satStatusBadge(row.original.status),
+    },
+    {
+      id: "actions",
+      header: "",
+      cell: ({ row }) => (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="sm">
+              <Eye className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={() => setSelectedInvoice(row.original)}>
+              <Eye className="h-4 w-4 mr-2" /> Ver detalle
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => handleDownloadCfdi(row.original.id, "xml")}>
+              <FileDown className="h-4 w-4 mr-2" /> Descargar XML
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => handleDownloadCfdi(row.original.id, "pdf")}>
+              <FileDown className="h-4 w-4 mr-2" /> Descargar PDF
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ),
+    },
+  ];
+
+  async function handleDownloadCfdi(invoiceId: string, _format: string) {
+    try {
+      const data = await api.sat.syntage.invoiceCfdi(invoiceId);
+      if (data.downloadUrl) window.open(data.downloadUrl, "_blank");
+      else toast.info("CFDI descargado");
+    } catch (e) {
+      toast.error("Error al descargar CFDI");
+    }
+  }
+
+  return (
+    <>
+      {/* Toolbar */}
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3 flex-1">
+          <SearchInput
+            placeholder="Buscar por UUID, RFC, nombre..."
+            value={search}
+            onChange={setSearch}
+          />
+          <Select value={typeFilter} onValueChange={setTypeFilter}>
+            <SelectTrigger className="w-[150px]">
+              <SelectValue placeholder="Tipo" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Todos</SelectItem>
+              <SelectItem value="I">Ingreso</SelectItem>
+              <SelectItem value="E">Egreso</SelectItem>
+              <SelectItem value="P">Pago</SelectItem>
+              <SelectItem value="N">Nomina</SelectItem>
+              <SelectItem value="T">Traslado</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => queryClient.invalidateQueries({ queryKey: satKeys.invoices(taxpayerId, params) })}>
+            <RefreshCw className="h-4 w-4 mr-2" /> Actualizar
+          </Button>
+          <Button onClick={() => setShowExtractDialog(true)}>
+            <Download className="h-4 w-4 mr-2" /> Sincronizar SAT
+          </Button>
+        </div>
+      </div>
+
+      {/* Table */}
+      <DataTable
+        columns={columns}
+        data={filtered}
+        isLoading={invoicesQuery.isLoading}
+        pagination={{ page, pageSize: 25, total }}
+        onPaginationChange={(p) => setPage(p.page)}
+        onRowClick={setSelectedInvoice}
+        emptyState={
+          <EmptyState
+            icon={FileText}
+            title="No hay facturas CFDI"
+            description="Sincroniza con el SAT para descargar tus facturas via Syntage."
+            action={{ label: "Sincronizar SAT", onClick: () => setShowExtractDialog(true) }}
+          />
+        }
+      />
+
+      {/* Invoice Detail Dialog */}
+      {selectedInvoice && (
+        <Dialog open={!!selectedInvoice} onOpenChange={() => setSelectedInvoice(null)}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>Detalle CFDI</DialogTitle>
+              <DialogDescription>UUID: {selectedInvoice.uuid}</DialogDescription>
+            </DialogHeader>
+            <div className="grid grid-cols-2 gap-4 text-sm">
+              <div>
+                <p className="text-muted-foreground">Emisor</p>
+                <p className="font-medium">{selectedInvoice.issuer?.name}</p>
+                <p className="text-xs text-muted-foreground">RFC: {selectedInvoice.issuer?.rfc}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Receptor</p>
+                <p className="font-medium">{selectedInvoice.receiver?.name}</p>
+                <p className="text-xs text-muted-foreground">RFC: {selectedInvoice.receiver?.rfc}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Tipo</p>
+                {cfdiTypeBadge(selectedInvoice.type)}
+              </div>
+              <div>
+                <p className="text-muted-foreground">Total</p>
+                <p className="font-medium">{formatMoney(selectedInvoice.total, selectedInvoice.currency)}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Subtotal</p>
+                <p>{formatMoney(selectedInvoice.subtotal, selectedInvoice.currency)}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Moneda</p>
+                <p>{selectedInvoice.currency}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Fecha emision</p>
+                <p>{selectedInvoice.issuedAt ? formatDate(selectedInvoice.issuedAt) : "-"}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Metodo pago</p>
+                <p>{selectedInvoice.paymentMethod || "-"}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Forma pago</p>
+                <p>{selectedInvoice.paymentForm || "-"}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Estado SAT</p>
+                {satStatusBadge(selectedInvoice.status)}
+              </div>
+              {selectedInvoice.cancelledAt && (
+                <div>
+                  <p className="text-muted-foreground">Fecha cancelacion</p>
+                  <p className="text-red-600">{formatDate(selectedInvoice.cancelledAt)}</p>
+                </div>
+              )}
+              {selectedInvoice.receiver?.cfdiUse && (
+                <div>
+                  <p className="text-muted-foreground">Uso CFDI</p>
+                  <p>{selectedInvoice.receiver.cfdiUse}</p>
+                </div>
+              )}
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => handleDownloadCfdi(selectedInvoice.id, "xml")}>
+                <FileDown className="h-4 w-4 mr-2" /> XML
+              </Button>
+              <Button variant="outline" onClick={() => handleDownloadCfdi(selectedInvoice.id, "pdf")}>
+                <FileDown className="h-4 w-4 mr-2" /> PDF
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {/* Extract Dialog */}
+      <NewExtractionDialog
+        open={showExtractDialog}
+        onClose={() => setShowExtractDialog(false)}
+        taxpayerId={taxpayerId}
+        defaultExtractor="invoice"
+        onSubmit={(extractor, options) => extractMutation.mutate({ extractor, options })}
+        isLoading={extractMutation.isPending}
+      />
+    </>
+  );
+}
+
+/* ================================================================== */
+/* TAB 2: EXTRACTIONS                                                  */
+/* ================================================================== */
+
+function ExtractionsTab({ taxpayerId }: { taxpayerId: string }) {
+  const queryClient = useQueryClient();
+  const [showNew, setShowNew] = useState(false);
+
+  const extractionsQuery = useQuery({
+    queryKey: satKeys.extractions(),
+    queryFn: () => api.sat.syntage.extractions(),
+    staleTime: 10_000,
+    refetchInterval: (query) => {
+      // Auto-refetch while any extraction is running
+      const data = query.state.data as { extractions?: SyntageExtraction[] } | undefined;
+      const hasRunning = data?.extractions?.some(
+        (e: SyntageExtraction) => ["pending", "waiting", "running"].includes(e.status),
+      );
+      return hasRunning ? 5000 : false;
+    },
+  });
+
+  const createMutation = useMutation({
+    mutationFn: (data: { extractor: string; options?: unknown }) =>
+      api.sat.syntage.extract(taxpayerId, data.extractor, data.options as any),
+    onSuccess: () => {
+      toast.success("Extraction creada exitosamente");
+      queryClient.invalidateQueries({ queryKey: satKeys.extractions() });
+      setShowNew(false);
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const stopMutation = useMutation({
+    mutationFn: (id: string) => api.sat.syntage.stopExtraction(id),
+    onSuccess: () => {
+      toast.success("Extraction detenida");
+      queryClient.invalidateQueries({ queryKey: satKeys.extractions() });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const extractions: SyntageExtraction[] = extractionsQuery.data?.extractions || [];
+
+  const columns: ColumnDef<SyntageExtraction>[] = [
+    {
+      accessorKey: "id",
+      header: "ID",
+      cell: ({ row }) => <span className="font-mono text-xs">{row.original.id.substring(0, 8)}...</span>,
+    },
+    {
+      accessorKey: "extractor",
+      header: "Tipo",
+      cell: ({ row }) => (
+        <span className="text-sm">{EXTRACTOR_LABELS[row.original.extractor] || row.original.extractor}</span>
+      ),
+    },
+    {
+      accessorKey: "status",
+      header: "Estado",
+      cell: ({ row }) => extractionStatusBadge(row.original.status),
+    },
+    {
+      accessorKey: "createdAt",
+      header: "Creada",
+      cell: ({ row }) => <span className="text-sm">{formatDate(row.original.createdAt)}</span>,
+    },
+    {
+      accessorKey: "updatedAt",
+      header: "Actualizada",
+      cell: ({ row }) => <span className="text-sm">{formatDate(row.original.updatedAt)}</span>,
+    },
+    {
+      id: "actions",
+      header: "",
+      cell: ({ row }) => {
+        const isRunning = ["pending", "waiting", "running"].includes(row.original.status);
+        return isRunning ? (
+          <Button variant="ghost" size="sm" onClick={() => stopMutation.mutate(row.original.id)}>
+            <Square className="h-4 w-4 text-red-500" />
+          </Button>
+        ) : null;
+      },
+    },
+  ];
+
+  return (
+    <>
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-muted-foreground">
+          Jobs de descarga de datos del SAT via Syntage
+        </p>
+        <Button onClick={() => setShowNew(true)}>
+          <Play className="h-4 w-4 mr-2" /> Nueva Extraction
+        </Button>
+      </div>
+
+      <DataTable
+        columns={columns}
+        data={extractions}
+        isLoading={extractionsQuery.isLoading}
+        emptyState={
+          <EmptyState
+            icon={Download}
+            title="No hay extractions"
+            description="Crea una extraction para descargar datos del SAT."
+            action={{ label: "Nueva Extraction", onClick: () => setShowNew(true) }}
+          />
+        }
+      />
+
+      <NewExtractionDialog
+        open={showNew}
+        onClose={() => setShowNew(false)}
+        taxpayerId={taxpayerId}
+        onSubmit={(extractor, options) => createMutation.mutate({ extractor, options })}
+        isLoading={createMutation.isPending}
+      />
+    </>
+  );
+}
+
+/* ================================================================== */
+/* TAB 3: STATUS FISCAL                                                */
+/* ================================================================== */
+
+function TaxStatusTab({ taxpayerId }: { taxpayerId: string }) {
+  const queryClient = useQueryClient();
+
+  const taxStatusQuery = useQuery({
+    queryKey: satKeys.taxStatus(taxpayerId),
+    queryFn: () => api.sat.syntage.taxStatus(taxpayerId),
+    enabled: !!taxpayerId,
+    staleTime: 60_000,
+  });
+
+  const complianceQuery = useQuery({
+    queryKey: satKeys.taxCompliance(taxpayerId),
+    queryFn: () => api.sat.syntage.taxCompliance(taxpayerId),
+    enabled: !!taxpayerId,
+    staleTime: 60_000,
+  });
+
+  const extractMutation = useMutation({
+    mutationFn: (extractor: string) => api.sat.syntage.extract(taxpayerId, extractor),
+    onSuccess: () => {
+      toast.success("Actualizacion solicitada. Se procesara en Syntage.");
+      queryClient.invalidateQueries({ queryKey: satKeys.extractions() });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const statuses = taxStatusQuery.data?.statuses || [];
+  const latestStatus = statuses[0] as Record<string, unknown> | undefined;
+  const checks = complianceQuery.data?.checks || [];
+  const latestCheck = checks[0] as Record<string, unknown> | undefined;
+
+  return (
+    <div className="space-y-6">
+      {/* Constancia de Situacion Fiscal */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle>Constancia de Situacion Fiscal</CardTitle>
+              <CardDescription>Datos del contribuyente extraidos del SAT</CardDescription>
+            </div>
+            <Button
+              variant="outline"
+              onClick={() => extractMutation.mutate("tax_status")}
+              disabled={extractMutation.isPending}
+            >
+              {extractMutation.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-2" />}
+              Actualizar
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {taxStatusQuery.isLoading ? (
+            <div className="space-y-3">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="h-6 bg-muted animate-pulse rounded" />
+              ))}
+            </div>
+          ) : latestStatus ? (
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
+              <div>
+                <p className="text-muted-foreground">RFC</p>
+                <p className="font-medium font-mono">{String(latestStatus.rfc || "-")}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Razon Social</p>
+                <p className="font-medium">{String(latestStatus.name || "-")}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Status</p>
+                <p className="font-medium">{String(latestStatus.status || "-")}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Regimen Fiscal</p>
+                <p>{String(latestStatus.fiscalRegime || "-")}</p>
+              </div>
+              {latestStatus.createdAt != null && (
+                <div>
+                  <p className="text-muted-foreground">Fecha consulta</p>
+                  <p>{formatDate(latestStatus.createdAt as string)}</p>
+                </div>
+              )}
+            </div>
+          ) : (
+            <EmptyState
+              icon={Building2}
+              title="Sin datos fiscales"
+              description="Solicita una extraction de tipo 'Constancia Fiscal' para obtener los datos."
+              action={{ label: "Solicitar", onClick: () => extractMutation.mutate("tax_status") }}
+            />
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Opinion de Cumplimiento */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle>Opinion de Cumplimiento</CardTitle>
+              <CardDescription>Resultado de la verificacion de cumplimiento fiscal ante el SAT</CardDescription>
+            </div>
+            <Button
+              variant="outline"
+              onClick={() => extractMutation.mutate("tax_compliance")}
+              disabled={extractMutation.isPending}
+            >
+              {extractMutation.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-2" />}
+              Actualizar
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {complianceQuery.isLoading ? (
+            <div className="h-12 bg-muted animate-pulse rounded" />
+          ) : latestCheck ? (
+            <div className="flex items-center gap-6">
+              <div>
+                <p className="text-muted-foreground text-sm">Resultado</p>
+                {complianceBadge(String(latestCheck.result || ""))}
+              </div>
+              {latestCheck.validFrom != null && (
+                <div>
+                  <p className="text-muted-foreground text-sm">Vigencia</p>
+                  <p className="text-sm">
+                    {formatDate(latestCheck.validFrom as string)}
+                    {latestCheck.validTo != null && ` - ${formatDate(latestCheck.validTo as string)}`}
+                  </p>
+                </div>
+              )}
+              {latestCheck.createdAt != null && (
+                <div>
+                  <p className="text-muted-foreground text-sm">Fecha consulta</p>
+                  <p className="text-sm">{formatDate(latestCheck.createdAt as string)}</p>
+                </div>
+              )}
+            </div>
+          ) : (
+            <EmptyState
+              icon={Shield}
+              title="Sin opinion de cumplimiento"
+              description="Solicita una verificacion para conocer tu estado fiscal."
+              action={{ label: "Verificar", onClick: () => extractMutation.mutate("tax_compliance") }}
+            />
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+/* ================================================================== */
+/* TAB 4: RETENCIONES                                                  */
+/* ================================================================== */
+
+function RetentionsTab({ taxpayerId }: { taxpayerId: string }) {
+  const retentionsQuery = useQuery({
+    queryKey: satKeys.taxRetentions(taxpayerId),
+    queryFn: () => api.sat.syntage.taxRetentions(taxpayerId),
+    enabled: !!taxpayerId,
+    staleTime: 60_000,
+  });
+
+  const retentions = (retentionsQuery.data?.retentions || []) as Array<Record<string, unknown>>;
+
+  const columns: ColumnDef<Record<string, unknown>>[] = [
+    {
+      accessorKey: "uuid",
+      header: "UUID",
+      cell: ({ row }) => (
+        <span className="font-mono text-xs">{String(row.original.uuid || "").substring(0, 8)}...</span>
+      ),
+    },
+    {
+      id: "emisor",
+      header: "Emisor",
+      cell: ({ row }) => {
+        const issuer = row.original.issuer as Record<string, string> | undefined;
+        return (
+          <div>
+            <p className="text-sm">{issuer?.name || "-"}</p>
+            <p className="text-xs text-muted-foreground">{issuer?.rfc || ""}</p>
+          </div>
+        );
+      },
+    },
+    {
+      id: "receptor",
+      header: "Receptor",
+      cell: ({ row }) => {
+        const receiver = row.original.receiver as Record<string, string> | undefined;
+        return (
+          <div>
+            <p className="text-sm">{receiver?.name || "-"}</p>
+            <p className="text-xs text-muted-foreground">{receiver?.rfc || ""}</p>
+          </div>
+        );
+      },
+    },
+    {
+      accessorKey: "total",
+      header: "Monto",
+      cell: ({ row }) => (
+        <span className="font-medium">{formatMoney(Number(row.original.total) || 0)}</span>
+      ),
+    },
+    {
+      accessorKey: "issuedAt",
+      header: "Fecha",
+      cell: ({ row }) => (
+        <span className="text-sm">{row.original.issuedAt ? formatDate(String(row.original.issuedAt)) : "-"}</span>
+      ),
+    },
+  ];
+
+  return (
+    <>
+      <p className="text-sm text-muted-foreground">
+        Retenciones e informacion de pagos del contribuyente
+      </p>
+      <DataTable
+        columns={columns}
+        data={retentions}
+        isLoading={retentionsQuery.isLoading}
+        emptyState={
+          <EmptyState
+            icon={ShieldAlert}
+            title="No hay retenciones"
+            description="Las retenciones apareceran aqui despues de una extraction de tipo 'Retenciones'."
+          />
+        }
+      />
+    </>
+  );
+}
+
+/* ================================================================== */
+/* TAB 5: DECLARACIONES                                                */
+/* ================================================================== */
+
+function TaxReturnsTab({ taxpayerId }: { taxpayerId: string }) {
+  const taxReturnsQuery = useQuery({
+    queryKey: satKeys.taxReturns(taxpayerId),
+    queryFn: () => api.sat.syntage.taxReturns(taxpayerId),
+    enabled: !!taxpayerId,
+    staleTime: 60_000,
+  });
+
+  const taxReturns = (taxReturnsQuery.data?.taxReturns || []) as Array<Record<string, unknown>>;
+
+  const columns: ColumnDef<Record<string, unknown>>[] = [
+    {
+      accessorKey: "operationNumber",
+      header: "No. Operacion",
+      cell: ({ row }) => <span className="font-mono text-xs">{String(row.original.operationNumber || "-")}</span>,
+    },
+    {
+      accessorKey: "type",
+      header: "Tipo",
+      cell: ({ row }) => {
+        const type = String(row.original.type || "");
+        const labels: Record<string, string> = {
+          annual: "Anual",
+          monthly: "Mensual",
+          rif: "RIF",
+        };
+        return <Badge variant="outline">{labels[type] || type}</Badge>;
+      },
+    },
+    {
+      accessorKey: "period",
+      header: "Periodo",
+      cell: ({ row }) => <span className="text-sm">{String(row.original.period || "-")}</span>,
+    },
+    {
+      accessorKey: "year",
+      header: "Anio",
+      cell: ({ row }) => <span className="text-sm">{String(row.original.year || "-")}</span>,
+    },
+    {
+      accessorKey: "normalOrComplementary",
+      header: "Tipo Declaracion",
+      cell: ({ row }) => {
+        const val = String(row.original.normalOrComplementary || "");
+        return val === "complementary" ? (
+          <Badge variant="outline" className="bg-yellow-100 text-yellow-800">Complementaria</Badge>
+        ) : (
+          <Badge variant="outline" className="bg-blue-100 text-blue-800">Normal</Badge>
+        );
+      },
+    },
+    {
+      accessorKey: "createdAt",
+      header: "Fecha",
+      cell: ({ row }) => (
+        <span className="text-sm">{row.original.createdAt ? formatDate(String(row.original.createdAt)) : "-"}</span>
+      ),
+    },
+  ];
+
+  return (
+    <>
+      <p className="text-sm text-muted-foreground">
+        Declaraciones fiscales del contribuyente (anuales, mensuales, provisionales)
+      </p>
+      <DataTable
+        columns={columns}
+        data={taxReturns}
+        isLoading={taxReturnsQuery.isLoading}
+        emptyState={
+          <EmptyState
+            icon={Calendar}
+            title="No hay declaraciones"
+            description="Las declaraciones apareceran aqui despues de una extraction de tipo 'Declaracion'."
+          />
+        }
+      />
+    </>
+  );
+}
+
+/* ================================================================== */
+/* SHARED: New Extraction Dialog                                       */
+/* ================================================================== */
+
+function NewExtractionDialog({
+  open,
+  onClose,
+  taxpayerId,
+  defaultExtractor,
+  onSubmit,
+  isLoading,
+}: {
+  open: boolean;
+  onClose: () => void;
+  taxpayerId: string;
+  defaultExtractor?: string;
+  onSubmit: (extractor: string, options?: unknown) => void;
+  isLoading: boolean;
+}) {
+  const [extractor, setExtractor] = useState(defaultExtractor || "invoice");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+
+  function handleSubmit() {
+    const options: Record<string, unknown> = {};
+    if (dateFrom && dateTo) {
+      options.period = { from: dateFrom, to: dateTo };
+    }
+    if (extractor === "invoice") {
+      options.issued = true;
+      options.received = true;
+    }
+    onSubmit(extractor, Object.keys(options).length > 0 ? options : undefined);
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onClose}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Nueva Extraction</DialogTitle>
+          <DialogDescription>
+            Crea un job para descargar datos del SAT via Syntage
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <Label>Tipo de extraction</Label>
+            <Select value={extractor} onValueChange={setExtractor}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="invoice">Facturas CFDI</SelectItem>
+                <SelectItem value="annual_tax_return">Declaracion Anual</SelectItem>
+                <SelectItem value="monthly_tax_return">Declaracion Mensual</SelectItem>
+                <SelectItem value="tax_status">Constancia Fiscal</SelectItem>
+                <SelectItem value="tax_compliance">Opinion Cumplimiento</SelectItem>
+                <SelectItem value="tax_retention">Retenciones</SelectItem>
+                <SelectItem value="electronic_accounting">Contabilidad Electronica</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          {extractor === "invoice" && (
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Desde</Label>
+                <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label>Hasta</Label>
+                <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+              </div>
+            </div>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancelar</Button>
+          <Button onClick={handleSubmit} disabled={isLoading}>
+            {isLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+            Crear Extraction
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
