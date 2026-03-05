@@ -1,11 +1,11 @@
 import { getAdminClient } from '@/lib/supabase/admin';
 
 interface AuditEntry {
-  company_id: string;
+  company_id: string | number;
   user_id: string;
   action: string;
   entity_type: string;
-  entity_id: string;
+  entity_id: string | number;
   changes?: { before?: Record<string, unknown>; after?: Record<string, unknown> };
   metadata?: Record<string, unknown>;
 }
