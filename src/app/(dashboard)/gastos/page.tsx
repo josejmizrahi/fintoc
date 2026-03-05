@@ -1,21 +1,19 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { api } from "@/lib/api";
+import { useState, useMemo, useCallback } from "react";
+import { type ColumnDef } from "@tanstack/react-table";
+import { useForm, Controller } from "react-hook-form";
+import { z } from "zod";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
 import {
   Plus,
   Loader2,
-  MoreHorizontal,
-  Send,
-  CheckCircle,
+  CheckCircle2,
   XCircle,
-  Banknote,
-  Check,
-  X,
-  DollarSign,
-  Clock,
-  CreditCard,
+  FileText,
+  Upload,
+  Receipt,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -28,26 +26,13 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -58,98 +43,201 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { Separator } from "@/components/ui/separator";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+
+import { DataTable } from "@/components/shared/data-table";
+import { EmptyState } from "@/components/shared/empty-state";
+import { StatusBadge } from "@/components/shared/status-badge";
+import { SearchInput } from "@/components/shared/search-input";
+import { ConfirmDialog } from "@/components/shared/confirm-dialog";
+
+import {
+  useExpenses,
+  useCreateExpense,
+  useApproveExpense,
+  useRejectExpense,
+} from "@/lib/hooks/use-expenses";
+import { useExpenseFilters } from "@/lib/hooks/use-url-state";
+import { formatMoney, formatDate } from "@/lib/utils/format";
+import { EXPENSE_CATEGORIES } from "@/lib/utils/constants";
 
 import type { Expense } from "@/types";
 
-/* ---------- helpers ---------- */
+/* ---------- Zod schema for new expense ---------- */
 
-function formatMXN(amount: number): string {
-  return new Intl.NumberFormat("es-MX", {
-    style: "currency",
-    currency: "MXN",
-  }).format(amount);
-}
+const newExpenseSchema = z.object({
+  employee_name: z.string().min(1, "Nombre del empleado requerido"),
+  category: z.string().min(1, "Selecciona una categoria"),
+  description: z.string().max(200, "Maximo 200 caracteres").optional(),
+  amount: z.number().positive("El monto debe ser mayor a 0"),
+  date: z.string().refine(
+    (val) => {
+      if (!val) return true;
+      return new Date(val) <= new Date();
+    },
+    { message: "La fecha no puede ser futura" }
+  ),
+});
 
-function formatDate(dateStr?: string) {
-  if (!dateStr) return "-";
-  return new Date(dateStr).toLocaleDateString("es-MX", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
-}
+type NewExpenseForm = z.infer<typeof newExpenseSchema>;
 
-type BadgeVariant = "default" | "secondary" | "outline" | "destructive";
+/* ---------- Reject reason schema ---------- */
 
-const STATUS_BADGE: Record<string, { label: string; variant: BadgeVariant; className?: string }> = {
-  draft: { label: "Borrador", variant: "secondary" },
-  submitted: { label: "Enviado", variant: "outline" },
-  approved: { label: "Aprobado", variant: "default" },
-  rejected: { label: "Rechazado", variant: "destructive" },
-  paid: { label: "Pagado", variant: "default", className: "bg-green-600 hover:bg-green-700 text-white" },
-};
+const rejectSchema = z.object({
+  reason: z.string().min(1, "Ingresa un motivo de rechazo"),
+});
 
-function statusBadge(status: string) {
-  const cfg = STATUS_BADGE[status] ?? { label: status, variant: "secondary" as BadgeVariant };
-  return (
-    <Badge variant={cfg.variant} className={cfg.className}>
-      {cfg.label}
-    </Badge>
+type RejectForm = z.infer<typeof rejectSchema>;
+
+/* ---------- Columns ---------- */
+
+function useExpenseColumns(
+  onApprove: (id: number) => void,
+  onRejectOpen: (id: number) => void,
+  approvingId: number | null
+): ColumnDef<Expense, any>[] {
+  return useMemo(
+    () => [
+      {
+        accessorKey: "created_at",
+        header: "Fecha",
+        cell: ({ getValue }) => (
+          <span className="text-muted-foreground">
+            {getValue() ? formatDate(getValue<string>()) : "-"}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "employee_name",
+        header: "Empleado",
+        cell: ({ getValue }) => (
+          <span className="font-medium">{getValue<string>()}</span>
+        ),
+      },
+      {
+        accessorKey: "category",
+        header: "Categoria",
+        cell: ({ getValue }) => (
+          <span className="capitalize">{getValue<string>() || "-"}</span>
+        ),
+      },
+      {
+        accessorKey: "description",
+        header: "Descripcion",
+        cell: ({ getValue }) => (
+          <span className="max-w-[200px] truncate block text-muted-foreground">
+            {getValue<string>() || "-"}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "amount",
+        header: () => <span className="text-right block">Monto</span>,
+        cell: ({ getValue }) => (
+          <span className="text-right font-mono block">
+            {formatMoney(getValue<number>())}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "cfdi_uuid",
+        header: () => <span className="text-center block">CFDI</span>,
+        cell: ({ getValue }) =>
+          getValue() ? (
+            <FileText className="size-4 text-green-600 mx-auto" />
+          ) : (
+            <XCircle className="size-4 text-muted-foreground mx-auto" />
+          ),
+      },
+      {
+        accessorKey: "status",
+        header: "Estado",
+        cell: ({ getValue }) => <StatusBadge status={getValue<string>()} />,
+      },
+      {
+        id: "actions",
+        header: () => <span className="text-right block">Acciones</span>,
+        cell: ({ row }) => {
+          const expense = row.original;
+          if (
+            expense.status !== "pending" &&
+            expense.status !== "submitted" &&
+            expense.status !== "draft"
+          )
+            return null;
+
+          const isPending =
+            expense.status === "pending" || expense.status === "submitted";
+
+          return (
+            <div className="flex items-center justify-end gap-2">
+              {isPending && (
+                <>
+                  <Button
+                    variant="default"
+                    size="sm"
+                    onClick={() => onApprove(expense.id)}
+                    disabled={approvingId === expense.id}
+                  >
+                    {approvingId === expense.id ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : (
+                      <CheckCircle2 className="size-3.5" />
+                    )}
+                    <span className="ml-1">Aprobar</span>
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => onRejectOpen(expense.id)}
+                    disabled={approvingId === expense.id}
+                  >
+                    <XCircle className="size-3.5" />
+                    <span className="ml-1">Rechazar</span>
+                  </Button>
+                </>
+              )}
+            </div>
+          );
+        },
+      },
+    ],
+    [onApprove, onRejectOpen, approvingId]
   );
 }
 
 /* ---------- NewExpenseDialog ---------- */
 
-interface NewExpenseDialogProps {
+function NewExpenseDialog({
+  open,
+  onOpenChange,
+}: {
   open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onSuccess: () => void;
-}
+  onOpenChange: (v: boolean) => void;
+}) {
+  const createExpense = useCreateExpense();
+  const [xmlFile, setXmlFile] = useState<File | null>(null);
 
-function NewExpenseDialog({ open, onOpenChange, onSuccess }: NewExpenseDialogProps) {
-  const [employeeName, setEmployeeName] = useState("");
-  const [category, setCategory] = useState("");
-  const [description, setDescription] = useState("");
-  const [amount, setAmount] = useState("");
-  const [currency, setCurrency] = useState("MXN");
-  const [cfdiUuid, setCfdiUuid] = useState("");
-  const [submitting, setSubmitting] = useState(false);
+  const form = useForm<NewExpenseForm>({
+    resolver: zodResolver(newExpenseSchema) as any,
+    defaultValues: {
+      employee_name: "",
+      category: "",
+      description: "",
+      amount: 0,
+      date: new Date().toISOString().slice(0, 10),
+    },
+  });
 
-  function resetForm() {
-    setEmployeeName("");
-    setCategory("");
-    setDescription("");
-    setAmount("");
-    setCurrency("MXN");
-    setCfdiUuid("");
-  }
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!employeeName || !category || !amount) {
-      toast.error("Completa los campos requeridos");
-      return;
-    }
-    setSubmitting(true);
-    try {
-      await api.expenses.create({
-        employee_name: employeeName,
-        category,
-        description: description || undefined,
-        amount: parseFloat(amount),
-        currency,
-        cfdi_uuid: cfdiUuid || undefined,
-      });
-      toast.success("Gasto creado exitosamente");
-      resetForm();
-      onOpenChange(false);
-      onSuccess();
-    } catch (err: any) {
-      toast.error(err.message || "Error al crear el gasto");
-    } finally {
-      setSubmitting(false);
-    }
+  async function onSubmit(data: NewExpenseForm) {
+    await createExpense.mutateAsync({
+      ...data,
+      currency: "MXN",
+      cfdi_file: xmlFile ? xmlFile.name : undefined,
+    });
+    form.reset();
+    setXmlFile(null);
+    onOpenChange(false);
   }
 
   return (
@@ -157,79 +245,120 @@ function NewExpenseDialog({ open, onOpenChange, onSuccess }: NewExpenseDialogPro
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Nuevo Gasto</DialogTitle>
+          <DialogDescription>
+            Registra un nuevo gasto de empleado.
+          </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="grid gap-4 py-2">
+        <form onSubmit={form.handleSubmit(onSubmit)} className="grid gap-4 py-2">
           <div className="grid gap-2">
-            <Label htmlFor="employee_name">Empleado</Label>
+            <Label htmlFor="employee_name">Empleado *</Label>
             <Input
               id="employee_name"
               placeholder="Nombre del empleado"
-              value={employeeName}
-              onChange={(e) => setEmployeeName(e.target.value)}
+              {...form.register("employee_name")}
             />
+            {form.formState.errors.employee_name && (
+              <p className="text-xs text-destructive">
+                {form.formState.errors.employee_name.message}
+              </p>
+            )}
           </div>
 
           <div className="grid gap-2">
-            <Label htmlFor="category">Categoria</Label>
-            <Select value={category} onValueChange={setCategory}>
-              <SelectTrigger>
-                <SelectValue placeholder="Seleccionar categoria" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="viaticos">Viaticos</SelectItem>
-                <SelectItem value="materiales">Materiales</SelectItem>
-                <SelectItem value="servicios">Servicios</SelectItem>
-                <SelectItem value="otros">Otros</SelectItem>
-              </SelectContent>
-            </Select>
+            <Label htmlFor="category">Categoria *</Label>
+            <Controller
+              control={form.control}
+              name="category"
+              render={({ field }) => (
+                <Select value={field.value} onValueChange={field.onChange}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Seleccionar categoria" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {EXPENSE_CATEGORIES.map((cat) => (
+                      <SelectItem key={cat} value={cat.toLowerCase()}>
+                        {cat}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            />
+            {form.formState.errors.category && (
+              <p className="text-xs text-destructive">
+                {form.formState.errors.category.message}
+              </p>
+            )}
           </div>
 
           <div className="grid gap-2">
             <Label htmlFor="description">Descripcion</Label>
             <Textarea
               id="description"
-              placeholder="Descripcion del gasto"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Descripcion del gasto (max 200 caracteres)"
+              maxLength={200}
+              {...form.register("description")}
             />
+            {form.formState.errors.description && (
+              <p className="text-xs text-destructive">
+                {form.formState.errors.description.message}
+              </p>
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-4">
             <div className="grid gap-2">
-              <Label htmlFor="amount">Monto</Label>
+              <Label htmlFor="amount">Monto *</Label>
               <Input
                 id="amount"
                 type="number"
                 step="0.01"
                 min="0"
                 placeholder="0.00"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
+                {...form.register("amount")}
               />
+              {form.formState.errors.amount && (
+                <p className="text-xs text-destructive">
+                  {form.formState.errors.amount.message}
+                </p>
+              )}
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="currency">Moneda</Label>
-              <Select value={currency} onValueChange={setCurrency}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="MXN">MXN</SelectItem>
-                  <SelectItem value="USD">USD</SelectItem>
-                </SelectContent>
-              </Select>
+              <Label htmlFor="date">Fecha</Label>
+              <Input
+                id="date"
+                type="date"
+                max={new Date().toISOString().slice(0, 10)}
+                {...form.register("date")}
+              />
+              {form.formState.errors.date && (
+                <p className="text-xs text-destructive">
+                  {form.formState.errors.date.message}
+                </p>
+              )}
             </div>
           </div>
 
           <div className="grid gap-2">
-            <Label htmlFor="cfdi_uuid">UUID CFDI (opcional)</Label>
-            <Input
-              id="cfdi_uuid"
-              placeholder="XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX"
-              value={cfdiUuid}
-              onChange={(e) => setCfdiUuid(e.target.value)}
-            />
+            <Label htmlFor="xml_cfdi">XML CFDI (opcional)</Label>
+            <div className="flex items-center gap-2">
+              <Input
+                id="xml_cfdi"
+                type="file"
+                accept=".xml"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) setXmlFile(file);
+                }}
+              />
+              {xmlFile && (
+                <Badge variant="secondary" className="shrink-0">
+                  <Upload className="size-3 mr-1" />
+                  {xmlFile.name}
+                </Badge>
+              )}
+            </div>
           </div>
 
           <DialogFooter className="pt-2">
@@ -237,12 +366,14 @@ function NewExpenseDialog({ open, onOpenChange, onSuccess }: NewExpenseDialogPro
               type="button"
               variant="outline"
               onClick={() => onOpenChange(false)}
-              disabled={submitting}
+              disabled={createExpense.isPending}
             >
               Cancelar
             </Button>
-            <Button type="submit" disabled={submitting}>
-              {submitting && <Loader2 className="mr-2 size-4 animate-spin" />}
+            <Button type="submit" disabled={createExpense.isPending}>
+              {createExpense.isPending && (
+                <Loader2 className="mr-2 size-4 animate-spin" />
+              )}
               Crear Gasto
             </Button>
           </DialogFooter>
@@ -254,75 +385,68 @@ function NewExpenseDialog({ open, onOpenChange, onSuccess }: NewExpenseDialogPro
 
 /* ---------- Main Page ---------- */
 
-interface ExpenseSummary {
-  total_pending: number;
-  total_approved: number;
-  total_paid: number;
-}
-
 export default function GastosPage() {
-  const [expenses, setExpenses] = useState<Expense[]>([]);
-  const [summary, setSummary] = useState<ExpenseSummary | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [filters, setFilters] = useExpenseFilters();
+  const [tab, setTab] = useState("todos");
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [actionLoading, setActionLoading] = useState<number | null>(null);
+  const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
+  const [rejectingId, setRejectingId] = useState<number | null>(null);
+  const [approvingId, setApprovingId] = useState<number | null>(null);
 
-  async function fetchData() {
-    setLoading(true);
-    try {
-      const [expensesList, summaryData] = await Promise.all([
-        api.expenses.list(),
-        api.expenses.summary(),
-      ]);
-      setExpenses(expensesList);
-      setSummary(summaryData);
-    } catch (err: any) {
-      toast.error(err.message || "Error al cargar gastos");
-    } finally {
-      setLoading(false);
-    }
-  }
+  const statusFilter = tab === "todos" ? undefined : tab;
 
-  useEffect(() => {
-    fetchData();
+  const { data: expensesData, isLoading } = useExpenses({
+    status: statusFilter || filters.status || undefined,
+    search: filters.search || undefined,
+    page: filters.page,
+    per_page: filters.per_page,
+    date_from: filters.date_from || undefined,
+    date_to: filters.date_to || undefined,
+  });
+
+  const approveExpense = useApproveExpense();
+  const rejectExpense = useRejectExpense();
+
+  const rejectForm = useForm<RejectForm>({
+    resolver: zodResolver(rejectSchema),
+    defaultValues: { reason: "" },
+  });
+
+  const expenses: Expense[] = useMemo(() => {
+    if (!expensesData) return [];
+    if (Array.isArray(expensesData)) return expensesData;
+    const d = expensesData as Record<string, unknown>;
+    return (d.data as Expense[]) ?? [];
+  }, [expensesData]);
+
+  const totalExpenses = expenses.length;
+
+  const handleApprove = useCallback(
+    async (id: number) => {
+      setApprovingId(id);
+      try {
+        await approveExpense.mutateAsync(id);
+      } finally {
+        setApprovingId(null);
+      }
+    },
+    [approveExpense]
+  );
+
+  const handleRejectOpen = useCallback((id: number) => {
+    setRejectingId(id);
+    setRejectDialogOpen(true);
   }, []);
 
-  async function handleAction(id: number, action: "submit" | "approve" | "reject" | "pay") {
-    setActionLoading(id);
-    const labels: Record<string, string> = {
-      submit: "Gasto enviado",
-      approve: "Gasto aprobado",
-      reject: "Gasto rechazado",
-      pay: "Gasto pagado",
-    };
-    try {
-      await api.expenses.action(id, { action });
-      toast.success(labels[action]);
-      fetchData();
-    } catch (err: any) {
-      toast.error(err.message || "Error al procesar la accion");
-    } finally {
-      setActionLoading(null);
-    }
+  async function handleRejectSubmit(data: RejectForm) {
+    if (!rejectingId) return;
+    await rejectExpense.mutateAsync({ id: rejectingId, reason: data.reason });
+    setRejectDialogOpen(false);
+    setRejectingId(null);
+    rejectForm.reset();
   }
 
-  const summaryCards = [
-    {
-      title: "Pendientes",
-      value: summary ? formatMXN(summary.total_pending) : "-",
-      icon: Clock,
-    },
-    {
-      title: "Aprobados",
-      value: summary ? formatMXN(summary.total_approved) : "-",
-      icon: CheckCircle,
-    },
-    {
-      title: "Pagados",
-      value: summary ? formatMXN(summary.total_paid) : "-",
-      icon: CreditCard,
-    },
-  ];
+  const columns = useExpenseColumns(handleApprove, handleRejectOpen, approvingId);
 
   return (
     <div className="flex flex-col gap-6">
@@ -340,143 +464,115 @@ export default function GastosPage() {
         </Button>
       </div>
 
-      {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {summaryCards.map((card) => {
-          const Icon = card.icon;
-          return (
-            <Card key={card.title}>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">{card.title}</CardTitle>
-                <Icon className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{card.value}</div>
-              </CardContent>
-            </Card>
-          );
-        })}
-      </div>
+      {/* Tabs + DataTable */}
+      <Tabs value={tab} onValueChange={setTab}>
+        <TabsList>
+          <TabsTrigger value="todos">Todos</TabsTrigger>
+          <TabsTrigger value="pending">Pendientes</TabsTrigger>
+          <TabsTrigger value="approved">Aprobados</TabsTrigger>
+          <TabsTrigger value="rejected">Rechazados</TabsTrigger>
+        </TabsList>
 
-      <Separator />
-
-      {/* Expenses Table */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Listado de Gastos</CardTitle>
-          <CardDescription>
-            Todos los gastos registrados con su estado y validacion CFDI.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {loading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="size-6 animate-spin text-muted-foreground" />
-            </div>
-          ) : expenses.length === 0 ? (
-            <p className="py-8 text-center text-sm text-muted-foreground">
-              No hay gastos registrados.
-            </p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>ID</TableHead>
-                  <TableHead>Empleado</TableHead>
-                  <TableHead>Categoria</TableHead>
-                  <TableHead>Descripcion</TableHead>
-                  <TableHead className="text-right">Monto (MXN)</TableHead>
-                  <TableHead>Estado</TableHead>
-                  <TableHead className="text-center">CFDI</TableHead>
-                  <TableHead>Fecha</TableHead>
-                  <TableHead className="text-right">Acciones</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {expenses.map((expense) => (
-                  <TableRow key={expense.id}>
-                    <TableCell className="font-medium">#{expense.id}</TableCell>
-                    <TableCell>{expense.employee_name}</TableCell>
-                    <TableCell className="capitalize">{expense.category || "-"}</TableCell>
-                    <TableCell className="max-w-[200px] truncate text-muted-foreground">
-                      {expense.description || "-"}
-                    </TableCell>
-                    <TableCell className="text-right font-mono">
-                      {formatMXN(expense.amount)}
-                    </TableCell>
-                    <TableCell>{statusBadge(expense.status)}</TableCell>
-                    <TableCell className="text-center">
-                      {expense.cfdi_uuid ? (
-                        <Check className="mx-auto size-4 text-green-600" />
-                      ) : (
-                        <X className="mx-auto size-4 text-muted-foreground" />
-                      )}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {formatDate(expense.created_at)}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {["draft", "submitted", "approved"].includes(expense.status) ? (
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            disabled={actionLoading === expense.id}
-                          >
-                            {actionLoading === expense.id ? (
-                              <Loader2 className="size-4 animate-spin" />
-                            ) : (
-                              <MoreHorizontal className="size-4" />
-                            )}
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          {expense.status === "draft" && (
-                            <DropdownMenuItem onClick={() => handleAction(expense.id, "submit")}>
-                              <Send className="mr-2 size-4" />
-                              Enviar
-                            </DropdownMenuItem>
-                          )}
-                          {expense.status === "submitted" && (
-                            <>
-                              <DropdownMenuItem onClick={() => handleAction(expense.id, "approve")}>
-                                <CheckCircle className="mr-2 size-4" />
-                                Aprobar
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                variant="destructive"
-                                onClick={() => handleAction(expense.id, "reject")}
-                              >
-                                <XCircle className="mr-2 size-4" />
-                                Rechazar
-                              </DropdownMenuItem>
-                            </>
-                          )}
-                          {expense.status === "approved" && (
-                            <DropdownMenuItem onClick={() => handleAction(expense.id, "pay")}>
-                              <Banknote className="mr-2 size-4" />
-                              Pagar
-                            </DropdownMenuItem>
-                          )}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                      ) : null}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
+        <TabsContent value={tab} className="mt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Listado de Gastos</CardTitle>
+              <CardDescription>
+                {tab === "todos"
+                  ? "Todos los gastos registrados con su estado y validacion CFDI."
+                  : tab === "pending"
+                  ? "Gastos pendientes de aprobacion."
+                  : tab === "approved"
+                  ? "Gastos aprobados."
+                  : "Gastos rechazados con motivo."}
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <DataTable
+                columns={columns}
+                data={expenses}
+                isLoading={isLoading}
+                pagination={{
+                  page: filters.page,
+                  pageSize: filters.per_page,
+                  total: totalExpenses,
+                }}
+                onPaginationChange={(p) =>
+                  setFilters({ page: p.page, per_page: p.pageSize })
+                }
+                emptyState={
+                  <EmptyState
+                    icon={Receipt}
+                    title="Sin gastos"
+                    description="No hay gastos registrados en esta categoria."
+                  />
+                }
+                toolbar={
+                  <SearchInput
+                    value={filters.search}
+                    onChange={(v) => setFilters({ search: v, page: 1 })}
+                    placeholder="Buscar por empleado, descripcion..."
+                  />
+                }
+              />
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
 
       {/* New Expense Dialog */}
-      <NewExpenseDialog
-        open={dialogOpen}
-        onOpenChange={setDialogOpen}
-        onSuccess={fetchData}
-      />
+      <NewExpenseDialog open={dialogOpen} onOpenChange={setDialogOpen} />
+
+      {/* Reject Dialog */}
+      <Dialog open={rejectDialogOpen} onOpenChange={setRejectDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Rechazar Gasto</DialogTitle>
+            <DialogDescription>
+              Indica el motivo del rechazo de este gasto.
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            onSubmit={rejectForm.handleSubmit(handleRejectSubmit)}
+            className="grid gap-4 py-2"
+          >
+            <div className="grid gap-2">
+              <Label htmlFor="reject-reason">Motivo de rechazo</Label>
+              <Textarea
+                id="reject-reason"
+                placeholder="Explica por que se rechaza..."
+                rows={3}
+                {...rejectForm.register("reason")}
+              />
+              {rejectForm.formState.errors.reason && (
+                <p className="text-xs text-destructive">
+                  {rejectForm.formState.errors.reason.message}
+                </p>
+              )}
+            </div>
+            <DialogFooter className="pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setRejectDialogOpen(false)}
+                disabled={rejectExpense.isPending}
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="submit"
+                variant="destructive"
+                disabled={rejectExpense.isPending}
+              >
+                {rejectExpense.isPending && (
+                  <Loader2 className="mr-2 size-4 animate-spin" />
+                )}
+                Rechazar
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

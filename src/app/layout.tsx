@@ -1,11 +1,11 @@
-import type { Metadata } from "next";
-import { Providers } from "@/components/layout/providers";
-import "./globals.css";
+import type { Metadata } from 'next';
+import { Providers } from '@/components/layout/providers';
+import './globals.css';
 
 export const metadata: Metadata = {
-  title: "Payana - Plataforma Financiera",
+  title: 'Quimibond - Plataforma Financiera',
   description:
-    "Plataforma de pagos, cobranza y gestión financiera para empresas en México. Integración con Fintoc, Odoo y SAT.",
+    'Plataforma de pagos, cobranza y gestion financiera para empresas en Mexico. Integracion con Fintoc, Odoo y SAT.',
 };
 
 export default function RootLayout({

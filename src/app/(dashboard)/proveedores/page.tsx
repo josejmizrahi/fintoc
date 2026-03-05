@@ -1,32 +1,50 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
-import { api } from "@/lib/api";
-import { Vendor, Invoice } from "@/types";
+import { useState, useMemo, useEffect } from "react";
+import { type ColumnDef } from "@tanstack/react-table";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { type z } from "zod";
 import { toast } from "sonner";
 import {
   Users,
-  UserCheck,
-  FileText,
-  ExternalLink,
-  Edit,
-  Check,
-  Loader2,
-  X,
   Plus,
+  ShieldCheck,
+  ShieldAlert,
+  ShieldX,
+  FileText,
+  CreditCard,
+  RefreshCw,
+  CheckCircle2,
+  XCircle,
+  Loader2,
+  AlertTriangle,
 } from "lucide-react";
+
+import { api } from "@/lib/api";
+import {
+  useVendors,
+  useCreateVendor,
+  useVerifyVendorClabe,
+} from "@/lib/hooks/use-vendors";
+import { useVendorFilters } from "@/lib/hooks/use-url-state";
+import { formatMoney, formatDate, formatCLABE, formatRFC } from "@/lib/utils/format";
+import { createVendorSchema } from "@/lib/utils/validation";
+import { getBankFromCLABE } from "@/lib/utils/constants";
+import type { Vendor, Invoice } from "@/types";
+
+import { DataTable } from "@/components/shared/data-table";
+import { EmptyState } from "@/components/shared/empty-state";
+import { StatusBadge } from "@/components/shared/status-badge";
+import { SearchInput } from "@/components/shared/search-input";
+import { DetailPanel } from "@/components/shared/detail-panel";
+import { ConfirmDialog } from "@/components/shared/confirm-dialog";
+import { PermissionGate } from "@/components/shared/permission-gate";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Dialog,
   DialogContent,
@@ -35,304 +53,122 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form";
 
-/* ---------- helpers ---------- */
+/* ---------- Types ---------- */
 
-function formatMXN(amount: number): string {
-  return new Intl.NumberFormat("es-MX", {
-    style: "currency",
-    currency: "MXN",
-  }).format(amount);
-}
+type CreateVendorInput = z.infer<typeof createVendorSchema>;
 
-function formatDate(dateStr?: string) {
-  if (!dateStr) return "-";
-  return new Date(dateStr).toLocaleDateString("es-MX", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
-}
+/* ---------- EFOS badge ---------- */
 
-/* ---------- Edit CLABE Dialog ---------- */
-
-interface EditClabeDialogProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  vendor: Vendor | null;
-  onSuccess: () => void;
-}
-
-function EditClabeDialog({
-  open,
-  onOpenChange,
-  vendor,
-  onSuccess,
-}: EditClabeDialogProps) {
-  const [clabe, setClabe] = useState("");
-  const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    if (open && vendor) {
-      setClabe(vendor.clabe || "");
-    }
-  }, [open, vendor]);
-
-  async function handleSave(e: React.FormEvent) {
-    e.preventDefault();
-    if (!vendor) return;
-
-    const trimmed = clabe.replace(/\s/g, "");
-    if (trimmed.length !== 18 || !/^\d{18}$/.test(trimmed)) {
-      toast.error("La CLABE debe tener exactamente 18 dígitos numéricos");
-      return;
-    }
-
-    setSaving(true);
-    try {
-      await api.vendors.setClabe(vendor.id, trimmed);
-      toast.success("CLABE actualizada exitosamente");
-      onOpenChange(false);
-      onSuccess();
-    } catch (err: any) {
-      toast.error(err.message || "Error al guardar CLABE");
-    } finally {
-      setSaving(false);
-    }
+function EfosBadge({ status }: { status?: string }) {
+  if (!status || status === "clean" || status === "200") {
+    return (
+      <Badge
+        variant="outline"
+        className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+      >
+        <ShieldCheck className="mr-1 size-3" />
+        Limpio
+      </Badge>
+    );
   }
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Edit className="size-5" />
-            Editar CLABE
-          </DialogTitle>
-        </DialogHeader>
-
-        <form onSubmit={handleSave} className="grid gap-4 py-2">
-          <p className="text-sm text-muted-foreground">
-            Proveedor:{" "}
-            <span className="font-medium text-foreground">
-              {vendor?.name || "-"}
-            </span>
-          </p>
-
-          <div className="grid gap-2">
-            <Label htmlFor="clabe-input">CLABE Interbancaria (18 dígitos)</Label>
-            <Input
-              id="clabe-input"
-              placeholder="000000000000000000"
-              maxLength={18}
-              value={clabe}
-              onChange={(e) =>
-                setClabe(e.target.value.replace(/\D/g, "").slice(0, 18))
-              }
-              className="font-mono tracking-wider"
-            />
-            <p className="text-xs text-muted-foreground">
-              {clabe.length}/18 dígitos
-            </p>
-          </div>
-
-          <DialogFooter className="pt-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => onOpenChange(false)}
-              disabled={saving}
-            >
-              Cancelar
-            </Button>
-            <Button type="submit" disabled={saving || clabe.length !== 18}>
-              {saving && <Loader2 className="mr-2 size-4 animate-spin" />}
-              Guardar CLABE
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-/* ---------- Vendor Detail Panel ---------- */
-
-interface VendorDetailDialogProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  vendorId: number | null;
-}
-
-function VendorDetailDialog({
-  open,
-  onOpenChange,
-  vendorId,
-}: VendorDetailDialogProps) {
-  const [vendor, setVendor] = useState<any>(null);
-  const [bills, setBills] = useState<Invoice[]>([]);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    if (!open || !vendorId) return;
-    setLoading(true);
-    setVendor(null);
-    setBills([]);
-
-    Promise.all([api.vendors.get(vendorId), api.vendors.bills(vendorId)])
-      .then(([v, b]) => {
-        setVendor(v);
-        setBills(b);
-      })
-      .catch((err: any) =>
-        toast.error(err.message || "Error al cargar detalle del proveedor")
-      )
-      .finally(() => setLoading(false));
-  }, [open, vendorId]);
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-2xl max-h-[80vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Users className="size-5" />
-            Detalle del Proveedor
-          </DialogTitle>
-        </DialogHeader>
-
-        {loading ? (
-          <div className="flex items-center justify-center py-12">
-            <Loader2 className="size-6 animate-spin text-muted-foreground" />
-          </div>
-        ) : !vendor ? (
-          <p className="py-8 text-center text-sm text-muted-foreground">
-            No se encontraron datos del proveedor.
-          </p>
-        ) : (
-          <div className="grid gap-6 py-2">
-            {/* Vendor Info */}
-            <div className="grid gap-3">
-              <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-                Información
-              </h3>
-              <div className="grid grid-cols-[120px_1fr] gap-2 text-sm">
-                <span className="font-medium text-muted-foreground">Nombre</span>
-                <span>{vendor.name || "-"}</span>
-              </div>
-              <div className="grid grid-cols-[120px_1fr] gap-2 text-sm">
-                <span className="font-medium text-muted-foreground">RFC</span>
-                <span className="font-mono">{vendor.rfc || "-"}</span>
-              </div>
-              <div className="grid grid-cols-[120px_1fr] gap-2 text-sm">
-                <span className="font-medium text-muted-foreground">Email</span>
-                <span>{vendor.email || "-"}</span>
-              </div>
-              <div className="grid grid-cols-[120px_1fr] gap-2 text-sm">
-                <span className="font-medium text-muted-foreground">CLABE</span>
-                <span className="font-mono">
-                  {vendor.clabe || (
-                    <span className="text-muted-foreground italic">
-                      Sin CLABE registrada
-                    </span>
-                  )}
-                </span>
-              </div>
-            </div>
-
-            {/* Bills */}
-            <div className="grid gap-3">
-              <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-                Facturas ({bills.length})
-              </h3>
-              {bills.length === 0 ? (
-                <p className="text-sm text-muted-foreground py-4 text-center">
-                  No hay facturas registradas para este proveedor.
-                </p>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Factura</TableHead>
-                      <TableHead className="text-right">Monto</TableHead>
-                      <TableHead className="text-right">Saldo</TableHead>
-                      <TableHead>Vencimiento</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {bills.map((bill) => (
-                      <TableRow key={bill.id}>
-                        <TableCell className="font-medium">
-                          {bill.name || `FAC-${bill.id}`}
-                        </TableCell>
-                        <TableCell className="text-right font-mono">
-                          {formatMXN(bill.amount_total ?? 0)}
-                        </TableCell>
-                        <TableCell className="text-right font-mono">
-                          {formatMXN(bill.amount_residual ?? 0)}
-                        </TableCell>
-                        <TableCell className="text-muted-foreground">
-                          {formatDate(bill.date_due)}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
-            </div>
-          </div>
-        )}
-      </DialogContent>
-    </Dialog>
-  );
+  if (status === "presumed" || status === "201") {
+    return (
+      <Badge
+        variant="outline"
+        className="bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200"
+      >
+        <ShieldAlert className="mr-1 size-3" />
+        Presunto
+      </Badge>
+    );
+  }
+  if (status === "definitive" || status === "definitivo" || status === "203") {
+    return (
+      <Badge variant="destructive">
+        <ShieldX className="mr-1 size-3" />
+        Definitivo
+      </Badge>
+    );
+  }
+  if (status === "disproved" || status === "202") {
+    return (
+      <Badge
+        variant="outline"
+        className="bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
+      >
+        Desvirtuado
+      </Badge>
+    );
+  }
+  if (status === "favorable" || status === "204") {
+    return (
+      <Badge
+        variant="outline"
+        className="bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
+      >
+        Favorable
+      </Badge>
+    );
+  }
+  return <Badge variant="outline">Sin verificar</Badge>;
 }
 
 /* ---------- Create Vendor Dialog ---------- */
 
-interface CreateVendorDialogProps {
+function CreateVendorDialog({
+  open,
+  onOpenChange,
+}: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onSuccess: () => void;
-}
+}) {
+  const createVendor = useCreateVendor();
 
-function CreateVendorDialog({ open, onOpenChange, onSuccess }: CreateVendorDialogProps) {
-  const [name, setName] = useState("");
-  const [rfc, setRfc] = useState("");
-  const [email, setEmail] = useState("");
-  const [clabe, setClabe] = useState("");
-  const [saving, setSaving] = useState(false);
+  const form = useForm<CreateVendorInput>({
+    resolver: zodResolver(createVendorSchema),
+    defaultValues: {
+      name: "",
+      rfc: "",
+      email: "",
+      phone: "",
+      clabe: "",
+    },
+  });
 
-  function resetForm() {
-    setName("");
-    setRfc("");
-    setEmail("");
-    setClabe("");
-  }
+  const clabeValue = form.watch("clabe");
+  const detectedBank = clabeValue && clabeValue.length >= 3
+    ? getBankFromCLABE(clabeValue)
+    : "";
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!name.trim()) {
-      toast.error("El nombre del proveedor es requerido");
-      return;
-    }
-    setSaving(true);
-    try {
-      await api.vendors.create({
-        name: name.trim(),
-        rfc: rfc.trim() || undefined,
-        email: email.trim() || undefined,
-        clabe: clabe.trim() || undefined,
-      });
-      toast.success("Proveedor creado exitosamente");
-      resetForm();
-      onOpenChange(false);
-      onSuccess();
-    } catch (err: any) {
-      toast.error(err.message || "Error al crear proveedor");
-    } finally {
-      setSaving(false);
-    }
+  function onSubmit(data: CreateVendorInput) {
+    createVendor.mutate(data, {
+      onSuccess: () => {
+        form.reset();
+        onOpenChange(false);
+      },
+    });
   }
 
   return (
@@ -341,247 +177,562 @@ function CreateVendorDialog({ open, onOpenChange, onSuccess }: CreateVendorDialo
         <DialogHeader>
           <DialogTitle>Nuevo Proveedor</DialogTitle>
           <DialogDescription>
-            Ingresa los datos del proveedor.
+            Ingresa los datos del proveedor. Los campos con * son obligatorios.
           </DialogDescription>
         </DialogHeader>
-        <form onSubmit={handleSubmit} className="grid gap-4 py-2">
-          <div className="grid gap-2">
-            <Label htmlFor="vendor-name">Nombre *</Label>
-            <Input id="vendor-name" placeholder="Nombre del proveedor" value={name} onChange={(e) => setName(e.target.value)} />
-          </div>
-          <div className="grid gap-2">
-            <Label htmlFor="vendor-rfc">RFC</Label>
-            <Input id="vendor-rfc" placeholder="XAXX010101000" maxLength={13} value={rfc} onChange={(e) => setRfc(e.target.value.toUpperCase())} className="font-mono" />
-          </div>
-          <div className="grid gap-2">
-            <Label htmlFor="vendor-email">Email</Label>
-            <Input id="vendor-email" type="email" placeholder="proveedor@empresa.com" value={email} onChange={(e) => setEmail(e.target.value)} />
-          </div>
-          <div className="grid gap-2">
-            <Label htmlFor="vendor-clabe">CLABE (18 dígitos)</Label>
-            <Input id="vendor-clabe" placeholder="000000000000000000" maxLength={18} value={clabe} onChange={(e) => setClabe(e.target.value.replace(/\D/g, "").slice(0, 18))} className="font-mono tracking-wider" />
-          </div>
-          <DialogFooter className="pt-2">
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancelar</Button>
-            <Button type="submit" disabled={saving || !name.trim()}>
-              {saving && <Loader2 className="mr-2 size-4 animate-spin" />}
-              Crear
-            </Button>
-          </DialogFooter>
-        </form>
+        <Form {...form}>
+          <form onSubmit={form.handleSubmit(onSubmit)} className="grid gap-4 py-2">
+            <FormField
+              control={form.control}
+              name="name"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Nombre *</FormLabel>
+                  <FormControl>
+                    <Input placeholder="Nombre del proveedor" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="rfc"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>RFC</FormLabel>
+                  <FormControl>
+                    <Input
+                      placeholder="XAXX010101000"
+                      maxLength={13}
+                      className="font-mono uppercase"
+                      {...field}
+                      onChange={(e) =>
+                        field.onChange(e.target.value.toUpperCase())
+                      }
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="email"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Email</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="email"
+                      placeholder="proveedor@empresa.com"
+                      {...field}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="phone"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Telefono</FormLabel>
+                  <FormControl>
+                    <Input placeholder="+52 55 1234 5678" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="clabe"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>CLABE (18 digitos)</FormLabel>
+                  <FormControl>
+                    <Input
+                      placeholder="000000000000000000"
+                      maxLength={18}
+                      className="font-mono tracking-wider"
+                      {...field}
+                      onChange={(e) =>
+                        field.onChange(
+                          e.target.value.replace(/\D/g, "").slice(0, 18)
+                        )
+                      }
+                    />
+                  </FormControl>
+                  {detectedBank && (
+                    <p className="text-xs text-muted-foreground">
+                      Banco detectado: <strong>{detectedBank}</strong>
+                    </p>
+                  )}
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => onOpenChange(false)}
+                disabled={createVendor.isPending}
+              >
+                Cancelar
+              </Button>
+              <Button type="submit" disabled={createVendor.isPending}>
+                {createVendor.isPending && (
+                  <Loader2 className="mr-2 size-4 animate-spin" />
+                )}
+                Crear
+              </Button>
+            </DialogFooter>
+          </form>
+        </Form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/* ---------- Vendor Detail Panel ---------- */
+
+function VendorDetailContent({ vendorId }: { vendorId: number }) {
+  const [bills, setBills] = useState<Invoice[]>([]);
+  const [billsLoading, setBillsLoading] = useState(true);
+  const [payments, setPayments] = useState<any[]>([]);
+
+  useEffect(() => {
+    setBillsLoading(true);
+    api.vendors
+      .bills(vendorId)
+      .then(setBills)
+      .catch(() => {})
+      .finally(() => setBillsLoading(false));
+  }, [vendorId]);
+
+  return (
+    <div className="space-y-6 pt-4">
+      {/* Bills */}
+      <div>
+        <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+          Facturas por Pagar ({bills.length})
+        </h3>
+        {billsLoading ? (
+          <div className="flex justify-center py-8">
+            <Loader2 className="size-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : bills.length === 0 ? (
+          <p className="text-sm text-muted-foreground text-center py-4">
+            Sin facturas pendientes.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {bills.map((bill) => (
+              <div
+                key={bill.id}
+                className="flex items-center justify-between rounded-md border p-3 text-sm"
+              >
+                <div>
+                  <p className="font-medium">{bill.name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    Vence: {bill.date_due ? formatDate(bill.date_due) : "-"}
+                  </p>
+                </div>
+                <div className="text-right">
+                  <p className="font-mono font-semibold">
+                    {formatMoney(bill.amount_residual ?? 0)}
+                  </p>
+                  <p className="text-xs text-muted-foreground font-mono">
+                    de {formatMoney(bill.amount_total ?? 0)}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
 /* ---------- Main Page ---------- */
 
 export default function ProveedoresPage() {
-  const [vendors, setVendors] = useState<Vendor[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  // Create dialog
+  const [filters, setFilters] = useVendorFilters();
   const [createOpen, setCreateOpen] = useState(false);
+  const [detailVendor, setDetailVendor] = useState<Vendor | null>(null);
+  const [syncingId, setSyncingId] = useState<number | null>(null);
 
-  // Edit CLABE dialog
-  const [editClabeOpen, setEditClabeOpen] = useState(false);
-  const [editClabeVendor, setEditClabeVendor] = useState<Vendor | null>(null);
+  // TanStack Query hooks
+  const { data: vendorsRaw, isLoading } = useVendors({
+    search: filters.search,
+    page: filters.page,
+    per_page: filters.per_page,
+  });
+  const vendors = (vendorsRaw ?? []) as Vendor[];
 
-  // Vendor detail dialog
-  const [detailOpen, setDetailOpen] = useState(false);
-  const [detailVendorId, setDetailVendorId] = useState<number | null>(null);
+  const verifyClabe = useVerifyVendorClabe();
 
-  // Verify loading
-  const [verifyingId, setVerifyingId] = useState<number | null>(null);
+  // Actions
+  function handleVerifyClabe(vendor: Vendor) {
+    verifyClabe.mutate(vendor.id);
+  }
 
-  const fetchVendors = useCallback(async () => {
-    setLoading(true);
-    try {
-      const data = await api.vendors.list();
-      setVendors(data);
-    } catch (err: any) {
-      toast.error(err.message || "Error al cargar proveedores");
-    } finally {
-      setLoading(false);
+  async function handleValidateRfc(vendor: Vendor) {
+    if (!vendor.rfc) {
+      toast.error("El proveedor no tiene RFC registrado");
+      return;
     }
-  }, []);
-
-  useEffect(() => {
-    fetchVendors();
-  }, [fetchVendors]);
-
-  async function handleVerifyClabe(vendor: Vendor) {
-    setVerifyingId(vendor.id);
     try {
-      const result = await api.vendors.verify(vendor.id);
-      if (result.valid || result.verified) {
-        toast.success(`CLABE de ${vendor.name} verificada correctamente`);
+      const result = await api.sat.validateRfc({ rfc: vendor.rfc });
+      if (result.valid) {
+        toast.success(`RFC ${vendor.rfc} es valido`);
       } else {
-        toast.error(
-          result.message || `La CLABE de ${vendor.name} no pudo ser verificada`
-        );
+        toast.error(`RFC ${vendor.rfc} es invalido`);
       }
     } catch (err: any) {
-      toast.error(err.message || "Error al verificar CLABE");
-    } finally {
-      setVerifyingId(null);
+      toast.error(err.message || "Error al validar RFC");
     }
   }
 
-  function handleEditClabe(vendor: Vendor) {
-    setEditClabeVendor(vendor);
-    setEditClabeOpen(true);
+  async function handleCheckEfos(vendor: Vendor) {
+    if (!vendor.rfc) {
+      toast.error("El proveedor no tiene RFC registrado");
+      return;
+    }
+    try {
+      const result = await api.sat.checkEfos({ rfc: vendor.rfc });
+      toast.success(
+        `EFOS verificado: ${result.efos_status || result.status || "limpio"}`
+      );
+    } catch (err: any) {
+      toast.error(err.message || "Error al verificar EFOS");
+    }
   }
 
-  function handleViewBills(vendor: Vendor) {
-    setDetailVendorId(vendor.id);
-    setDetailOpen(true);
+  async function handleSyncOdoo(vendor: Vendor) {
+    setSyncingId(vendor.id);
+    try {
+      await api.sync.trigger("odoo");
+      toast.success("Sincronizacion con Odoo iniciada");
+    } catch (err: any) {
+      toast.error(err.message || "Error al sincronizar");
+    } finally {
+      setSyncingId(null);
+    }
   }
 
-  function handleNameClick(vendor: Vendor) {
-    setDetailVendorId(vendor.id);
-    setDetailOpen(true);
-  }
+  // Columns
+  const columns: ColumnDef<Vendor>[] = useMemo(
+    () => [
+      {
+        accessorKey: "name",
+        header: "Nombre",
+        cell: ({ row }) => (
+          <button
+            className="text-left font-medium text-primary hover:underline cursor-pointer"
+            onClick={(e) => {
+              e.stopPropagation();
+              setDetailVendor(row.original);
+            }}
+          >
+            {row.original.name || "-"}
+          </button>
+        ),
+      },
+      {
+        accessorKey: "rfc",
+        header: "RFC",
+        cell: ({ row }) => (
+          <span className="font-mono text-sm">
+            {row.original.rfc ? formatRFC(row.original.rfc) : "-"}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "email",
+        header: "Email",
+        cell: ({ row }) => (
+          <span className="text-muted-foreground text-sm">
+            {row.original.email || "-"}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "clabe",
+        header: "CLABE",
+        cell: ({ row }) =>
+          row.original.clabe ? (
+            <span className="font-mono text-xs">
+              {formatCLABE(row.original.clabe)}
+            </span>
+          ) : (
+            <span className="text-muted-foreground text-sm">-</span>
+          ),
+      },
+      {
+        id: "banco",
+        header: "Banco",
+        cell: ({ row }) => {
+          const bank =
+            row.original.bank_name ||
+            (row.original.clabe ? getBankFromCLABE(row.original.clabe) : "");
+          return (
+            <span className="text-sm">{bank || "-"}</span>
+          );
+        },
+      },
+      {
+        id: "clabe_verified",
+        header: "CLABE Verificada?",
+        cell: ({ row }) =>
+          row.original.clabe_verified ? (
+            <Badge
+              variant="outline"
+              className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+            >
+              <CheckCircle2 className="mr-1 size-3" />
+              Si
+            </Badge>
+          ) : (
+            <Badge variant="outline" className="text-muted-foreground">
+              <XCircle className="mr-1 size-3" />
+              No
+            </Badge>
+          ),
+      },
+      {
+        id: "rfc_valid",
+        header: "RFC Valido?",
+        cell: ({ row }) =>
+          row.original.rfc_validated ? (
+            <Badge
+              variant="outline"
+              className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+            >
+              <CheckCircle2 className="mr-1 size-3" />
+              Si
+            </Badge>
+          ) : (
+            <Badge variant="outline" className="text-muted-foreground">
+              Pendiente
+            </Badge>
+          ),
+      },
+      {
+        id: "efos",
+        header: "EFOS",
+        cell: ({ row }) => <EfosBadge status={row.original.efos_status} />,
+      },
+      {
+        id: "acciones",
+        header: "Acciones",
+        enableSorting: false,
+        cell: ({ row }) => {
+          const vendor = row.original;
+          const isEfosBlocked =
+            vendor.efos_status === "definitivo" ||
+            vendor.efos_status === "definitive" ||
+            vendor.efos_status === "203";
+          return (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="sm">
+                  Acciones
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem
+                  onClick={() => handleVerifyClabe(vendor)}
+                  disabled={!vendor.clabe || verifyClabe.isPending}
+                >
+                  <CheckCircle2 className="mr-2 size-4" />
+                  Verificar CLABE
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => handleValidateRfc(vendor)}
+                  disabled={!vendor.rfc}
+                >
+                  <FileText className="mr-2 size-4" />
+                  Validar RFC
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleCheckEfos(vendor)}>
+                  <ShieldAlert className="mr-2 size-4" />
+                  Verificar EFOS
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <div>
+                        <DropdownMenuItem
+                          disabled={isEfosBlocked}
+                          onClick={() => {
+                            if (!isEfosBlocked) {
+                              toast.info(
+                                "Redirigiendo a crear pago para " + vendor.name
+                              );
+                            }
+                          }}
+                        >
+                          <CreditCard className="mr-2 size-4" />
+                          Crear Pago
+                        </DropdownMenuItem>
+                      </div>
+                    </TooltipTrigger>
+                    {isEfosBlocked && (
+                      <TooltipContent>
+                        <p>
+                          Proveedor bloqueado por EFOS definitivo. No se
+                          pueden crear pagos.
+                        </p>
+                      </TooltipContent>
+                    )}
+                  </Tooltip>
+                </TooltipProvider>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={() => handleSyncOdoo(vendor)}
+                  disabled={syncingId === vendor.id}
+                >
+                  <RefreshCw className="mr-2 size-4" />
+                  Sync desde Odoo
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          );
+        },
+      },
+    ],
+    [verifyClabe.isPending, syncingId]
+  );
 
-  /* ---------- render ---------- */
-
-  return (
-    <div className="flex flex-col gap-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Proveedores</h1>
-          <p className="text-muted-foreground text-sm">
-            Gestiona proveedores, CLABEs y facturas por pagar.
-          </p>
-        </div>
+  const toolbar = (
+    <div className="flex items-center justify-between gap-4">
+      <SearchInput
+        value={filters.search}
+        onChange={(value) => setFilters({ search: value, page: 1 })}
+        placeholder="Buscar por nombre, RFC o email..."
+        className="w-full max-w-sm"
+      />
+      <PermissionGate permission="vendors:write">
         <Button onClick={() => setCreateOpen(true)}>
           <Plus className="mr-2 size-4" />
           Nuevo Proveedor
         </Button>
+      </PermissionGate>
+    </div>
+  );
+
+  return (
+    <div className="flex flex-col gap-6">
+      {/* Header */}
+      <div>
+        <h1 className="text-2xl font-bold tracking-tight">Proveedores</h1>
+        <p className="text-muted-foreground text-sm">
+          Gestiona proveedores, CLABEs y facturas por pagar.
+        </p>
       </div>
 
-      {/* Vendors Table */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Users className="size-5" />
-            Lista de Proveedores
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {loading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="size-6 animate-spin text-muted-foreground" />
-            </div>
-          ) : vendors.length === 0 ? (
-            <p className="py-8 text-center text-sm text-muted-foreground">
-              No hay proveedores registrados.
-            </p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>ID</TableHead>
-                  <TableHead>Nombre</TableHead>
-                  <TableHead>RFC</TableHead>
-                  <TableHead>Email</TableHead>
-                  <TableHead>CLABE</TableHead>
-                  <TableHead className="text-right">Acciones</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {vendors.map((vendor) => (
-                  <TableRow key={vendor.id}>
-                    <TableCell className="font-medium">#{vendor.id}</TableCell>
-                    <TableCell>
-                      <button
-                        className="text-left font-medium text-primary hover:underline cursor-pointer"
-                        onClick={() => handleNameClick(vendor)}
-                      >
-                        {vendor.name || "-"}
-                      </button>
-                    </TableCell>
-                    <TableCell className="font-mono text-sm">
-                      {vendor.rfc || "-"}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {vendor.email || "-"}
-                    </TableCell>
-                    <TableCell>
-                      {vendor.clabe ? (
-                        <span className="font-mono text-xs">
-                          {vendor.clabe}
-                        </span>
-                      ) : (
-                        <Badge variant="outline">Sin CLABE</Badge>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleViewBills(vendor)}
-                          title="Ver facturas"
-                        >
-                          <FileText className="mr-1.5 size-3.5" />
-                          Ver facturas
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleVerifyClabe(vendor)}
-                          disabled={!vendor.clabe || verifyingId === vendor.id}
-                          title="Verificar CLABE"
-                        >
-                          {verifyingId === vendor.id ? (
-                            <Loader2 className="mr-1.5 size-3.5 animate-spin" />
-                          ) : (
-                            <UserCheck className="mr-1.5 size-3.5" />
-                          )}
-                          Verificar
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleEditClabe(vendor)}
-                          title="Editar CLABE"
-                        >
-                          <Edit className="mr-1.5 size-3.5" />
-                          CLABE
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+      {/* DataTable */}
+      <DataTable
+        columns={columns}
+        data={vendors}
+        isLoading={isLoading}
+        toolbar={toolbar}
+        onRowClick={(vendor) => setDetailVendor(vendor)}
+        emptyState={
+          <EmptyState
+            icon={Users}
+            title="Sin proveedores"
+            description="No hay proveedores registrados. Crea uno nuevo o sincroniza desde Odoo."
+            action={{
+              label: "Nuevo Proveedor",
+              onClick: () => setCreateOpen(true),
+            }}
+          />
+        }
+      />
+
+      {/* Detail Panel */}
+      <DetailPanel
+        isOpen={!!detailVendor}
+        onClose={() => setDetailVendor(null)}
+        title={detailVendor?.name || "Detalle del Proveedor"}
+        tabs={["Informacion", "Facturas"]}
+      >
+        {/* Tab: Informacion */}
+        <div className="space-y-4 pt-4">
+          {detailVendor && (
+            <>
+              <div className="grid grid-cols-[120px_1fr] gap-y-3 text-sm">
+                <span className="font-medium text-muted-foreground">
+                  Nombre
+                </span>
+                <span>{detailVendor.name}</span>
+
+                <span className="font-medium text-muted-foreground">RFC</span>
+                <span className="font-mono">
+                  {detailVendor.rfc ? formatRFC(detailVendor.rfc) : "-"}
+                </span>
+
+                <span className="font-medium text-muted-foreground">Email</span>
+                <span>{detailVendor.email || "-"}</span>
+
+                <span className="font-medium text-muted-foreground">
+                  Telefono
+                </span>
+                <span>{detailVendor.phone || "-"}</span>
+
+                <span className="font-medium text-muted-foreground">CLABE</span>
+                <span className="font-mono">
+                  {detailVendor.clabe || "-"}
+                </span>
+
+                <span className="font-medium text-muted-foreground">Banco</span>
+                <span>
+                  {detailVendor.bank_name ||
+                    (detailVendor.clabe
+                      ? getBankFromCLABE(detailVendor.clabe)
+                      : "-")}
+                </span>
+
+                <span className="font-medium text-muted-foreground">
+                  CLABE Verificada
+                </span>
+                <span>
+                  {detailVendor.clabe_verified ? (
+                    <Badge variant="outline" className="bg-green-100 text-green-800">
+                      Si
+                    </Badge>
+                  ) : (
+                    "No"
+                  )}
+                </span>
+
+                <span className="font-medium text-muted-foreground">EFOS</span>
+                <EfosBadge status={detailVendor.efos_status} />
+
+                <span className="font-medium text-muted-foreground">
+                  Regimen Fiscal
+                </span>
+                <span>{detailVendor.regimen_fiscal || "-"}</span>
+              </div>
+            </>
           )}
-        </CardContent>
-      </Card>
+        </div>
 
-      {/* Create Vendor Dialog */}
-      <CreateVendorDialog
-        open={createOpen}
-        onOpenChange={setCreateOpen}
-        onSuccess={fetchVendors}
-      />
+        {/* Tab: Facturas */}
+        <div>
+          {detailVendor && <VendorDetailContent vendorId={detailVendor.id} />}
+        </div>
+      </DetailPanel>
 
-      {/* Edit CLABE Dialog */}
-      <EditClabeDialog
-        open={editClabeOpen}
-        onOpenChange={setEditClabeOpen}
-        vendor={editClabeVendor}
-        onSuccess={fetchVendors}
-      />
-
-      {/* Vendor Detail Dialog */}
-      <VendorDetailDialog
-        open={detailOpen}
-        onOpenChange={setDetailOpen}
-        vendorId={detailVendorId}
-      />
+      {/* Create Dialog */}
+      <CreateVendorDialog open={createOpen} onOpenChange={setCreateOpen} />
     </div>
   );
 }

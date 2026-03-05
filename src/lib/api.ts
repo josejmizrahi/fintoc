@@ -1,283 +1,269 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || '';
+
+export class ApiError extends Error {
+  constructor(
+    public status: number,
+    message: string,
+    public code?: string,
+  ) {
+    super(message);
+  }
+}
 
 function getAuthHeaders(): Record<string, string> {
-  if (typeof window === "undefined") return {};
-  const token = localStorage.getItem("token");
-  const tenantId = localStorage.getItem("tenantId") || "";
+  if (typeof window === 'undefined') return {};
+  const token = localStorage.getItem('token');
+  const company = JSON.parse(localStorage.getItem('activeCompany') || '{}');
   const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    "X-Tenant-Id": tenantId,
+    'Content-Type': 'application/json',
   };
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
-  }
+  if (company?.id) headers['X-Tenant-Id'] = company.id;
+  if (token) headers['Authorization'] = `Bearer ${token}`;
   return headers;
 }
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
+async function request<T>(url: string, options?: RequestInit): Promise<T> {
+  const res = await fetch(`${API_BASE}${url}`, {
     ...options,
-    headers: {
-      ...getAuthHeaders(),
-      ...options?.headers,
-    },
+    headers: { ...getAuthHeaders(), ...options?.headers },
   });
+
   if (res.status === 401) {
-    // Token expired or invalid - clear auth state
-    if (typeof window !== "undefined") {
-      localStorage.removeItem("token");
-      localStorage.removeItem("tenantId");
-      localStorage.removeItem("tenantName");
-      localStorage.removeItem("user");
-      window.location.href = "/login";
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      localStorage.removeItem('activeCompany');
+      window.location.href = '/login';
     }
-    throw new Error("Sesión expirada. Inicia sesión nuevamente.");
+    throw new ApiError(401, 'Sesion expirada. Inicia sesion nuevamente.');
   }
+
+  if (res.status === 403) {
+    throw new ApiError(403, 'No tienes permisos para esta accion');
+  }
+
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(error.detail || `Error ${res.status}`);
+    const body = await res.json().catch(() => ({}));
+    throw new ApiError(res.status, body.error || body.detail || `Error ${res.status}`, body.code);
   }
+
   return res.json();
 }
 
-/** Unauthenticated request for auth endpoints */
 async function authRequest<T>(path: string, body: object): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
   if (!res.ok) {
     const error = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(error.detail || `Error ${res.status}`);
+    throw new ApiError(res.status, error.detail || error.error || `Error ${res.status}`);
   }
   return res.json();
 }
 
+function get<T>(url: string, params?: Record<string, unknown>): Promise<T> {
+  const searchParams = new URLSearchParams();
+  if (params) {
+    Object.entries(params).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && v !== '') {
+        searchParams.set(k, String(v));
+      }
+    });
+  }
+  const qs = searchParams.toString();
+  return request<T>(`${url}${qs ? `?${qs}` : ''}`);
+}
+
+function post<T>(url: string, data?: unknown): Promise<T> {
+  return request<T>(url, { method: 'POST', body: data ? JSON.stringify(data) : undefined });
+}
+
+function put<T>(url: string, data?: unknown): Promise<T> {
+  return request<T>(url, { method: 'PUT', body: data ? JSON.stringify(data) : undefined });
+}
+
+function del<T>(url: string): Promise<T> {
+  return request<T>(url, { method: 'DELETE' });
+}
+
 export const api = {
-  // Auth
+  get,
+  post,
+  put,
+  del,
+
   auth: {
-    register: (data: {
-      email: string;
-      password: string;
-      name: string;
-      company_name: string;
-      rfc: string;
-    }) => authRequest<any>("/api/auth/register", data),
+    register: (data: { email: string; password: string; name?: string; company_name: string; rfc: string }) =>
+      authRequest<any>('/api/auth/register', data),
     login: (data: { email: string; password: string }) =>
-      authRequest<any>("/api/auth/login", data),
-    me: () => request<any>("/api/auth/me"),
+      authRequest<any>('/api/auth/login', data),
+    me: () => get<any>('/api/auth/me'),
+    resetPassword: (data: { email: string }) =>
+      authRequest<any>('/api/auth/reset-password', data),
+    switchCompany: (data: { company_id: string }) =>
+      post<any>('/api/auth/switch-company', data),
   },
 
-  // Dashboard
-  dashboard: () => request<any>("/api/dashboard"),
-  health: () => request<any>("/health"),
-
-  // Payments
   payments: {
-    list: (params?: string) => request<any[]>(`/api/payments/${params ? `?${params}` : ""}`),
-    get: (id: number) => request<any>(`/api/payments/${id}`),
-    payVendor: (data: any) => request<any>("/api/payments/vendor", { method: "POST", body: JSON.stringify(data) }),
-    batch: (data: any) => request<any>("/api/payments/batch", { method: "POST", body: JSON.stringify(data) }),
-    execute: (id: number) => request<any>(`/api/payments/${id}/execute`, { method: "POST" }),
-    pollStatus: (id: number) => request<any>(`/api/payments/${id}/poll-status`, { method: "POST" }),
-    pollStuck: () => request<any>("/api/payments/poll-stuck", { method: "POST" }),
-    writebackOdoo: (id: number) => request<any>(`/api/payments/${id}/writeback-odoo`, { method: "POST" }),
-    schedule: (id: number, date: string) => request<any>(`/api/payments/${id}/schedule?scheduled_date=${date}`, { method: "POST" }),
-    scheduled: () => request<any[]>("/api/payments/scheduled/list"),
+    list: (params?: Record<string, unknown>) => get<any>('/api/payments', params),
+    get: (id: number | string) => get<any>(`/api/payments/${id}`),
+    create: (data: any) => post<any>('/api/payments', data),
+    execute: (data: { payment_id: number | string }) => post<any>('/api/payments/execute', data),
+    executeBatch: (data: { payment_ids: (number | string)[] }) => post<any>('/api/payments/execute-batch', data),
+    cancel: (id: number | string) => post<any>(`/api/payments/${id}/cancel`),
+    retry: (id: number | string) => post<any>(`/api/payments/${id}/retry`),
+    payVendor: (data: any) => post<any>('/api/payments/vendor', data),
+    pollStatus: (id: number | string) => post<any>(`/api/payments/${id}/poll-status`),
+    pollStuck: () => post<any>('/api/payments/poll-stuck'),
+    writebackOdoo: (id: number | string) => post<any>(`/api/payments/${id}/writeback-odoo`),
+    scheduled: () => get<any[]>('/api/payments/scheduled/list'),
   },
 
-  // Collections
-  collections: {
-    pending: (partnerId?: number) => request<any[]>(`/api/collections/pending${partnerId ? `?partner_id=${partnerId}` : ""}`),
-    overdue: (days?: number) => request<any[]>(`/api/collections/overdue?days=${days || 0}`),
-    customer: (id: number) => request<any>(`/api/collections/customer/${id}`),
-    setupClabe: (id: number) => request<any>(`/api/collections/customer/${id}/clabe`, { method: "POST" }),
-    setupAll: () => request<any>("/api/collections/clabes/setup-all", { method: "POST" }),
-    sync: () => request<any>("/api/collections/clabes/sync", { method: "POST" }),
-    paymentLink: (data: any) => request<any>(`/api/collections/payment-link?partner_id=${data.partner_id}&amount=${data.amount}`, { method: "POST" }),
-    aging: () => request<any>("/api/collections/aging"),
-  },
-
-  // Invoices
   invoices: {
-    receivable: (params?: string) => request<any[]>(`/api/invoices/receivable${params ? `?${params}` : ""}`),
-    payable: (params?: string) => request<any[]>(`/api/invoices/payable${params ? `?${params}` : ""}`),
-    overdueReceivable: (days?: number) => request<any[]>(`/api/invoices/overdue/receivable?days=${days || 0}`),
-    overduePayable: (days?: number) => request<any[]>(`/api/invoices/overdue/payable?days=${days || 0}`),
-    get: (id: number) => request<any>(`/api/invoices/${id}`),
-    cfdi: (id: number) => request<any>(`/api/invoices/${id}/cfdi`),
+    list: (params?: Record<string, unknown>) => get<any>('/api/invoices', params),
+    payable: (params?: Record<string, unknown>) => get<any[]>('/api/invoices/payable', params),
+    receivable: (params?: Record<string, unknown>) => get<any[]>('/api/invoices/receivable', params),
+    get: (id: number | string) => get<any>(`/api/invoices/${id}`),
+    cfdi: (id: number | string) => get<any>(`/api/invoices/${id}/cfdi`),
+    overdueReceivable: (days?: number) => get<any[]>('/api/invoices/overdue/receivable', { days }),
+    overduePayable: (days?: number) => get<any[]>('/api/invoices/overdue/payable', { days }),
   },
 
-  // Vendors
   vendors: {
-    list: () => request<any[]>("/api/vendors/"),
-    get: (id: number) => request<any>(`/api/vendors/${id}`),
-    create: (data: { name: string; rfc?: string; email?: string; clabe?: string }) =>
-      request<any>("/api/vendors/", { method: "POST", body: JSON.stringify(data) }),
-    clabe: (id: number) => request<any>(`/api/vendors/${id}/clabe`),
-    setClabe: (id: number, clabe: string) => request<any>(`/api/vendors/${id}/clabe?clabe=${clabe}`, { method: "POST" }),
-    verify: (id: number) => request<any>(`/api/vendors/${id}/verify-clabe`, { method: "POST" }),
-    bills: (id: number) => request<any[]>(`/api/vendors/${id}/bills`),
+    list: (params?: Record<string, unknown>) => get<any[]>('/api/vendors', params),
+    get: (id: number | string) => get<any>(`/api/vendors/${id}`),
+    create: (data: any) => post<any>('/api/vendors', data),
+    update: (id: number | string, data: any) => put<any>(`/api/vendors/${id}`, data),
+    verifyClabe: (id: number | string) => post<any>(`/api/vendors/${id}/verify-clabe`),
+    bills: (id: number | string) => get<any[]>(`/api/vendors/${id}/bills`),
   },
 
-  // Customers
   customers: {
-    list: () => request<any[]>("/api/customers/"),
-    search: (q: string) => request<any[]>(`/api/customers/search?q=${q}`),
-    get: (id: number) => request<any>(`/api/customers/${id}`),
-    create: (data: { name: string; rfc?: string; email?: string; clabe?: string }) =>
-      request<any>("/api/customers/", { method: "POST", body: JSON.stringify(data) }),
-    clabe: (id: number) => request<any>(`/api/customers/${id}/clabe`),
-    invoices: (id: number) => request<any[]>(`/api/customers/${id}/invoices`),
+    list: (params?: Record<string, unknown>) => get<any[]>('/api/customers', params),
+    get: (id: number | string) => get<any>(`/api/customers/${id}`),
+    create: (data: any) => post<any>('/api/customers', data),
+    update: (id: number | string, data: any) => put<any>(`/api/customers/${id}`, data),
+    createClabe: (id: number | string) => post<any>(`/api/customers/${id}/create-clabe`),
+    invoices: (id: number | string) => get<any[]>(`/api/customers/${id}/invoices`),
+    search: (q: string) => get<any[]>('/api/customers/search', { q }),
   },
 
-  // Expenses
+  collections: {
+    pending: (params?: Record<string, unknown>) => get<any[]>('/api/collections/pending', params),
+    overdue: (params?: Record<string, unknown>) => get<any[]>('/api/collections/overdue', params),
+    aging: () => get<any>('/api/collections/aging'),
+    paymentLink: (data: any) => post<any>('/api/collections/payment-links', data),
+    sendReminder: (data: any) => post<any>('/api/collections/send-reminder', data),
+    summary: () => get<any>('/api/collections/summary'),
+    overdueSummary: () => get<any>('/api/collections/overdue-summary'),
+  },
+
   expenses: {
-    list: (params?: string) => request<any[]>(`/api/expenses/${params ? `?${params}` : ""}`),
-    summary: () => request<any>("/api/expenses/summary"),
-    create: (data: any) => request<any>("/api/expenses/", { method: "POST", body: JSON.stringify(data) }),
-    action: (id: number, data: any) => request<any>(`/api/expenses/${id}/action`, { method: "POST", body: JSON.stringify(data) }),
+    list: (params?: Record<string, unknown>) => get<any[]>('/api/expenses', params),
+    create: (data: any) => post<any>('/api/expenses', data),
+    approve: (id: number | string) => post<any>(`/api/expenses/${id}/approve`),
+    reject: (id: number | string, reason: string) => post<any>(`/api/expenses/${id}/reject`, { reason }),
+    summary: () => get<any>('/api/expenses/summary'),
   },
 
-  // Approvals
-  approvals: {
-    rules: () => request<any[]>("/api/approvals/rules"),
-    createRule: (data: any) => request<any>("/api/approvals/rules", { method: "POST", body: JSON.stringify(data) }),
-    pending: (email?: string) => request<any[]>(`/api/approvals/pending${email ? `?approver_email=${email}` : ""}`),
-    approve: (id: number, data: any) => request<any>(`/api/approvals/${id}/approve`, { method: "POST", body: JSON.stringify(data) }),
-    reject: (id: number, data: any) => request<any>(`/api/approvals/${id}/reject`, { method: "POST", body: JSON.stringify(data) }),
-    history: (id: number) => request<any[]>(`/api/approvals/${id}/history`),
-  },
-
-  // Treasury
   treasury: {
-    snapshot: () => request<any>("/api/treasury/snapshot"),
-    forecast: (days?: number) => request<any[]>(`/api/treasury/forecast?days=${days || 30}`),
-    cashFlow: (days?: number) => request<any>(`/api/treasury/cash-flow?days=${days || 30}`),
-    balance: () => request<any>("/api/treasury/balance"),
-    movements: (days?: number) => request<any[]>(`/api/treasury/movements?days=${days || 30}`),
+    snapshot: () => get<any>('/api/treasury/snapshot'),
+    forecast: (days?: number) => get<any>('/api/treasury/forecast', { days }),
+    movements: (params?: Record<string, unknown>) => get<any[]>('/api/treasury/movements', params),
+    balance: () => get<any>('/api/treasury/balance'),
+    cashFlow: (days?: number) => get<any>('/api/treasury/cash-flow', { days }),
   },
 
-  // Budgets
   budgets: {
-    list: () => request<any[]>("/api/budgets/"),
-    get: (id: number) => request<any>(`/api/budgets/${id}`),
-    create: (data: any) => request<any>("/api/budgets/", { method: "POST", body: JSON.stringify(data) }),
-    vsActual: () => request<any[]>("/api/budgets/vs-actual"),
-    spend: (id: number, amount: number) => request<any>(`/api/budgets/${id}/spend?amount=${amount}`, { method: "POST" }),
+    list: () => get<any[]>('/api/budgets'),
+    get: (id: number | string) => get<any>(`/api/budgets/${id}`),
+    create: (data: any) => post<any>('/api/budgets', data),
+    vsActual: () => get<any[]>('/api/budgets/vs-actual'),
   },
 
-  // Reconciliation
-  reconciliation: {
-    fintocOdoo: (days?: number) => request<any>(`/api/reconciliation/fintoc-odoo?days=${days || 7}`, { method: "POST", body: JSON.stringify({ days: days || 7 }) }),
-    sat: (days?: number) => request<any>(`/api/reconciliation/sat?days=${days || 7}`, { method: "POST", body: JSON.stringify({ days: days || 7 }) }),
-    history: () => request<any[]>("/api/reconciliation/history"),
+  approvals: {
+    rules: () => get<any[]>('/api/approvals/rules'),
+    createRule: (data: any) => post<any>('/api/approvals/rules', data),
+    pending: (params?: Record<string, unknown>) => get<any[]>('/api/approvals/pending', params),
+    approve: (id: number | string) => post<any>(`/api/approvals/${id}/approve`),
+    reject: (id: number | string, reason: string) => post<any>(`/api/approvals/${id}/reject`, { reason }),
   },
 
-  // SAT
   sat: {
-    validate: (data: any) => request<any>("/api/sat/validate", { method: "POST", body: JSON.stringify(data) }),
-    validateFull: (data: any) => request<any>("/api/sat/validate/full", { method: "POST", body: JSON.stringify(data) }),
-    validateBulk: (data: any) => request<any>("/api/sat/validate/bulk", { method: "POST", body: JSON.stringify(data) }),
-    uploadXml: (data: any) => request<any>("/api/sat/upload-xml", { method: "POST", body: JSON.stringify(data) }),
-    documents: () => request<any[]>("/api/sat/documents"),
-    revalidateAll: () => request<any>("/api/sat/revalidate-all", { method: "POST" }),
-    // EFOS / Risk
-    efosRisk: () => request<any>("/api/sat/efos-risk"),
-    // RFC Validation
-    validateRfc: (data: any) => request<any>("/api/sat/validate-rfc", { method: "POST", body: JSON.stringify(data) }),
-    validateRfcBulk: (data: any) => request<any>("/api/sat/validate-rfc/bulk", { method: "POST", body: JSON.stringify(data) }),
-    // Descarga Masiva
-    descargaSolicitud: (data: any) => request<any>("/api/sat/descarga/solicitud", { method: "POST", body: JSON.stringify(data) }),
-    descargaVerificar: (data: any) => request<any>("/api/sat/descarga/verificar", { method: "POST", body: JSON.stringify(data) }),
-    descargaDescargar: (data: any) => request<any>("/api/sat/descarga/descargar", { method: "POST", body: JSON.stringify(data) }),
-    descargaRequests: () => request<any[]>("/api/sat/descarga/requests"),
-    // Cancellation
-    cancelar: (data: any) => request<any>("/api/sat/cancelar", { method: "POST", body: JSON.stringify(data) }),
-    cancelaciones: () => request<any[]>("/api/sat/cancelaciones"),
-    aceptarCancelacion: (data: any) => request<any>("/api/sat/cancelacion/aceptar", { method: "POST", body: JSON.stringify(data) }),
-    rechazarCancelacion: (data: any) => request<any>("/api/sat/cancelacion/rechazar", { method: "POST", body: JSON.stringify(data) }),
+    validate: (data: any) => post<any>('/api/sat/validate', data),
+    validateBulk: () => post<any>('/api/sat/validate/bulk'),
+    validateRfc: (data: any) => post<any>('/api/sat/validate-rfc', data),
+    checkEfos: (data: any) => post<any>('/api/sat/check-efos', data),
+    uploadXml: (data: any) => post<any>('/api/sat/upload-xml', data),
+    documents: (params?: Record<string, unknown>) => get<any[]>('/api/sat/documents', params),
+    cancel: (data: any) => post<any>('/api/sat/cancel', data),
+    descargaSolicitud: (data: any) => post<any>('/api/sat/descarga/solicitud', data),
+    descargaVerificar: (data: any) => post<any>('/api/sat/descarga/verificar', data),
+    upload: (data: any) => post<any>('/api/sat/upload', data),
   },
 
-  // Reports
+  reconciliation: {
+    satOdoo: (data: any) => post<any>('/api/reconciliation/sat-odoo', data),
+    satApp: (data: any) => post<any>('/api/reconciliation/sat-app', data),
+    bancoApp: (data: any) => post<any>('/api/reconciliation/banco-app', data),
+    history: () => get<any[]>('/api/reconciliation/history'),
+    importToOdoo: (data: any) => post<any>('/api/reconciliation/import-to-odoo', data),
+  },
+
   reports: {
-    cashFlow: (from?: string, to?: string) => request<any>(`/api/reports/cash-flow${from ? `?date_from=${from}` : ""}${to ? `&date_to=${to}` : ""}`),
-    aging: (type: string) => request<any>(`/api/reports/aging/${type}`),
-    satCompliance: (days?: number) => request<any>(`/api/reports/sat-compliance?days=${days || 30}`),
-    budgetVsActual: () => request<any[]>("/api/reports/budget-vs-actual"),
-    vendorSummary: () => request<any[]>("/api/reports/vendor-summary"),
-    expenses: () => request<any>("/api/reports/expenses"),
+    cashFlow: (params?: Record<string, unknown>) => get<any>('/api/reports/cash-flow', params),
+    aging: (params?: Record<string, unknown>) => get<any>('/api/reports/aging', params),
+    satCompliance: (params?: Record<string, unknown>) => get<any>('/api/reports/sat-compliance', params),
+    budgetVsActual: () => get<any[]>('/api/reports/budget-vs-actual'),
+    vendorSummary: () => get<any[]>('/api/reports/vendor-summary'),
+    customerSummary: () => get<any[]>('/api/reports/customer-summary'),
   },
 
-  // Notifications
   notifications: {
-    list: (unreadOnly?: boolean) => request<any[]>(`/api/notifications/?unread_only=${unreadOnly || false}`),
-    unreadCount: () => request<any>("/api/notifications/unread-count"),
-    markRead: (id: number) => request<any>(`/api/notifications/${id}/read`, { method: "POST" }),
-    markAllRead: () => request<any>("/api/notifications/mark-all-read", { method: "POST" }),
+    list: (params?: Record<string, unknown>) => get<any[]>('/api/notifications', params),
+    markRead: (ids: (number | string)[]) => post<any>('/api/notifications/mark-read', { notification_ids: ids }),
+    unreadCount: () => get<any>('/api/notifications/unread-count'),
   },
 
-  // Companies
-  companies: {
-    list: () => request<any[]>("/api/companies/"),
-    create: (data: any) => request<any>(`/api/companies/?name=${data.name}&rfc=${data.rfc}`, { method: "POST" }),
-  },
-
-  // Fintoc
-  fintoc: {
-    exchange: (exchangeToken: string) =>
-      request<any>("/api/fintoc/exchange", { method: "POST", body: JSON.stringify({ exchange_token: exchangeToken }) }),
-    outboundTransfer: (data: { payment_id?: number; clabe: string; amount: number; holder_name?: string; reference_id?: string }) =>
-      request<any>("/api/fintoc", { method: "POST", body: JSON.stringify({ action: "outbound-transfer", ...data }) }),
-    verifyClabe: (clabe: string, vendorId?: number) =>
-      request<any>("/api/fintoc", { method: "POST", body: JSON.stringify({ action: "verify-clabe", clabe, vendor_id: vendorId }) }),
-    createAccountNumber: (customerId: number) =>
-      request<any>("/api/fintoc", { method: "POST", body: JSON.stringify({ action: "create-account-number", customer_id: customerId }) }),
-    getAccountNumber: (accountNumberId: string) =>
-      request<any>("/api/fintoc", { method: "POST", body: JSON.stringify({ action: "get-account-number", account_number_id: accountNumberId }) }),
-  },
-
-  // Onboarding & Integrations
   onboarding: {
-    status: () => request<any>("/api/onboarding"),
-    save: (provider: string, config: Record<string, string>) =>
-      request<any>("/api/onboarding", { method: "POST", body: JSON.stringify({ action: "save", provider, config }) }),
+    status: () => get<any>('/api/onboarding'),
     test: (provider: string, config: Record<string, string>) =>
-      request<any>("/api/onboarding", { method: "POST", body: JSON.stringify({ action: "test", provider, config }) }),
-    complete: () =>
-      request<any>("/api/onboarding", { method: "POST", body: JSON.stringify({ action: "complete" }) }),
+      post<any>('/api/onboarding', { action: 'test', provider, config }),
+    save: (provider: string, config: Record<string, string>) =>
+      post<any>('/api/onboarding', { action: 'save', provider, config }),
+    complete: () => post<any>('/api/onboarding', { action: 'complete' }),
   },
 
-  // Sync (data import from Odoo, Fintoc, SAT)
   sync: {
-    trigger: (provider: string) =>
-      request<any>("/api/sync", { method: "POST", body: JSON.stringify({ provider }) }),
-    logs: () => request<any>("/api/sync"),
+    trigger: (provider: string) => post<any>('/api/sync', { provider }),
+    logs: () => get<any[]>('/api/sync'),
   },
 
-  // Vendor Portal
-  vendorPortal: {
-    createToken: (partnerId: number) => request<any>(`/api/vendor-portal/token?partner_id=${partnerId}`, { method: "POST" }),
-    dashboard: (token: string) => request<any>(`/api/vendor-portal/dashboard?token=${token}`),
+  audit: {
+    list: (params?: Record<string, unknown>) => get<any[]>('/api/audit', params),
+    forEntity: (entityType: string, entityId: string) =>
+      get<any[]>('/api/audit', { entity_type: entityType, entity_id: entityId }),
   },
 
-  // Odoo (write-back, bank statements, purchase orders)
-  odoo: {
-    stats: () => request<any>("/api/odoo/stats"),
-    purchaseOrders: () => request<any[]>("/api/odoo/purchase-orders"),
-    bankStatements: () => request<any[]>("/api/odoo/bank-statements"),
-    idCache: () => request<any[]>("/api/odoo/id-cache"),
-    pushBankStatements: (days?: number) => request<any>("/api/odoo/bank-statements/push", { method: "POST", body: JSON.stringify({ days: days || 7 }) }),
-    createVendor: (data: { name: string; rfc?: string; email?: string; phone?: string; clabe?: string }) =>
-      request<any>("/api/odoo/vendor/create", { method: "POST", body: JSON.stringify(data) }),
-    createCustomer: (data: { name: string; rfc?: string; email?: string; phone?: string }) =>
-      request<any>("/api/odoo/customer/create", { method: "POST", body: JSON.stringify(data) }),
-    invoiceAction: (invoiceId: number, action: "post" | "cancel" | "draft") =>
-      request<any>("/api/odoo/invoice/action", { method: "POST", body: JSON.stringify({ invoice_id: invoiceId, action }) }),
-    modelFields: (model: string) =>
-      request<any>("/api/odoo/model/fields", { method: "POST", body: JSON.stringify({ model }) }),
-    modelCount: (model: string, domain?: unknown[][]) =>
-      request<any>("/api/odoo/model/count", { method: "POST", body: JSON.stringify({ model, domain: domain || [] }) }),
+  search: (q: string) => get<any>('/api/search', { q }),
+
+  companies: {
+    list: () => get<any[]>('/api/companies'),
+    create: (data: any) => post<any>('/api/companies', data),
   },
+
+  users: {
+    list: () => get<any[]>('/api/users'),
+    invite: (data: any) => post<any>('/api/users/invite', data),
+    updateRole: (id: string, role: string) => put<any>(`/api/users/${id}/role`, { role }),
+    deactivate: (id: string) => put<any>(`/api/users/${id}/deactivate`),
+  },
+
+  fintoc: {
+    exchange: (exchangeToken: string) => post<any>('/api/fintoc/exchange', { exchange_token: exchangeToken }),
+  },
+
+  dashboard: () => get<any>('/api/dashboard'),
 };
