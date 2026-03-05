@@ -45,22 +45,27 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   });
 
   if (res.status === 401) {
+    const detail = await res.json().catch(() => ({}));
+    const debugMsg = `401 en ${url}: ${detail?.detail || detail?.error?.message || JSON.stringify(detail)}`;
+    console.warn('[API 401]', debugMsg);
     if (typeof window !== 'undefined' && !isRedirectingTo401) {
       isRedirectingTo401 = true;
-      const detail = await res.json().catch(() => ({}));
-      console.warn('[API 401]', url, detail);
+      // Store debug info so login page can show it
+      sessionStorage.setItem('auth_debug', debugMsg);
       localStorage.removeItem('token');
       localStorage.removeItem('user');
       localStorage.removeItem('activeCompany');
       localStorage.removeItem('companies');
       localStorage.removeItem('role');
-      if (window.location.pathname !== '/login') {
-        window.location.href = '/login';
-      }
-      // Reset after a short delay so future real 401s still work
-      setTimeout(() => { isRedirectingTo401 = false; }, 3000);
+      // Delay redirect so we don't interrupt other requests
+      setTimeout(() => {
+        if (window.location.pathname !== '/login') {
+          window.location.href = '/login';
+        }
+        isRedirectingTo401 = false;
+      }, 500);
     }
-    throw new ApiError(401, 'Sesion expirada. Inicia sesion nuevamente.');
+    throw new ApiError(401, debugMsg);
   }
 
   if (res.status === 403) {
@@ -132,6 +137,7 @@ export const api = {
     login: (data: { email: string; password: string }) =>
       authRequest<any>('/api/auth/login', data),
     me: () => get<any>('/api/auth/me'),
+    debug: () => get<any>('/api/auth/debug'),
     resetPassword: (data: { email: string }) =>
       authRequest<any>('/api/auth/reset-password', data),
     switchCompany: (data: { company_id: string }) =>
