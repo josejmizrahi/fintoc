@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { hasDB, query, insert, update } from "@/lib/db";
-import { getCompanyId } from "@/lib/auth-helpers";
+import { getCompanyId, getUserRole } from "@/lib/auth-helpers";
 import { validateCfdiAgainstSat, parseCfdiXml } from "@/lib/sat";
 import { fintocGet, fintocPost } from "@/lib/fintoc";
+import { checkRouteAccess } from "@/lib/rbac";
 
 // ── Zod schemas ──
 
@@ -1094,6 +1095,17 @@ function mockPost(path: string): Response {
   return NextResponse.json({ detail: "Not found" }, { status: 404 });
 }
 
+// ── RBAC middleware helper ──
+
+async function enforceRbac(req: NextRequest, method: string, path: string): Promise<Response | null> {
+  const role = await getUserRole(req);
+  // If no role is found (no auth), skip RBAC — auth is handled elsewhere
+  if (!role) return null;
+  const denied = checkRouteAccess(role, method, path);
+  if (denied) return NextResponse.json({ detail: denied }, { status: 403 });
+  return null;
+}
+
 // ── Main handlers ──
 
 function cleanPath(req: NextRequest): string {
@@ -1103,6 +1115,8 @@ function cleanPath(req: NextRequest): string {
 
 export async function GET(req: NextRequest) {
   const path = cleanPath(req);
+  const rbacDenied = await enforceRbac(req, "GET", path);
+  if (rbacDenied) return rbacDenied;
   const companyId = await getCompanyId(req);
   const dbResult = await dbGet(path, companyId);
   if (dbResult !== null) return NextResponse.json(dbResult);
@@ -1111,6 +1125,8 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   const path = cleanPath(req);
+  const rbacDenied = await enforceRbac(req, "POST", path);
+  if (rbacDenied) return rbacDenied;
   const companyId = await getCompanyId(req);
   let body = {};
   try { body = await req.json(); } catch { /* no body */ }
@@ -1122,6 +1138,8 @@ export async function POST(req: NextRequest) {
 
 export async function PUT(req: NextRequest) {
   const path = cleanPath(req);
+  const rbacDenied = await enforceRbac(req, "PUT", path);
+  if (rbacDenied) return rbacDenied;
   const companyId = await getCompanyId(req);
   if (!companyId) return NextResponse.json({ detail: "No autorizado" }, { status: 401 });
   if (!hasDB()) return NextResponse.json({ detail: "DB no configurada" }, { status: 500 });
@@ -1154,6 +1172,8 @@ export async function PUT(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   const path = cleanPath(req);
+  const rbacDenied = await enforceRbac(req, "DELETE", path);
+  if (rbacDenied) return rbacDenied;
   const companyId = await getCompanyId(req);
   if (!companyId) return NextResponse.json({ detail: "No autorizado" }, { status: 401 });
   if (!hasDB()) return NextResponse.json({ detail: "DB no configurada" }, { status: 500 });

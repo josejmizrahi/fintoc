@@ -13,6 +13,13 @@ export async function getCompanyId(req: NextRequest): Promise<number | null> {
   return payload ? Number(payload.company_id) : null;
 }
 
+export async function getUserRole(req: NextRequest): Promise<string | null> {
+  const auth = req.headers.get("authorization");
+  if (!auth?.startsWith("Bearer ")) return null;
+  const payload = await verifyToken(auth.slice(7));
+  return payload?.role || null;
+}
+
 /** Config masking — hide sensitive fields before sending to frontend */
 const SENSITIVE_KEYS = new Set([
   "password",

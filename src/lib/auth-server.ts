@@ -292,75 +292,7 @@ export async function loginUser(
     };
   }
 
-  // Supabase Auth failed — try legacy plaintext password (for pre-migration users)
-  const { data: legacyUser } = await admin
-    .from("users")
-    .select("id, email, password_hash, name, role, company_id")
-    .eq("email", normalizedEmail)
-    .single();
-
-  if (
-    !legacyUser ||
-    legacyUser.password_hash === "SUPABASE_AUTH" ||
-    legacyUser.password_hash !== password
-  ) {
-    throw new Error("Credenciales inválidas");
-  }
-
-  // Legacy user found — migrate to Supabase Auth
-  const { data: newAuth, error: createError } =
-    await admin.auth.admin.createUser({
-      email: normalizedEmail,
-      password,
-      email_confirm: true,
-      user_metadata: { name: legacyUser.name },
-    });
-
-  if (createError) {
-    throw new Error("Credenciales inválidas");
-  }
-
-  // Update user record with auth_uid and clear plaintext password
-  if (await hasAuthUidColumn()) {
-    await admin
-      .from("users")
-      .update({
-        auth_uid: newAuth.user.id,
-        password_hash: "SUPABASE_AUTH",
-      })
-      .eq("id", legacyUser.id);
-  } else {
-    await admin
-      .from("users")
-      .update({ password_hash: "SUPABASE_AUTH" })
-      .eq("id", legacyUser.id);
-  }
-
-  // Sign in with new auth credentials
-  const { data: newSession, error: newSignInError } =
-    await getAnonClient().auth.signInWithPassword({
-      email: normalizedEmail,
-      password,
-    });
-
-  if (newSignInError || !newSession.session) {
-    throw new Error("Error al migrar cuenta. Intenta de nuevo.");
-  }
-
-  const { data: company } = await admin
-    .from("companies")
-    .select("name, rfc")
-    .eq("id", legacyUser.company_id)
-    .single();
-
-  return {
-    id: legacyUser.id,
-    email: legacyUser.email,
-    name: legacyUser.name,
-    role: legacyUser.role,
-    company_id: legacyUser.company_id,
-    company_name: company?.name || "",
-    company_rfc: company?.rfc || "",
-    access_token: newSession.session.access_token,
-  };
+  // Fix #18: Removed legacy plaintext password fallback.
+  // All users must authenticate via Supabase Auth.
+  throw new Error("Credenciales inválidas");
 }
