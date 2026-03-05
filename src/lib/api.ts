@@ -71,9 +71,14 @@ async function authRequest<T>(path: string, body: object): Promise<T> {
     body: JSON.stringify(body),
   });
   if (!res.ok) {
-    const body = await res.json().catch(() => ({ detail: res.statusText }));
-    const message = body.detail || body.error?.message || (typeof body.error === 'string' ? body.error : `Error ${res.status}`);
-    throw new ApiError(res.status, message, body.error?.code);
+    const data = await res.json().catch(() => ({ detail: res.statusText }));
+    let message = data.detail || data.error?.message || data.message || (typeof data.error === 'string' ? data.error : `Error ${res.status}`);
+    // Append field-level validation details when available
+    const fields = data.error?.details?.fields;
+    if (Array.isArray(fields) && fields.length > 0) {
+      message += ': ' + fields.map((f: { path?: string; message?: string }) => `${f.path}: ${f.message}`).join(', ');
+    }
+    throw new ApiError(res.status, message, data.error?.code);
   }
   return res.json();
 }
