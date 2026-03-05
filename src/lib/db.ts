@@ -1,18 +1,14 @@
-import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import { getAdminClient } from "@/lib/supabase/admin";
+import { SupabaseClient } from "@supabase/supabase-js";
 
-// ── Supabase Server Client (service role — bypasses RLS, for API routes only) ──
-
-let _supabase: SupabaseClient | null = null;
+// ── Supabase Server Client (reuses shared admin singleton) ──
 
 function getSupabase(): SupabaseClient | null {
-  if (_supabase) return _supabase;
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) return null;
-  _supabase = createClient(url, key, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  });
-  return _supabase;
+  try {
+    return getAdminClient();
+  } catch {
+    return null;
+  }
 }
 
 export function hasDB(): boolean {

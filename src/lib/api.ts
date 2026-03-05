@@ -38,34 +38,49 @@ function getAuthHeaders(): Record<string, string> {
 // Prevent multiple concurrent 401 handlers from all triggering redirects
 let isRedirectingTo401 = false;
 
+// Deduplicate concurrent refresh attempts: Supabase rotates refresh tokens,
+// so only one refresh can succeed. All concurrent callers share the same promise.
+let refreshPromise: Promise<string | null> | null = null;
+
 /**
  * Try to refresh the Supabase session using the stored refresh token.
  * Returns the new access token on success, or null on failure.
+ * Concurrent calls are deduplicated — only one network request is made.
  */
 async function tryRefreshToken(): Promise<string | null> {
   if (typeof window === 'undefined') return null;
-  const refreshToken = localStorage.getItem('refresh_token');
-  if (!refreshToken) return null;
+  if (refreshPromise) return refreshPromise;
+
+  refreshPromise = (async () => {
+    const refreshToken = localStorage.getItem('refresh_token');
+    if (!refreshToken) return null;
+
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      if (data.access_token) {
+        localStorage.setItem('token', data.access_token);
+        if (data.refresh_token) {
+          localStorage.setItem('refresh_token', data.refresh_token);
+        }
+        return data.access_token;
+      }
+    } catch {
+      // Refresh failed — will proceed with logout
+    }
+    return null;
+  })();
 
   try {
-    const res = await fetch(`${API_BASE}/api/auth/refresh`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refresh_token: refreshToken }),
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (data.access_token) {
-      localStorage.setItem('token', data.access_token);
-      if (data.refresh_token) {
-        localStorage.setItem('refresh_token', data.refresh_token);
-      }
-      return data.access_token;
-    }
-  } catch {
-    // Refresh failed — will proceed with logout
+    return await refreshPromise;
+  } finally {
+    refreshPromise = null;
   }
-  return null;
 }
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
@@ -178,7 +193,6 @@ export const api = {
     login: (data: { email: string; password: string }) =>
       authRequest<any>('/api/auth/login', data),
     me: () => get<any>('/api/auth/me'),
-    debug: () => get<any>('/api/auth/debug'),
     resetPassword: (data: { email: string }) =>
       authRequest<any>('/api/auth/reset-password', data),
     switchCompany: (data: { company_id: string }) =>

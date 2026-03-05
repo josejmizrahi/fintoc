@@ -1,8 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+import { getAdminClient } from "@/lib/supabase/admin";
 
 // Routes that don't require authentication
 const PUBLIC_ROUTES = ["/login", "/api/auth/login", "/api/auth/register", "/api/auth/refresh", "/api/auth/reset-password", "/api/health", "/api/setup", "/api/webhooks", "/api/cron"];
@@ -28,21 +25,16 @@ export async function middleware(req: NextRequest) {
     }
 
     const token = auth.slice(7);
-    if (!supabaseUrl || !supabaseServiceKey) {
-      // No Supabase configured — allow through (dev mode)
-      return NextResponse.next();
-    }
 
     try {
-      const supabase = createClient(supabaseUrl, supabaseServiceKey, {
-        auth: { autoRefreshToken: false, persistSession: false },
-      });
-      const { error } = await supabase.auth.getUser(token);
+      const admin = getAdminClient();
+      const { error } = await admin.auth.getUser(token);
       if (error) {
         return NextResponse.json({ detail: "Token invalido o expirado" }, { status: 401 });
       }
     } catch {
-      return NextResponse.json({ detail: "Error de autenticacion" }, { status: 500 });
+      // Supabase not configured or error — allow through (dev mode)
+      return NextResponse.next();
     }
 
     return NextResponse.next();
