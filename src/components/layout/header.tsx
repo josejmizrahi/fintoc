@@ -163,7 +163,7 @@ export function Header() {
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" className="gap-2 font-semibold">
               <Building2 className="size-4" />
-              {activeCompany?.name || 'Empresa'}
+              <span className="hidden sm:inline">{activeCompany?.name || 'Empresa'}</span>
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="w-64">
@@ -187,7 +187,10 @@ export function Header() {
           </DropdownMenuContent>
         </DropdownMenu>
       ) : (
-        <span className="text-sm font-semibold hidden md:block">{activeCompany?.name}</span>
+        <div className="flex items-center gap-2">
+          <Building2 className="size-4 text-muted-foreground" />
+          <span className="text-sm font-semibold">{activeCompany?.name || 'Empresa'}</span>
+        </div>
       )}
 
       <div className="flex-1" />
