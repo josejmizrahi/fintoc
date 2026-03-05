@@ -50,6 +50,10 @@ export const useAuthStore = create<AuthState>((set) => ({
       ? (localStorage.getItem('role') as Role)
       : null) || 'viewer',
   loginWithToken: (token, user, company, role = 'admin') => {
+    if (!token) {
+      console.error('loginWithToken called with null/empty token');
+      return;
+    }
     localStorage.setItem('token', token);
     localStorage.setItem('user', JSON.stringify(user));
     localStorage.setItem('activeCompany', JSON.stringify(company));

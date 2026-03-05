@@ -122,6 +122,11 @@ function LoginPageInner() {
         payload.full_name = data.full_name;
       }
       const res = await api.auth.register(payload);
+      if (!res.access_token) {
+        // Registration succeeded but session creation failed — ask user to log in
+        toast.success('Cuenta creada. Inicia sesion con tus credenciales.');
+        return;
+      }
       const user = { id: res.user.id, email: res.user.email, name: res.user.full_name || res.user.name || '' };
       loginWithToken(
         res.access_token,
