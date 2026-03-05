@@ -1,7 +1,8 @@
 import { z } from 'zod';
 
 // --- Common validators ---
-const uuid = z.string().uuid();
+// Entity IDs: database uses integer PKs. Accept both numbers and numeric strings.
+const entityId = z.union([z.number().int().positive(), z.string().regex(/^\d+$/, 'ID must be numeric')]).transform(v => typeof v === 'string' ? parseInt(v, 10) : v);
 const rfcRegex = /^[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}$/;
 const clabeRegex = /^\d{18}$/;
 
@@ -24,7 +25,7 @@ export const loginSchema = z.object({
 });
 
 export const switchCompanySchema = z.object({
-  company_id: uuid,
+  company_id: entityId,
 });
 
 export const inviteUserSchema = z.object({
@@ -38,8 +39,8 @@ export const updateRoleSchema = z.object({
 
 // --- Payments ---
 export const paymentCreateSchema = z.object({
-  vendor_id: uuid,
-  invoice_id: uuid.optional(),
+  vendor_id: entityId,
+  invoice_id: entityId.optional(),
   amount: z.number().positive('Monto debe ser mayor a 0'),
   concept: z.string().min(1).max(40, 'Concepto SPEI max 40 caracteres'),
   reference: z.string().max(7).regex(/^\d*$/, 'Referencia debe ser numerica').optional(),
@@ -47,7 +48,7 @@ export const paymentCreateSchema = z.object({
 });
 
 export const paymentUpdateSchema = z.object({
-  vendor_id: uuid.optional(),
+  vendor_id: entityId.optional(),
   amount: z.number().positive().optional(),
   concept: z.string().min(1).max(40).optional(),
   reference: z.string().max(7).regex(/^\d*$/).optional(),
@@ -55,18 +56,18 @@ export const paymentUpdateSchema = z.object({
 });
 
 export const paymentExecuteSchema = z.object({
-  payment_id: uuid,
+  payment_id: entityId,
 });
 
 export const paymentExecuteBatchSchema = z.object({
-  payment_ids: z.array(uuid).min(1).max(50),
+  payment_ids: z.array(entityId).min(1).max(50),
 });
 
 // --- Invoices ---
 export const invoiceCreateSchema = z.object({
   type: z.enum(['receivable', 'payable']),
-  vendor_id: uuid.optional(),
-  customer_id: uuid.optional(),
+  vendor_id: entityId.optional(),
+  customer_id: entityId.optional(),
   invoice_number: z.string().max(50).optional(),
   uuid: z.string().max(36).optional(),
   issuer_rfc: rfcSchema.optional(),
@@ -83,15 +84,15 @@ export const invoiceUpdateSchema = invoiceCreateSchema.partial();
 
 // --- SAT ---
 export const satValidateSchema = z.object({
-  invoice_id: uuid,
+  invoice_id: entityId,
 });
 
 export const satValidateBulkSchema = z.object({
-  invoice_ids: z.array(uuid).optional(),
+  invoice_ids: z.array(entityId).optional(),
 });
 
 export const satCancelSchema = z.object({
-  invoice_id: uuid,
+  invoice_id: entityId,
   motivo: z.enum(['01', '02', '03', '04']),
   uuid_sustituto: z.string().max(36).optional(),
 });
@@ -132,7 +133,7 @@ export const vendorCreateSchema = z.object({
 export const vendorUpdateSchema = vendorCreateSchema.partial();
 
 export const verifyClabeSchema = z.object({
-  vendor_id: uuid,
+  vendor_id: entityId,
 });
 
 // --- Customers ---
@@ -146,7 +147,7 @@ export const customerCreateSchema = z.object({
 export const customerUpdateSchema = customerCreateSchema.partial();
 
 export const createClabeSchema = z.object({
-  customer_id: uuid,
+  customer_id: entityId,
 });
 
 // --- Expenses ---
@@ -168,18 +169,18 @@ export const approvalRuleCreateSchema = z.object({
   name: z.string().min(1).max(100),
   amount_min: z.number().min(0),
   amount_max: z.number().positive().optional(),
-  approvers: z.array(uuid).min(1),
+  approvers: z.array(z.string()).min(1), // user UUIDs from Supabase Auth
   auto_approve: z.boolean().default(false),
 });
 
 export const approvalRuleUpdateSchema = approvalRuleCreateSchema.partial();
 
 export const approvalActionSchema = z.object({
-  request_id: uuid,
+  request_id: entityId,
 });
 
 export const approvalRejectSchema = z.object({
-  request_id: uuid,
+  request_id: entityId,
   reason: z.string().min(1),
 });
 
@@ -212,12 +213,12 @@ export const onboardingSchema = z.object({
 
 // --- Collections ---
 export const paymentLinkSchema = z.object({
-  invoice_id: uuid,
+  invoice_id: entityId,
   amount: z.number().positive().optional(),
 });
 
 export const sendReminderSchema = z.object({
-  invoice_id: uuid,
+  invoice_id: entityId,
   to_email: z.string().email(),
   subject: z.string().min(1),
   body: z.string().min(1),
@@ -225,7 +226,7 @@ export const sendReminderSchema = z.object({
 
 // --- Notifications ---
 export const markReadSchema = z.object({
-  notification_ids: z.array(uuid).optional(),
+  notification_ids: z.array(entityId).optional(),
 });
 
 // --- Search ---

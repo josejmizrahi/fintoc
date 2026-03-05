@@ -4,7 +4,7 @@ import { ApiError } from '@/lib/utils/errors';
 
 export interface AuthContext {
   user_id: string;
-  company_id: string;
+  company_id: string | number;
   role: string;
   email: string;
   supabase: ReturnType<typeof createClient>;
