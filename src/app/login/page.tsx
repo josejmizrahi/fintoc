@@ -62,6 +62,12 @@ function LoginPageInner() {
 
   useEffect(() => {
     setMounted(true);
+    // Show debug info if user was redirected from a 401
+    const authDebug = sessionStorage.getItem('auth_debug');
+    if (authDebug) {
+      sessionStorage.removeItem('auth_debug');
+      toast.error(`Sesion cerrada: ${authDebug}`, { duration: 10000 });
+    }
   }, []);
 
   useEffect(() => {
@@ -97,6 +103,10 @@ function LoginPageInner() {
   async function onLogin(data: LoginValues) {
     try {
       const res = await api.auth.login(data);
+      if (!res.access_token) {
+        toast.error('Login exitoso pero no se recibio token');
+        return;
+      }
       const user = { id: res.user.id, email: res.user.email, name: res.user.full_name || res.user.name || '' };
       loginWithToken(
         res.access_token,
@@ -104,6 +114,17 @@ function LoginPageInner() {
         { id: res.tenant?.id || res.company?.id, name: res.tenant?.name || res.company?.name, rfc: res.tenant?.rfc || res.company?.rfc },
         res.role || 'admin',
       );
+      // Verify the full auth chain works before navigating
+      try {
+        const debugRes = await api.auth.debug();
+        if (debugRes.error) {
+          toast.error(`Auth check fallo: ${debugRes.error}`, { duration: 10000 });
+          return;
+        }
+      } catch (verifyErr) {
+        toast.error(`Token no valido: ${verifyErr instanceof Error ? verifyErr.message : 'Error desconocido'}`, { duration: 10000 });
+        return;
+      }
       toast.success('Sesion iniciada correctamente');
       if (res.onboarding_completed === false) {
         router.push('/onboarding');
@@ -111,7 +132,7 @@ function LoginPageInner() {
         router.push('/');
       }
     } catch (error) {
-      toast.error('Credenciales invalidas');
+      toast.error(error instanceof Error ? error.message : 'Credenciales invalidas');
     }
   }
 
