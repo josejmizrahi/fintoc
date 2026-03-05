@@ -560,7 +560,7 @@ export default function ConfiguracionPage() {
 
   return (
     <PermissionGate
-      permission="config:write"
+      permission="config:read"
       fallback={
         <EmptyState
           icon={Settings}

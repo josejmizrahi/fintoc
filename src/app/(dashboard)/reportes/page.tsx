@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   TrendingUp,
@@ -9,10 +9,9 @@ import {
   BarChart3,
   Users,
   UserCheck,
-  ArrowLeft,
-  Download,
   FileSpreadsheet,
   FileText,
+  Loader2,
 } from "lucide-react";
 import {
   AreaChart,
@@ -31,7 +30,6 @@ import {
 } from "recharts";
 
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import {
   Card,
   CardContent,
@@ -54,23 +52,24 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Skeleton } from "@/components/ui/skeleton";
 
 import { EmptyState } from "@/components/shared/empty-state";
-import { KpiCard } from "@/components/shared/kpi-card";
 import { PermissionGate } from "@/components/shared/permission-gate";
 
 import { api } from "@/lib/api";
-import {
-  useCashFlowReport,
-  useAgingReport,
-  useSatComplianceReport,
-  useBudgetVsActualReport,
-  useVendorSummaryReport,
-  useCustomerSummaryReport,
-} from "@/lib/hooks/use-reports";
 import { formatMoney } from "@/lib/utils/format";
+import { toast } from "sonner";
 
-/* ---------- Types ---------- */
+/* ------------------------------------------------------------------ */
+/* Types                                                               */
+/* ------------------------------------------------------------------ */
 
 type ReportType =
   | "cash-flow"
@@ -96,7 +95,7 @@ interface ReportCardDef {
   title: string;
   description: string;
   icon: React.ElementType;
-  chartType: "area" | "bar" | "pie" | "table";
+  chartType: "area" | "bar" | "pie" | "grouped-bar" | "table";
 }
 
 const REPORT_CARDS: ReportCardDef[] = [
@@ -126,7 +125,7 @@ const REPORT_CARDS: ReportCardDef[] = [
     title: "Presupuesto vs Real",
     description: "Comparacion de presupuestos contra gastos reales.",
     icon: BarChart3,
-    chartType: "bar",
+    chartType: "grouped-bar",
   },
   {
     key: "vendor-summary",
@@ -144,7 +143,48 @@ const REPORT_CARDS: ReportCardDef[] = [
   },
 ];
 
-/* ---------- Chart Tooltip ---------- */
+const CHART_TYPE_LABELS: Record<string, string> = {
+  area: "Grafico de Area",
+  bar: "Grafico de Barras",
+  pie: "Grafico Circular",
+  "grouped-bar": "Barras Agrupadas",
+  table: "Tabla de Datos",
+};
+
+/* ------------------------------------------------------------------ */
+/* Query hook for any report                                           */
+/* ------------------------------------------------------------------ */
+
+function useReportQuery(key: ReportType | null, period: Period) {
+  return useQuery({
+    queryKey: ["report", key, period],
+    queryFn: async () => {
+      if (!key) return null;
+      switch (key) {
+        case "cash-flow":
+          return api.reports.cashFlow({ period });
+        case "aging":
+          return api.reports.aging({ period });
+        case "sat-compliance":
+          return api.reports.satCompliance({ period });
+        case "budget-vs-actual":
+          return api.reports.budgetVsActual();
+        case "vendor-summary":
+          return api.reports.vendorSummary();
+        case "customer-summary":
+          return api.reports.customerSummary();
+        default:
+          return null;
+      }
+    },
+    enabled: !!key,
+    staleTime: 60_000,
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* Chart tooltip                                                       */
+/* ------------------------------------------------------------------ */
 
 function ChartTooltipContent({ active, payload, label }: any) {
   if (!active || !payload?.length) return null;
@@ -160,141 +200,189 @@ function ChartTooltipContent({ active, payload, label }: any) {
   );
 }
 
-/* ---------- Report Detail View ---------- */
+/* ------------------------------------------------------------------ */
+/* Currency axis formatter                                             */
+/* ------------------------------------------------------------------ */
 
-function ReportDetail({
+function formatAxis(value: number) {
+  return new Intl.NumberFormat("es-MX", {
+    notation: "compact",
+    style: "currency",
+    currency: "MXN",
+  }).format(value);
+}
+
+/* ------------------------------------------------------------------ */
+/* Report Detail Dialog                                                */
+/* ------------------------------------------------------------------ */
+
+function ReportDetailDialog({
   report,
-  period,
-  setPeriod,
-  onBack,
+  open,
+  onOpenChange,
 }: {
-  report: ReportCardDef;
-  period: Period;
-  setPeriod: (p: Period) => void;
-  onBack: () => void;
+  report: ReportCardDef | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }) {
-  const periodParams = useMemo(() => ({ period }), [period]);
+  const [period, setPeriod] = useState<Period>("month");
+  const { data, isLoading } = useReportQuery(report?.key ?? null, period);
+  const [exporting, setExporting] = useState<"pdf" | "excel" | null>(null);
 
-  /* Conditional queries based on report type */
-  const cashFlow = useCashFlowReport(
-    report.key === "cash-flow" ? periodParams : {}
+  const handleExport = useCallback(
+    async (format: "pdf" | "excel") => {
+      if (!report) return;
+      setExporting(format);
+      try {
+        let result: any;
+        switch (report.key) {
+          case "cash-flow":
+            result = await api.reports.cashFlow({ period, format });
+            break;
+          case "aging":
+            result = await api.reports.aging({ period, format });
+            break;
+          case "sat-compliance":
+            result = await api.reports.satCompliance({ period, format });
+            break;
+          case "budget-vs-actual":
+            result = await api.reports.budgetVsActual();
+            break;
+          case "vendor-summary":
+            result = await api.reports.vendorSummary();
+            break;
+          case "customer-summary":
+            result = await api.reports.customerSummary();
+            break;
+        }
+
+        if (result?.url) {
+          window.open(result.url, "_blank");
+        } else if (result instanceof Blob) {
+          const url = URL.createObjectURL(result);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = `${report.key}-${period}.${format === "pdf" ? "pdf" : "xlsx"}`;
+          a.click();
+          URL.revokeObjectURL(url);
+        }
+
+        toast.success(
+          `Exportacion ${format.toUpperCase()} generada exitosamente`,
+        );
+      } catch (err: any) {
+        toast.error(
+          err?.message || `Error al exportar en formato ${format.toUpperCase()}`,
+        );
+      } finally {
+        setExporting(null);
+      }
+    },
+    [report, period],
   );
-  const aging = useAgingReport(report.key === "aging" ? periodParams : {});
-  const sat = useSatComplianceReport(
-    report.key === "sat-compliance" ? periodParams : {}
-  );
-  const budgetVsActual = useBudgetVsActualReport();
-  const vendorSummary = useVendorSummaryReport();
-  const customerSummary = useCustomerSummaryReport();
 
-  const isLoading =
-    (report.key === "cash-flow" && cashFlow.isLoading) ||
-    (report.key === "aging" && aging.isLoading) ||
-    (report.key === "sat-compliance" && sat.isLoading) ||
-    (report.key === "budget-vs-actual" && budgetVsActual.isLoading) ||
-    (report.key === "vendor-summary" && vendorSummary.isLoading) ||
-    (report.key === "customer-summary" && customerSummary.isLoading);
-
-  function getData(): any {
-    switch (report.key) {
-      case "cash-flow":
-        return cashFlow.data;
-      case "aging":
-        return aging.data;
-      case "sat-compliance":
-        return sat.data;
-      case "budget-vs-actual":
-        return budgetVsActual.data;
-      case "vendor-summary":
-        return vendorSummary.data;
-      case "customer-summary":
-        return customerSummary.data;
-      default:
-        return null;
-    }
-  }
-
-  const data = getData();
+  if (!report) return null;
 
   return (
-    <div className="flex flex-col gap-6">
-      {/* Header */}
-      <div className="flex items-center gap-4">
-        <Button variant="ghost" size="sm" onClick={onBack}>
-          <ArrowLeft className="size-4 mr-1" />
-          Volver
-        </Button>
-        <div className="flex-1">
-          <h2 className="text-xl font-bold flex items-center gap-2">
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
             <report.icon className="size-5" />
             {report.title}
-          </h2>
-          <p className="text-sm text-muted-foreground">{report.description}</p>
+          </DialogTitle>
+        </DialogHeader>
+
+        {/* Controls row */}
+        <div className="flex items-center justify-between">
+          <Select
+            value={period}
+            onValueChange={(v) => setPeriod(v as Period)}
+          >
+            <SelectTrigger className="w-[180px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {(Object.keys(PERIOD_LABELS) as Period[]).map((p) => (
+                <SelectItem key={p} value={p}>
+                  {PERIOD_LABELS[p]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <PermissionGate permission="reports:export">
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={exporting === "pdf"}
+                onClick={() => handleExport("pdf")}
+              >
+                {exporting === "pdf" ? (
+                  <Loader2 className="size-4 mr-1 animate-spin" />
+                ) : (
+                  <FileText className="size-4 mr-1" />
+                )}
+                PDF
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={exporting === "excel"}
+                onClick={() => handleExport("excel")}
+              >
+                {exporting === "excel" ? (
+                  <Loader2 className="size-4 mr-1 animate-spin" />
+                ) : (
+                  <FileSpreadsheet className="size-4 mr-1" />
+                )}
+                Excel
+              </Button>
+            </div>
+          </PermissionGate>
         </div>
-      </div>
 
-      {/* Controls */}
-      <div className="flex items-center justify-between">
-        <Select
-          value={period}
-          onValueChange={(v) => setPeriod(v as Period)}
-        >
-          <SelectTrigger className="w-[180px]">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {(Object.keys(PERIOD_LABELS) as Period[]).map((p) => (
-              <SelectItem key={p} value={p}>
-                {PERIOD_LABELS[p]}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        {/* Loading skeleton */}
+        {isLoading && (
+          <div className="space-y-4 py-4">
+            <Skeleton className="h-8 w-1/3" />
+            <Skeleton className="h-[300px] w-full" />
+            <Skeleton className="h-8 w-full" />
+            <Skeleton className="h-8 w-full" />
+          </div>
+        )}
 
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm">
-            <FileText className="size-4 mr-1" />
-            PDF
-          </Button>
-          <Button variant="outline" size="sm">
-            <FileSpreadsheet className="size-4 mr-1" />
-            Excel
-          </Button>
-        </div>
-      </div>
-
-      {/* Loading */}
-      {isLoading && (
-        <div className="flex items-center justify-center py-12">
-          <span className="text-sm text-muted-foreground">
-            Cargando reporte...
-          </span>
-        </div>
-      )}
-
-      {/* Cash Flow Area Chart */}
-      {report.key === "cash-flow" && !isLoading && data && (
-        <Card>
-          <CardContent className="pt-6">
-            <div className="grid grid-cols-3 gap-4 mb-6">
-              <div>
-                <p className="text-sm text-muted-foreground">Total Ingresos</p>
-                <p className="text-lg font-bold text-green-600">
-                  {formatMoney(data.total_inflows ?? data.inflows ?? 0)}
-                </p>
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Total Egresos</p>
-                <p className="text-lg font-bold text-red-600">
-                  {formatMoney(data.total_outflows ?? data.outflows ?? 0)}
-                </p>
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Flujo Neto</p>
-                <p className="text-lg font-bold">
-                  {formatMoney(data.net_flow ?? data.net ?? 0)}
-                </p>
-              </div>
+        {/* ---- Cash Flow ---- */}
+        {report.key === "cash-flow" && !isLoading && data && (
+          <div className="space-y-6">
+            <div className="grid grid-cols-3 gap-4">
+              <Card>
+                <CardContent className="pt-4">
+                  <p className="text-sm text-muted-foreground">
+                    Total Ingresos
+                  </p>
+                  <p className="text-lg font-bold text-green-600">
+                    {formatMoney(data.total_inflows ?? data.inflows ?? 0)}
+                  </p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="pt-4">
+                  <p className="text-sm text-muted-foreground">Total Egresos</p>
+                  <p className="text-lg font-bold text-red-600">
+                    {formatMoney(data.total_outflows ?? data.outflows ?? 0)}
+                  </p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="pt-4">
+                  <p className="text-sm text-muted-foreground">Flujo Neto</p>
+                  <p className="text-lg font-bold">
+                    {formatMoney(data.net_flow ?? data.net ?? 0)}
+                  </p>
+                </CardContent>
+              </Card>
             </div>
             {Array.isArray(data.details || data.entries) && (
               <div className="h-[350px]">
@@ -303,18 +391,12 @@ function ReportDetail({
                     data={data.details || data.entries}
                     margin={{ top: 10, right: 30, left: 0, bottom: 0 }}
                   >
-                    <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                    <XAxis dataKey="date" tick={{ fontSize: 12 }} />
-                    <YAxis
-                      tick={{ fontSize: 12 }}
-                      tickFormatter={(v) =>
-                        new Intl.NumberFormat("es-MX", {
-                          notation: "compact",
-                          style: "currency",
-                          currency: "MXN",
-                        }).format(v)
-                      }
+                    <CartesianGrid
+                      strokeDasharray="3 3"
+                      className="stroke-muted"
                     />
+                    <XAxis dataKey="date" tick={{ fontSize: 12 }} />
+                    <YAxis tick={{ fontSize: 12 }} tickFormatter={formatAxis} />
                     <Tooltip content={<ChartTooltipContent />} />
                     <Legend />
                     <Area
@@ -335,113 +417,147 @@ function ReportDetail({
                 </ResponsiveContainer>
               </div>
             )}
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Aging Bar Chart */}
-      {report.key === "aging" && !isLoading && data && (
-        <Card>
-          <CardContent className="pt-6">
-            {Array.isArray(data.buckets || data) && (
-              <div className="h-[350px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart
-                    data={data.buckets || data}
-                    margin={{ top: 10, right: 30, left: 0, bottom: 0 }}
-                  >
-                    <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                    <XAxis
-                      dataKey="range"
-                      tick={{ fontSize: 12 }}
-                    />
-                    <YAxis
-                      tick={{ fontSize: 12 }}
-                      tickFormatter={(v) =>
-                        new Intl.NumberFormat("es-MX", {
-                          notation: "compact",
-                          style: "currency",
-                          currency: "MXN",
-                        }).format(v)
-                      }
-                    />
-                    <Tooltip content={<ChartTooltipContent />} />
-                    <Bar
-                      dataKey="amount"
-                      name="Monto"
-                      fill="#2563eb"
-                      radius={[4, 4, 0, 0]}
-                    />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            )}
-            {/* Table below */}
-            {Array.isArray(data.buckets || data) && (
-              <Table className="mt-4">
+            {Array.isArray(data.details || data.entries) && (
+              <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Rango</TableHead>
-                    <TableHead className="text-right">Monto</TableHead>
-                    <TableHead className="text-right">Facturas</TableHead>
+                    <TableHead>Fecha</TableHead>
+                    <TableHead className="text-right">Ingresos</TableHead>
+                    <TableHead className="text-right">Egresos</TableHead>
+                    <TableHead className="text-right">Neto</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {(data.buckets || data).map((b: any, i: number) => (
-                    <TableRow key={i}>
-                      <TableCell className="font-medium">
-                        {b.range || b.bucket || b.label || "-"}
-                      </TableCell>
-                      <TableCell className="text-right font-mono">
-                        {formatMoney(b.amount ?? b.total ?? 0)}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {b.count ?? b.invoices ?? "-"}
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                  {(data.details || data.entries).map(
+                    (row: any, idx: number) => (
+                      <TableRow key={idx}>
+                        <TableCell className="font-medium">
+                          {row.date || "-"}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-green-600">
+                          {formatMoney(row.inflows ?? 0)}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-red-600">
+                          {formatMoney(row.outflows ?? 0)}
+                        </TableCell>
+                        <TableCell className="text-right font-mono">
+                          {formatMoney(
+                            (row.inflows ?? 0) - (row.outflows ?? 0),
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ),
+                  )}
                 </TableBody>
               </Table>
             )}
-          </CardContent>
-        </Card>
-      )}
+          </div>
+        )}
 
-      {/* SAT Compliance Pie / Stats */}
-      {report.key === "sat-compliance" && !isLoading && data && (
-        <Card>
-          <CardContent className="pt-6">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-              <div>
-                <p className="text-sm text-muted-foreground">Total Documentos</p>
-                <p className="text-lg font-bold">
-                  {data.total_documents ?? data.total ?? "-"}
-                </p>
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Vigentes</p>
-                <p className="text-lg font-bold text-green-600">
-                  {data.valid ?? data.vigentes ?? "-"}
-                </p>
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Cancelados</p>
-                <p className="text-lg font-bold text-red-600">
-                  {data.cancelled ?? data.cancelados ?? "-"}
-                </p>
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Tasa Cumplimiento</p>
-                <p className="text-lg font-bold">
-                  {data.compliance_rate != null
-                    ? `${data.compliance_rate.toFixed(1)}%`
-                    : data.compliance_pct != null
-                    ? `${data.compliance_pct.toFixed(1)}%`
-                    : "-"}
-                </p>
-              </div>
+        {/* ---- Aging ---- */}
+        {report.key === "aging" && !isLoading && data && (
+          <div className="space-y-6">
+            {Array.isArray(data.buckets || data) && (
+              <>
+                <div className="h-[350px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart
+                      data={data.buckets || data}
+                      margin={{ top: 10, right: 30, left: 0, bottom: 0 }}
+                    >
+                      <CartesianGrid
+                        strokeDasharray="3 3"
+                        className="stroke-muted"
+                      />
+                      <XAxis dataKey="range" tick={{ fontSize: 12 }} />
+                      <YAxis
+                        tick={{ fontSize: 12 }}
+                        tickFormatter={formatAxis}
+                      />
+                      <Tooltip content={<ChartTooltipContent />} />
+                      <Bar
+                        dataKey="amount"
+                        name="Monto"
+                        fill="#2563eb"
+                        radius={[4, 4, 0, 0]}
+                      />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Rango</TableHead>
+                      <TableHead className="text-right">Monto</TableHead>
+                      <TableHead className="text-right">Facturas</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {(data.buckets || data).map((b: any, i: number) => (
+                      <TableRow key={i}>
+                        <TableCell className="font-medium">
+                          {b.range || b.bucket || b.label || "-"}
+                        </TableCell>
+                        <TableCell className="text-right font-mono">
+                          {formatMoney(b.amount ?? b.total ?? 0)}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {b.count ?? b.invoices ?? "-"}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* ---- SAT Compliance ---- */}
+        {report.key === "sat-compliance" && !isLoading && data && (
+          <div className="space-y-6">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <Card>
+                <CardContent className="pt-4">
+                  <p className="text-sm text-muted-foreground">
+                    Total Documentos
+                  </p>
+                  <p className="text-lg font-bold">
+                    {data.total_documents ?? data.total ?? "-"}
+                  </p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="pt-4">
+                  <p className="text-sm text-muted-foreground">Vigentes</p>
+                  <p className="text-lg font-bold text-green-600">
+                    {data.valid ?? data.vigentes ?? "-"}
+                  </p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="pt-4">
+                  <p className="text-sm text-muted-foreground">Cancelados</p>
+                  <p className="text-lg font-bold text-red-600">
+                    {data.cancelled ?? data.cancelados ?? "-"}
+                  </p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="pt-4">
+                  <p className="text-sm text-muted-foreground">
+                    Tasa Cumplimiento
+                  </p>
+                  <p className="text-lg font-bold">
+                    {data.compliance_rate != null
+                      ? `${data.compliance_rate.toFixed(1)}%`
+                      : data.compliance_pct != null
+                        ? `${data.compliance_pct.toFixed(1)}%`
+                        : "-"}
+                  </p>
+                </CardContent>
+              </Card>
             </div>
-            {/* Pie chart */}
             <div className="h-[300px]">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
@@ -464,8 +580,8 @@ function ReportDetail({
                     cy="50%"
                     outerRadius={100}
                     dataKey="value"
-                    label={({ name, percent }) =>
-                      `${name} (${((percent ?? 0) * 100).toFixed(0)}%)`
+                    label={(props: any) =>
+                      `${props.name} (${((props.percent ?? 0) * 100).toFixed(0)}%)`
                     }
                   >
                     {PIE_COLORS.map((color, i) => (
@@ -477,17 +593,15 @@ function ReportDetail({
                 </PieChart>
               </ResponsiveContainer>
             </div>
-          </CardContent>
-        </Card>
-      )}
+          </div>
+        )}
 
-      {/* Budget vs Actual */}
-      {report.key === "budget-vs-actual" &&
-        !isLoading &&
-        Array.isArray(data) && (
-          <Card>
-            <CardContent className="pt-6">
-              <div className="h-[350px] mb-6">
+        {/* ---- Budget vs Actual ---- */}
+        {report.key === "budget-vs-actual" &&
+          !isLoading &&
+          Array.isArray(data) && (
+            <div className="space-y-6">
+              <div className="h-[350px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart
                     data={data.map((item: any) => ({
@@ -497,29 +611,34 @@ function ReportDetail({
                       Real: item.amount_spent ?? item.actual ?? 0,
                     }))}
                   >
-                    <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                    <CartesianGrid
+                      strokeDasharray="3 3"
+                      className="stroke-muted"
+                    />
                     <XAxis dataKey="name" tick={{ fontSize: 12 }} />
                     <YAxis
                       tick={{ fontSize: 12 }}
-                      tickFormatter={(v) =>
-                        new Intl.NumberFormat("es-MX", {
-                          notation: "compact",
-                          style: "currency",
-                          currency: "MXN",
-                        }).format(v)
-                      }
+                      tickFormatter={formatAxis}
                     />
                     <Tooltip content={<ChartTooltipContent />} />
                     <Legend />
-                    <Bar dataKey="Presupuestado" fill="#2563eb" radius={[4, 4, 0, 0]} />
-                    <Bar dataKey="Real" fill="#dc2626" radius={[4, 4, 0, 0]} />
+                    <Bar
+                      dataKey="Presupuestado"
+                      fill="#2563eb"
+                      radius={[4, 4, 0, 0]}
+                    />
+                    <Bar
+                      dataKey="Real"
+                      fill="#dc2626"
+                      radius={[4, 4, 0, 0]}
+                    />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Presupuesto</TableHead>
+                    <TableHead>Categoria</TableHead>
                     <TableHead className="text-right">Presupuestado</TableHead>
                     <TableHead className="text-right">Actual</TableHead>
                     <TableHead className="text-right">Variacion</TableHead>
@@ -554,104 +673,140 @@ function ReportDetail({
                   })}
                 </TableBody>
               </Table>
-            </CardContent>
-          </Card>
-        )}
+            </div>
+          )}
 
-      {/* Vendor Summary */}
-      {report.key === "vendor-summary" &&
-        !isLoading &&
-        Array.isArray(data) && (
-          <Card>
-            <CardContent className="pt-6">
-              <Table>
-                <TableHeader>
+        {/* ---- Vendor Summary ---- */}
+        {report.key === "vendor-summary" &&
+          !isLoading &&
+          Array.isArray(data) && (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Proveedor</TableHead>
+                  <TableHead>RFC</TableHead>
+                  <TableHead className="text-right">Total Pagado</TableHead>
+                  <TableHead className="text-right">Pendiente</TableHead>
+                  <TableHead className="text-right">Facturas</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {data.length === 0 && (
                   <TableRow>
-                    <TableHead>Proveedor</TableHead>
-                    <TableHead>RFC</TableHead>
-                    <TableHead className="text-right">Total Pagado</TableHead>
-                    <TableHead className="text-right">Pendiente</TableHead>
-                    <TableHead className="text-right">Facturas</TableHead>
+                    <TableCell
+                      colSpan={5}
+                      className="text-center text-muted-foreground py-8"
+                    >
+                      No hay datos de proveedores disponibles.
+                    </TableCell>
                   </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {data.map((v: any, idx: number) => (
-                    <TableRow key={idx}>
-                      <TableCell className="font-medium">
-                        {v.name || v.vendor_name || "-"}
-                      </TableCell>
-                      <TableCell className="font-mono text-sm">
-                        {v.rfc || v.vat || "-"}
-                      </TableCell>
-                      <TableCell className="text-right font-mono">
-                        {formatMoney(v.total_paid ?? v.paid ?? 0)}
-                      </TableCell>
-                      <TableCell className="text-right font-mono">
-                        {formatMoney(v.total_pending ?? v.pending ?? 0)}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {v.invoice_count ?? v.bills ?? "-"}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-        )}
+                )}
+                {data.map((v: any, idx: number) => (
+                  <TableRow key={idx}>
+                    <TableCell className="font-medium">
+                      {v.name || v.vendor_name || "-"}
+                    </TableCell>
+                    <TableCell className="font-mono text-sm">
+                      {v.rfc || v.vat || "-"}
+                    </TableCell>
+                    <TableCell className="text-right font-mono">
+                      {formatMoney(v.total_paid ?? v.paid ?? 0)}
+                    </TableCell>
+                    <TableCell className="text-right font-mono">
+                      {formatMoney(v.total_pending ?? v.pending ?? 0)}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {v.invoice_count ?? v.bills ?? "-"}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
 
-      {/* Customer Summary */}
-      {report.key === "customer-summary" &&
-        !isLoading &&
-        Array.isArray(data) && (
-          <Card>
-            <CardContent className="pt-6">
-              <Table>
-                <TableHeader>
+        {/* ---- Customer Summary ---- */}
+        {report.key === "customer-summary" &&
+          !isLoading &&
+          Array.isArray(data) && (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Cliente</TableHead>
+                  <TableHead>RFC</TableHead>
+                  <TableHead className="text-right">Total Cobrado</TableHead>
+                  <TableHead className="text-right">Pendiente</TableHead>
+                  <TableHead className="text-right">Facturas</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {data.length === 0 && (
                   <TableRow>
-                    <TableHead>Cliente</TableHead>
-                    <TableHead>RFC</TableHead>
-                    <TableHead className="text-right">Total Cobrado</TableHead>
-                    <TableHead className="text-right">Pendiente</TableHead>
-                    <TableHead className="text-right">Facturas</TableHead>
+                    <TableCell
+                      colSpan={5}
+                      className="text-center text-muted-foreground py-8"
+                    >
+                      No hay datos de clientes disponibles.
+                    </TableCell>
                   </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {data.map((c: any, idx: number) => (
-                    <TableRow key={idx}>
-                      <TableCell className="font-medium">
-                        {c.name || c.customer_name || "-"}
-                      </TableCell>
-                      <TableCell className="font-mono text-sm">
-                        {c.rfc || c.vat || "-"}
-                      </TableCell>
-                      <TableCell className="text-right font-mono">
-                        {formatMoney(c.total_collected ?? c.collected ?? 0)}
-                      </TableCell>
-                      <TableCell className="text-right font-mono">
-                        {formatMoney(c.total_pending ?? c.pending ?? 0)}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {c.invoice_count ?? c.invoices ?? "-"}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
+                )}
+                {data.map((c: any, idx: number) => (
+                  <TableRow key={idx}>
+                    <TableCell className="font-medium">
+                      {c.name || c.customer_name || "-"}
+                    </TableCell>
+                    <TableCell className="font-mono text-sm">
+                      {c.rfc || c.vat || "-"}
+                    </TableCell>
+                    <TableCell className="text-right font-mono">
+                      {formatMoney(c.total_collected ?? c.collected ?? 0)}
+                    </TableCell>
+                    <TableCell className="text-right font-mono">
+                      {formatMoney(c.total_pending ?? c.pending ?? 0)}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {c.invoice_count ?? c.invoices ?? "-"}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+
+        {/* No data fallback */}
+        {!isLoading && !data && (
+          <EmptyState
+            icon={BarChart3}
+            title="Sin datos"
+            description="No hay datos disponibles para este reporte en el periodo seleccionado."
+          />
         )}
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
-/* ---------- Main Page ---------- */
+/* ================================================================== */
+/* Main Page                                                           */
+/* ================================================================== */
 
 export default function ReportesPage() {
   const [selectedReport, setSelectedReport] = useState<ReportType | null>(null);
-  const [period, setPeriod] = useState<Period>("month");
+  const [dialogOpen, setDialogOpen] = useState(false);
 
-  const selected = REPORT_CARDS.find((r) => r.key === selectedReport);
+  const selectedDef = useMemo(
+    () => REPORT_CARDS.find((r) => r.key === selectedReport) ?? null,
+    [selectedReport],
+  );
+
+  function handleCardClick(key: ReportType) {
+    setSelectedReport(key);
+    setDialogOpen(true);
+  }
+
+  function handleDialogClose(open: boolean) {
+    setDialogOpen(open);
+    if (!open) setSelectedReport(null);
+  }
 
   return (
     <PermissionGate
@@ -665,59 +820,49 @@ export default function ReportesPage() {
       }
     >
       <div className="flex flex-col gap-6">
-        {!selected ? (
-          <>
-            {/* Header */}
-            <div>
-              <h1 className="text-2xl font-bold tracking-tight">Reportes</h1>
-              <p className="text-muted-foreground text-sm">
-                Genera y consulta reportes financieros, fiscales y operativos.
-              </p>
-            </div>
+        {/* Header */}
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Reportes</h1>
+          <p className="text-muted-foreground text-sm">
+            Genera y consulta reportes financieros, fiscales y operativos.
+          </p>
+        </div>
 
-            {/* Gallery Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {REPORT_CARDS.map((report) => {
-                const Icon = report.icon;
-                return (
-                  <Card
-                    key={report.key}
-                    className="cursor-pointer hover:border-primary/50 transition-colors"
-                    onClick={() => setSelectedReport(report.key)}
-                  >
-                    <CardHeader>
-                      <CardTitle className="flex items-center gap-2 text-base">
-                        <Icon className="size-5 text-muted-foreground" />
-                        {report.title}
-                      </CardTitle>
-                      <CardDescription>{report.description}</CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="h-24 rounded-md bg-muted/50 flex items-center justify-center">
-                        <span className="text-xs text-muted-foreground uppercase tracking-wider">
-                          {report.chartType === "area"
-                            ? "Grafico de Area"
-                            : report.chartType === "bar"
-                            ? "Grafico de Barras"
-                            : report.chartType === "pie"
-                            ? "Grafico Circular"
-                            : "Tabla de Datos"}
-                        </span>
-                      </div>
-                    </CardContent>
-                  </Card>
-                );
-              })}
-            </div>
-          </>
-        ) : (
-          <ReportDetail
-            report={selected}
-            period={period}
-            setPeriod={setPeriod}
-            onBack={() => setSelectedReport(null)}
-          />
-        )}
+        {/* Gallery Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {REPORT_CARDS.map((report) => {
+            const Icon = report.icon;
+            return (
+              <Card
+                key={report.key}
+                className="cursor-pointer hover:border-primary/50 hover:shadow-md transition-all"
+                onClick={() => handleCardClick(report.key)}
+              >
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <Icon className="size-5 text-muted-foreground" />
+                    {report.title}
+                  </CardTitle>
+                  <CardDescription>{report.description}</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="h-24 rounded-md bg-muted/50 flex items-center justify-center">
+                    <span className="text-xs text-muted-foreground uppercase tracking-wider">
+                      {CHART_TYPE_LABELS[report.chartType] ?? report.chartType}
+                    </span>
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+
+        {/* Detail Dialog */}
+        <ReportDetailDialog
+          report={selectedDef}
+          open={dialogOpen}
+          onOpenChange={handleDialogClose}
+        />
       </div>
     </PermissionGate>
   );
