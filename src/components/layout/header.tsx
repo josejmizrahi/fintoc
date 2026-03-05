@@ -13,9 +13,6 @@ import {
   Settings,
   Sun,
   User,
-  Check,
-  Plus,
-  Building2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuthStore, useSidebarStore, useSyncStore, useUIStore } from '@/lib/store';
@@ -87,7 +84,7 @@ export function Header() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { theme, setTheme } = useTheme();
-  const { user, activeCompany, companies, role, logout, switchCompany } = useAuthStore();
+  const { user, role, logout } = useAuthStore();
   const { mobileOpen, setMobileOpen } = useSidebarStore();
   const { isSyncing, lastSync, setSync } = useSyncStore();
   const { setCommandPaletteOpen } = useUIStore();
@@ -98,24 +95,6 @@ export function Header() {
     logout();
     queryClient.clear();
     router.push('/login');
-  };
-
-  const handleSwitchCompany = async (company: typeof activeCompany) => {
-    if (!company || company.id === activeCompany?.id) return;
-    try {
-      const res = await api.auth.switchCompany({ company_id: company.id });
-      const newRole = res?.data?.active_company?.role || 'admin';
-      switchCompany(company, newRole);
-      queryClient.clear();
-      if (!company.onboarding_completed) {
-        router.push('/onboarding');
-      } else {
-        router.push('/');
-      }
-      toast.success(`Cambiado a ${company.name}`);
-    } catch {
-      toast.error('Error al cambiar de empresa');
-    }
   };
 
   const handleSync = async () => {
@@ -157,41 +136,8 @@ export function Header() {
         </SheetContent>
       </Sheet>
 
-      {/* Company switcher */}
-      {companies.length > 1 ? (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" className="gap-2 font-semibold">
-              <Building2 className="size-4" />
-              <span className="hidden sm:inline">{activeCompany?.name || 'Empresa'}</span>
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="w-64">
-            <DropdownMenuLabel>Empresas</DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            {companies.map((c) => (
-              <DropdownMenuItem
-                key={c.id}
-                onSelect={() => handleSwitchCompany(c)}
-                className="flex items-center justify-between"
-              >
-                <span>{c.name}</span>
-                {c.id === activeCompany?.id && <Check className="size-4 text-primary" />}
-              </DropdownMenuItem>
-            ))}
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={() => router.push('/configuracion')}>
-              <Plus className="size-4" />
-              Crear empresa
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      ) : (
-        <div className="flex items-center gap-2">
-          <Building2 className="size-4 text-muted-foreground" />
-          <span className="text-sm font-semibold">{activeCompany?.name || 'Empresa'}</span>
-        </div>
-      )}
+      {/* Page title */}
+      <span className="text-sm font-semibold hidden md:block">{pageName}</span>
 
       <div className="flex-1" />
 
