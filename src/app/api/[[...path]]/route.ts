@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { hasDB, query, insert, update } from "@/lib/db";
+import { hasDB, query, insert, update, queryPaginated } from "@/lib/db";
 import { getCompanyId, getUserRole } from "@/lib/auth-helpers";
 import { validateCfdiAgainstSat, parseCfdiXml } from "@/lib/sat";
 import { fintocGet, fintocPost } from "@/lib/fintoc";
@@ -186,7 +186,7 @@ const MOCK = {
 
 // ── DB GET handler ──
 
-async function dbGet(path: string, companyId: number | null): Promise<unknown | null> {
+async function dbGet(path: string, companyId: number | null, page?: number, limit?: number): Promise<unknown | null> {
   if (!hasDB() || !companyId) return null;
 
   try {
@@ -234,6 +234,10 @@ async function dbGet(path: string, companyId: number | null): Promise<unknown | 
 
     // Payments
     if (path === "payments" || path === "payments/") {
+      if (page) {
+        const result = await queryPaginated("payments", { match: { company_id: companyId }, order: { column: "created_at" }, page, limit });
+        return { data: result.data, pagination: { page: result.page, limit: result.limit, total: result.total, totalPages: result.totalPages } };
+      }
       const { data } = await query("payments", { match: { company_id: companyId }, order: { column: "created_at" } });
       return data || [];
     }
@@ -277,6 +281,10 @@ async function dbGet(path: string, companyId: number | null): Promise<unknown | 
 
     // Vendors
     if (path === "vendors" || path === "vendors/") {
+      if (page) {
+        const result = await queryPaginated("vendors", { match: { company_id: companyId }, order: { column: "name", ascending: true }, page, limit });
+        return { data: result.data, pagination: { page: result.page, limit: result.limit, total: result.total, totalPages: result.totalPages } };
+      }
       const { data } = await query("vendors", { match: { company_id: companyId }, order: { column: "name", ascending: true } });
       return data || [];
     }
@@ -302,6 +310,10 @@ async function dbGet(path: string, companyId: number | null): Promise<unknown | 
 
     // Customers
     if (path === "customers" || path === "customers/" || path === "customers/search") {
+      if (page) {
+        const result = await queryPaginated("customers", { match: { company_id: companyId }, order: { column: "name", ascending: true }, page, limit });
+        return { data: result.data, pagination: { page: result.page, limit: result.limit, total: result.total, totalPages: result.totalPages } };
+      }
       const { data } = await query("customers", { match: { company_id: companyId }, order: { column: "name", ascending: true } });
       return data || [];
     }
@@ -327,6 +339,10 @@ async function dbGet(path: string, companyId: number | null): Promise<unknown | 
 
     // Expenses
     if (path === "expenses" || path === "expenses/") {
+      if (page) {
+        const result = await queryPaginated("expenses", { match: { company_id: companyId }, order: { column: "created_at" }, page, limit });
+        return { data: result.data, pagination: { page: result.page, limit: result.limit, total: result.total, totalPages: result.totalPages } };
+      }
       const { data } = await query("expenses", { match: { company_id: companyId }, order: { column: "created_at" } });
       return data || [];
     }
@@ -1118,7 +1134,10 @@ export async function GET(req: NextRequest) {
   const rbacDenied = await enforceRbac(req, "GET", path);
   if (rbacDenied) return rbacDenied;
   const companyId = await getCompanyId(req);
-  const dbResult = await dbGet(path, companyId);
+  const url = new URL(req.url);
+  const page = Number(url.searchParams.get("page")) || undefined;
+  const limit = Number(url.searchParams.get("limit")) || undefined;
+  const dbResult = await dbGet(path, companyId, page, limit);
   if (dbResult !== null) return NextResponse.json(dbResult);
   return mockGet(path);
 }

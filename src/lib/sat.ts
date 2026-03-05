@@ -3,6 +3,8 @@
  * Shared by: catch-all route, onboarding route, reconciliation route
  */
 
+import { withRetry } from "./retry";
+
 const SAT_SOAP_URL = "https://consultaqr.facturaelectronica.sat.gob.mx/ConsultaCFDIService.svc";
 const SAT_SOAP_ACTION = "http://tempuri.org/IConsultaCFDIService/Consulta";
 
@@ -32,23 +34,25 @@ export async function validateCfdiAgainstSat(
 </soap:Envelope>`;
 
   try {
-    const res = await fetch(SAT_SOAP_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "text/xml; charset=utf-8",
-        SOAPAction: SAT_SOAP_ACTION,
-      },
-      body: soapEnvelope,
-      signal: AbortSignal.timeout(timeout),
-    });
+    return await withRetry(async () => {
+      const res = await fetch(SAT_SOAP_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "text/xml; charset=utf-8",
+          SOAPAction: SAT_SOAP_ACTION,
+        },
+        body: soapEnvelope,
+        signal: AbortSignal.timeout(timeout),
+      });
 
-    if (!res.ok) return "Error";
+      if (!res.ok) return "Error";
 
-    const text = await res.text();
-    if (text.includes("Vigente")) return "Vigente";
-    if (text.includes("Cancelado")) return "Cancelado";
-    if (text.includes("No Encontrado")) return "No encontrado";
-    return "Sin verificar";
+      const text = await res.text();
+      if (text.includes("Vigente")) return "Vigente";
+      if (text.includes("Cancelado")) return "Cancelado";
+      if (text.includes("No Encontrado")) return "No encontrado";
+      return "Sin verificar";
+    }, { maxRetries: 2, retryOn: (err) => err instanceof Error && err.message.includes("timeout") });
   } catch {
     return "Sin verificar";
   }

@@ -3,6 +3,8 @@
  * Shared by: onboarding route, reconciliation route
  */
 
+import { withRetry } from "./retry";
+
 export interface OdooJsonRpcResult {
   jsonrpc: string;
   result?: unknown;
@@ -16,19 +18,21 @@ export async function odooJsonRpc(
   args: unknown[],
   timeout = 15000,
 ): Promise<OdooJsonRpcResult> {
-  const res = await fetch(`${url.replace(/\/$/, "")}/jsonrpc`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      method: "call",
-      id: Date.now(),
-      params: { service, method, args },
-    }),
-    signal: AbortSignal.timeout(timeout),
-  });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
+  return withRetry(async () => {
+    const res = await fetch(`${url.replace(/\/$/, "")}/jsonrpc`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        method: "call",
+        id: Date.now(),
+        params: { service, method, args },
+      }),
+      signal: AbortSignal.timeout(timeout),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+  }, { retryOn: (err) => !(err instanceof Error && err.message.includes("Credenciales")) });
 }
 
 export async function odooAuthenticate(
