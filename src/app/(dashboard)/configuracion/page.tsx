@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { toast } from "sonner";
 import { useAuthStore } from "@/lib/store";
 import {
@@ -29,6 +29,7 @@ import {
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { FintocWidget } from "@/components/fintoc-widget";
+import { SyncStatus } from "@/components/sync-status";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -62,6 +63,11 @@ function authHeaders() {
   };
 }
 
+function authHeadersNoContentType(): Record<string, string> {
+  const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 async function saveIntegration(provider: string, config: Record<string, string>) {
   const res = await fetch("/api/onboarding", {
     method: "POST",
@@ -89,7 +95,7 @@ async function syncIntegration(provider: string, config: Record<string, string>)
   return res.json();
 }
 
-async function loadIntegrations(): Promise<Record<string, { is_connected: boolean; last_sync_at?: string; last_sync_message?: string; config?: Record<string, string> } | null>> {
+async function loadIntegrations(): Promise<Record<string, { is_connected: boolean; last_sync_at?: string; last_sync_message?: string; cert_uploaded_at?: string; config?: Record<string, string> } | null>> {
   try {
     const res = await fetch("/api/onboarding", { headers: authHeaders() });
     const data = await res.json();
@@ -113,14 +119,27 @@ export default function ConfiguracionPage() {
   const [satStatus, setSatStatus] = useState<"idle" | "validating" | "syncing" | "success" | "error">("idle");
   const [lastSync, setLastSync] = useState<Record<string, string>>({});
 
+  // Sync log tracking
+  const [odooSyncLogId, setOdooSyncLogId] = useState<number | undefined>();
+  const [fintocSyncLogId, setFintocSyncLogId] = useState<number | undefined>();
+  const [satSyncLogId, setSatSyncLogId] = useState<number | undefined>();
+
+  // SAT file upload state
+  const [satCerFile, setSatCerFile] = useState<File | null>(null);
+  const [satKeyFile, setSatKeyFile] = useState<File | null>(null);
+  const [satCerName, setSatCerName] = useState<string>("");
+  const [satKeyName, setSatKeyName] = useState<string>("");
+  const [satUploading, setSatUploading] = useState(false);
+  const cerInputRef = useRef<HTMLInputElement>(null);
+  const keyInputRef = useRef<HTMLInputElement>(null);
+
   // Load from DB on mount
   useEffect(() => {
     const base = defaultSettings(tenantName, tenantId);
     loadIntegrations().then((integrations) => {
-      // Hydrate from DB integrations if available
       const syncInfo: Record<string, string> = {};
       for (const provider of ["odoo", "fintoc", "sat"] as const) {
-        const integration = integrations[provider] as { is_connected?: boolean; last_sync_at?: string; last_sync_message?: string; config?: Record<string, string> } | null;
+        const integration = integrations[provider] as { is_connected?: boolean; last_sync_at?: string; last_sync_message?: string; cert_uploaded_at?: string; config?: Record<string, string> } | null;
         if (integration?.config) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           (base as any)[provider] = { ...base[provider], ...integration.config };
@@ -134,6 +153,11 @@ export default function ConfiguracionPage() {
           syncInfo[provider] = integration.last_sync_message
             ? `${new Date(integration.last_sync_at).toLocaleString("es-MX")} — ${integration.last_sync_message}`
             : new Date(integration.last_sync_at).toLocaleString("es-MX");
+        }
+        // Load SAT certificate file names
+        if (provider === "sat" && integration?.config) {
+          if (integration.config.certFileName) setSatCerName(integration.config.certFileName);
+          if (integration.config.keyFileName) setSatKeyName(integration.config.keyFileName);
         }
       }
       setLastSync(syncInfo);
@@ -236,8 +260,10 @@ export default function ConfiguracionPage() {
 
   async function handleSyncOdoo() {
     setOdooStatus("syncing");
+    setOdooSyncLogId(undefined);
     try {
       const res = await syncIntegration("odoo", settings.odoo);
+      if (res.sync_log_id) setOdooSyncLogId(res.sync_log_id);
       if (res.success) {
         setOdooStatus("success");
         toast.success(res.message || "Sincronizacion de Odoo completada");
@@ -256,8 +282,10 @@ export default function ConfiguracionPage() {
 
   async function handleSyncFintoc() {
     setFintocStatus("syncing");
+    setFintocSyncLogId(undefined);
     try {
       const res = await syncIntegration("fintoc", settings.fintoc);
+      if (res.sync_log_id) setFintocSyncLogId(res.sync_log_id);
       if (res.success) {
         setFintocStatus("success");
         toast.success(res.message || "Sincronizacion de Fintoc completada");
@@ -274,8 +302,10 @@ export default function ConfiguracionPage() {
 
   async function handleSyncSat() {
     setSatStatus("syncing");
+    setSatSyncLogId(undefined);
     try {
       const res = await syncIntegration("sat", settings.sat);
+      if (res.sync_log_id) setSatSyncLogId(res.sync_log_id);
       if (res.success) {
         setSatStatus("success");
         toast.success(res.message || "Validacion SAT completada");
@@ -290,6 +320,47 @@ export default function ConfiguracionPage() {
     }
   }
 
+  // ------ SAT file upload handler ------
+
+  async function handleUploadSatFiles() {
+    if (!satCerFile && !satKeyFile) {
+      toast.error("Selecciona al menos un archivo (.cer o .key)");
+      return;
+    }
+
+    setSatUploading(true);
+    try {
+      const formData = new FormData();
+      if (satCerFile) formData.append("cer", satCerFile);
+      if (satKeyFile) formData.append("key", satKeyFile);
+      if (settings.sat.keyPassword) formData.append("keyPassword", settings.sat.keyPassword);
+      if (settings.sat.rfcEmisor) formData.append("rfcEmisor", settings.sat.rfcEmisor);
+
+      const res = await fetch("/api/sat/upload", {
+        method: "POST",
+        headers: authHeadersNoContentType(),
+        body: formData,
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        toast.success(data.message || "Archivos subidos exitosamente");
+        if (data.files?.cer) setSatCerName(data.files.cer.name);
+        if (data.files?.key) setSatKeyName(data.files.key.name);
+        setSatCerFile(null);
+        setSatKeyFile(null);
+        if (cerInputRef.current) cerInputRef.current.value = "";
+        if (keyInputRef.current) keyInputRef.current.value = "";
+      } else {
+        toast.error(data.message || data.detail || "Error al subir archivos");
+      }
+    } catch {
+      toast.error("Error de conexion al subir archivos");
+    } finally {
+      setSatUploading(false);
+    }
+  }
+
   // ------ Status badge helper ------
 
   function connectionBadge(status: "idle" | "testing" | "syncing" | "success" | "error" | "validating") {
@@ -298,7 +369,7 @@ export default function ConfiguracionPage() {
       case "validating":
         return <Badge variant="secondary">Probando...</Badge>;
       case "syncing":
-        return <Badge variant="secondary">Sincronizando...</Badge>;
+        return <Badge variant="secondary" className="animate-pulse">Sincronizando...</Badge>;
       case "success":
         return <Badge variant="default">Conectado</Badge>;
       case "error":
@@ -370,6 +441,7 @@ export default function ConfiguracionPage() {
               {lastSync.odoo && (
                 <p className="text-xs text-muted-foreground mt-3">Ultima sincronizacion: {lastSync.odoo}</p>
               )}
+              <SyncStatus provider="odoo" syncLogId={odooSyncLogId} isRunning={odooStatus === "syncing"} />
             </CardContent>
           </Card>
         </TabsContent>
@@ -434,6 +506,7 @@ export default function ConfiguracionPage() {
               {lastSync.fintoc && (
                 <p className="text-xs text-muted-foreground mt-3">Ultima sincronizacion: {lastSync.fintoc}</p>
               )}
+              <SyncStatus provider="fintoc" syncLogId={fintocSyncLogId} isRunning={fintocStatus === "syncing"} />
             </CardContent>
           </Card>
         </TabsContent>
@@ -456,15 +529,7 @@ export default function ConfiguracionPage() {
                   <Input id="sat-rfc" placeholder="XAXX010101000" value={settings.sat.rfcEmisor} onChange={(e) => update("sat", "rfcEmisor", e.target.value.toUpperCase())} maxLength={13} />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="sat-cert">Ruta certificado (.cer)</Label>
-                  <Input id="sat-cert" placeholder="/etc/sat/certificado.cer" value={settings.sat.certPath} onChange={(e) => update("sat", "certPath", e.target.value)} />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="sat-key">Ruta llave privada (.key)</Label>
-                  <Input id="sat-key" placeholder="/etc/sat/llave.key" value={settings.sat.keyPath} onChange={(e) => update("sat", "keyPath", e.target.value)} />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="sat-key-password">Contrasena llave</Label>
+                  <Label htmlFor="sat-key-password">Contrasena de llave privada</Label>
                   <Input id="sat-key-password" type="password" placeholder="••••••••" value={settings.sat.keyPassword} onChange={(e) => update("sat", "keyPassword", e.target.value)} />
                 </div>
                 <div className="space-y-2 sm:col-span-2">
@@ -481,6 +546,89 @@ export default function ConfiguracionPage() {
                   </Select>
                 </div>
               </div>
+
+              <Separator />
+
+              {/* Certificate file uploads */}
+              <div>
+                <p className="text-sm font-medium mb-4">Certificados de Sello Digital (CSD)</p>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="sat-cer-file">Certificado (.cer)</Label>
+                    <Input
+                      ref={cerInputRef}
+                      id="sat-cer-file"
+                      type="file"
+                      accept=".cer"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          if (!file.name.toLowerCase().endsWith(".cer")) {
+                            toast.error("Solo se aceptan archivos .cer");
+                            e.target.value = "";
+                            return;
+                          }
+                          setSatCerFile(file);
+                        }
+                      }}
+                    />
+                    {satCerName && !satCerFile && (
+                      <p className="text-xs text-muted-foreground flex items-center gap-1">
+                        <span className="inline-block w-2 h-2 rounded-full bg-green-500" />
+                        Archivo cargado: {satCerName}
+                      </p>
+                    )}
+                    {satCerFile && (
+                      <p className="text-xs text-blue-600">
+                        Nuevo archivo seleccionado: {satCerFile.name} ({(satCerFile.size / 1024).toFixed(1)} KB)
+                      </p>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="sat-key-file">Llave privada (.key)</Label>
+                    <Input
+                      ref={keyInputRef}
+                      id="sat-key-file"
+                      type="file"
+                      accept=".key"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          if (!file.name.toLowerCase().endsWith(".key")) {
+                            toast.error("Solo se aceptan archivos .key");
+                            e.target.value = "";
+                            return;
+                          }
+                          setSatKeyFile(file);
+                        }
+                      }}
+                    />
+                    {satKeyName && !satKeyFile && (
+                      <p className="text-xs text-muted-foreground flex items-center gap-1">
+                        <span className="inline-block w-2 h-2 rounded-full bg-green-500" />
+                        Archivo cargado: {satKeyName}
+                      </p>
+                    )}
+                    {satKeyFile && (
+                      <p className="text-xs text-blue-600">
+                        Nuevo archivo seleccionado: {satKeyFile.name} ({(satKeyFile.size / 1024).toFixed(1)} KB)
+                      </p>
+                    )}
+                  </div>
+                </div>
+                {(satCerFile || satKeyFile) && (
+                  <div className="mt-3">
+                    <Button
+                      variant="outline"
+                      onClick={handleUploadSatFiles}
+                      disabled={satUploading}
+                    >
+                      {satUploading ? "Subiendo archivos..." : "Subir certificados"}
+                    </Button>
+                  </div>
+                )}
+              </div>
+
               <Separator />
               <div className="flex gap-3">
                 <Button variant="outline" onClick={handleValidateSat} disabled={satStatus === "validating" || satStatus === "syncing"}>
@@ -494,6 +642,7 @@ export default function ConfiguracionPage() {
               {lastSync.sat && (
                 <p className="text-xs text-muted-foreground mt-3">Ultima validacion: {lastSync.sat}</p>
               )}
+              <SyncStatus provider="sat" syncLogId={satSyncLogId} isRunning={satStatus === "syncing"} />
             </CardContent>
           </Card>
         </TabsContent>
