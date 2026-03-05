@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server';
+import { getAdminClient } from '@/lib/supabase/admin';
 import { ApiError } from '@/lib/utils/errors';
 
 export interface AuthContext {
@@ -39,15 +40,18 @@ export function withAuth(handler: AuthHandler) {
       throw new ApiError('UNAUTHORIZED', 'Token de autenticacion requerido', 401);
     }
 
-    const supabase = createClient(token);
-    const { data: { user }, error } = await supabase.auth.getUser(token);
+    // Use admin client (service role key) for token validation and user_companies lookup.
+    // This bypasses RLS, which is safe since all route handlers already use getAdminClient().
+    // The middleware has already validated the token, but we need the user object here.
+    const admin = getAdminClient();
+    const { data: { user }, error } = await admin.auth.getUser(token);
 
     if (error || !user) {
       throw new ApiError('TOKEN_EXPIRED', 'Token invalido o expirado', 401);
     }
 
-    // Get active company membership
-    const { data: membership, error: memberError } = await supabase
+    // Get active company membership (admin client bypasses RLS)
+    const { data: membership, error: memberError } = await admin
       .from('user_companies')
       .select('company_id, role')
       .eq('user_id', user.id)
@@ -58,6 +62,9 @@ export function withAuth(handler: AuthHandler) {
     if (memberError || !membership) {
       throw new ApiError('NO_COMPANIES', 'Usuario sin empresa activa', 403);
     }
+
+    // Create a user-scoped client for route handlers that need RLS context
+    const supabase = createClient(token);
 
     const ctx: AuthContext = {
       user_id: user.id,
