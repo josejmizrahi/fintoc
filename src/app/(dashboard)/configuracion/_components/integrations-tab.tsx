@@ -37,6 +37,8 @@ import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 
 import { api } from "@/lib/api";
 import { formatRelative } from "@/lib/utils/format";
+import { vendorKeys } from "@/lib/hooks/use-vendors";
+import { customerKeys } from "@/lib/hooks/use-customers";
 
 const QUERY_KEY = ["config", "integrations"] as const;
 
@@ -50,9 +52,11 @@ function IntegrationCard({
   onEdit,
   onTest,
   onSync,
+  onSyncPartners,
   onDisconnect,
   isTesting,
   isSyncing,
+  isSyncingPartners,
 }: {
   name: string;
   description: string;
@@ -61,9 +65,11 @@ function IntegrationCard({
   onEdit: () => void;
   onTest: () => void;
   onSync: () => void;
+  onSyncPartners?: () => void;
   onDisconnect: () => void;
   isTesting: boolean;
   isSyncing: boolean;
+  isSyncingPartners?: boolean;
 }) {
   return (
     <Card>
@@ -101,7 +107,7 @@ function IntegrationCard({
             variant="outline"
             size="sm"
             onClick={onTest}
-            disabled={isTesting || isSyncing}
+            disabled={isTesting || isSyncing || isSyncingPartners}
           >
             {isTesting ? (
               <Loader2 className="size-3.5 animate-spin mr-1.5" />
@@ -114,7 +120,7 @@ function IntegrationCard({
             variant="outline"
             size="sm"
             onClick={onSync}
-            disabled={isTesting || isSyncing || !isConnected}
+            disabled={isTesting || isSyncing || isSyncingPartners || !isConnected}
           >
             {isSyncing ? (
               <Loader2 className="size-3.5 animate-spin mr-1.5" />
@@ -123,12 +129,28 @@ function IntegrationCard({
             )}
             Sincronizar
           </Button>
+          {onSyncPartners && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onSyncPartners}
+              disabled={isTesting || isSyncing || isSyncingPartners || !isConnected}
+              title="Actualiza la lista de proveedores y clientes desde Odoo"
+            >
+              {isSyncingPartners ? (
+                <Loader2 className="size-3.5 animate-spin mr-1.5" />
+              ) : (
+                <RefreshCw className="size-3.5 mr-1.5" />
+              )}
+              Proveedores y clientes
+            </Button>
+          )}
           {isConnected && (
             <Button
               variant="ghost"
               size="sm"
               onClick={onDisconnect}
-              disabled={isTesting || isSyncing}
+              disabled={isTesting || isSyncing || isSyncingPartners}
               className="text-destructive hover:text-destructive"
             >
               <Unplug className="size-3.5 mr-1.5" />
@@ -555,7 +577,7 @@ export function IntegrationsTab() {
     useState<ProviderKey | null>(null);
   const [activeAction, setActiveAction] = useState<{
     provider: ProviderKey;
-    action: "test" | "sync";
+    action: "test" | "sync" | "syncPartners";
   } | null>(null);
 
   const { data: onboardingStatus } = useQuery({
@@ -605,6 +627,28 @@ export function IntegrationsTab() {
     },
   });
 
+  const odooPartnersMutation = useMutation({
+    mutationFn: () => api.sync.odooPartners(),
+    onSuccess: (data: { data?: { vendors_synced?: number; customers_synced?: number; errors?: string[] } }) => {
+      const d = data?.data;
+      const vendors = d?.vendors_synced ?? 0;
+      const customers = d?.customers_synced ?? 0;
+      if (d?.errors?.length) {
+        toast.warning(`Proveedores y clientes: ${vendors} proveedores, ${customers} clientes. Algunos errores: ${d.errors.slice(0, 2).join("; ")}`);
+      } else {
+        toast.success(`Proveedores y clientes actualizados — ${vendors} proveedores, ${customers} clientes`);
+      }
+      queryClient.invalidateQueries({ queryKey: QUERY_KEY });
+      queryClient.invalidateQueries({ queryKey: vendorKeys.all });
+      queryClient.invalidateQueries({ queryKey: customerKeys.all });
+      setActiveAction(null);
+    },
+    onError: (err: Error) => {
+      toast.error(err.message || "Error al sincronizar proveedores y clientes");
+      setActiveAction(null);
+    },
+  });
+
   const disconnectMutation = useMutation({
     mutationFn: (provider: string) =>
       api.onboarding.save(provider, { _disconnect: "true" }),
@@ -647,6 +691,14 @@ export function IntegrationsTab() {
                 setActiveAction({ provider: key, action: "sync" });
                 syncMutation.mutate(key);
               }}
+              onSyncPartners={
+                key === "odoo"
+                  ? () => {
+                      setActiveAction({ provider: key, action: "syncPartners" });
+                      odooPartnersMutation.mutate();
+                    }
+                  : undefined
+              }
               onDisconnect={() => setDisconnectProvider(key)}
               isTesting={
                 activeAction?.provider === key &&
@@ -657,6 +709,11 @@ export function IntegrationsTab() {
                 activeAction?.provider === key &&
                 activeAction?.action === "sync" &&
                 syncMutation.isPending
+              }
+              isSyncingPartners={
+                activeAction?.provider === "odoo" &&
+                activeAction?.action === "syncPartners" &&
+                odooPartnersMutation.isPending
               }
             />
           );

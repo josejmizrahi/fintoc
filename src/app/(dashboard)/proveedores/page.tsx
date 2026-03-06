@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useEffect } from "react";
 import { type ColumnDef } from "@tanstack/react-table";
+import { useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { type z } from "zod";
@@ -26,6 +27,7 @@ import {
   useVendors,
   useCreateVendor,
   useVerifyVendorClabe,
+  vendorKeys,
 } from "@/lib/hooks/use-vendors";
 import { useVendorFilters } from "@/lib/hooks/use-url-state";
 import { formatMoney, formatDate, formatCLABE, formatRFC } from "@/lib/utils/format";
@@ -361,6 +363,7 @@ function VendorDetailContent({ vendorId }: { vendorId: string }) {
 /* ---------- Main Page ---------- */
 
 export default function ProveedoresPage() {
+  const queryClient = useQueryClient();
   const [filters, setFilters] = useVendorFilters();
   const [createOpen, setCreateOpen] = useState(false);
   const [detailVendor, setDetailVendor] = useState<Vendor | null>(null);
@@ -413,11 +416,14 @@ export default function ProveedoresPage() {
     }
   }
 
-  async function handleSyncOdoo(vendor: Vendor) {
-    setSyncingId(vendor.id);
+  async function handleSyncOdoo(_vendor: Vendor) {
+    setSyncingId("_all");
     try {
-      await api.sync.trigger("odoo");
-      toast.success("Sincronizacion con Odoo iniciada");
+      const result = await api.sync.odooPartners();
+      const d = (result as { data?: { vendors_synced?: number; customers_synced?: number } })?.data;
+      const v = d?.vendors_synced ?? 0;
+      toast.success(`Proveedores actualizados desde Odoo — ${v} registros`);
+      queryClient.invalidateQueries({ queryKey: vendorKeys.all });
     } catch (err: any) {
       toast.error(err.message || "Error al sincronizar");
     } finally {
@@ -596,7 +602,7 @@ export default function ProveedoresPage() {
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
                   onClick={() => handleSyncOdoo(vendor)}
-                  disabled={syncingId === vendor.id}
+                  disabled={!!syncingId}
                 >
                   <RefreshCw className="mr-2 size-4" />
                   Sync desde Odoo
