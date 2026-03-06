@@ -458,16 +458,43 @@ export async function syncSat(
 export async function getOdooConfigForCompany(companyId: string): Promise<OdooConfig> {
   const admin = getAdminClient();
   const { data: integration } = await admin.from('integrations')
-    .select('config_encrypted')
+    .select('config_encrypted, config')
     .eq('company_id', companyId)
     .eq('provider', 'odoo')
     .single();
 
-  if (!integration?.config_encrypted) {
+  if (!integration) {
     throw new ApiError('INTEGRATION_NOT_CONFIGURED', 'Odoo no configurado', 422);
   }
 
-  return decrypt(integration.config_encrypted) as unknown as OdooConfig;
+  // Get raw connection credentials (prefer encrypted, fall back to plaintext)
+  let creds: Record<string, string> | null = null;
+
+  if (integration.config_encrypted) {
+    try {
+      creds = decrypt(integration.config_encrypted) as Record<string, string>;
+    } catch {
+      // fall back to plaintext
+    }
+  }
+
+  if (!creds) {
+    creds = integration.config as Record<string, string> | null;
+  }
+
+  if (!creds?.url) {
+    throw new ApiError('INTEGRATION_NOT_CONFIGURED', 'Odoo no configurado', 422);
+  }
+
+  // Authenticate to get uid — OdooConfig requires { url, db, uid, apiKey }
+  const uid = await odoo.odooAuthenticate(creds.url, creds.database, creds.user, creds.password);
+
+  return {
+    url: creds.url,
+    db: creds.database,
+    uid,
+    apiKey: creds.password,
+  };
 }
 
 export async function getFintocKeyForCompany(companyId: string): Promise<string> {

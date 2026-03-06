@@ -12,6 +12,7 @@ import {
   type OdooConfig,
   type OdooPartner,
   type OdooInvoice,
+  odooAuthenticate,
   fetchOdooVendors,
   fetchOdooCustomers,
   fetchOdooInvoices,
@@ -19,6 +20,14 @@ import {
   extractM2oName,
 } from '@/lib/integrations/odoo';
 import type { SyncProvider as ProviderName } from '@/packages/shared/types';
+
+/** Raw connection credentials as saved by onboarding */
+interface OdooConnectionCreds {
+  url: string;
+  database: string;
+  user: string;
+  password: string;
+}
 
 export class OdooSyncProvider extends BaseSyncProvider<OdooConfig> {
   readonly name: ProviderName = 'odoo';
@@ -36,21 +45,42 @@ export class OdooSyncProvider extends BaseSyncProvider<OdooConfig> {
       throw new ApiError('INTEGRATION_NOT_CONFIGURED', 'Odoo no configurado', 422);
     }
 
-    // Prefer encrypted config, fall back to plaintext
+    // Get raw connection credentials (prefer encrypted, fall back to plaintext)
+    let creds: OdooConnectionCreds | null = null;
+
     if (integration.config_encrypted) {
       try {
-        return decrypt(integration.config_encrypted) as unknown as OdooConfig;
+        creds = decrypt(integration.config_encrypted) as unknown as OdooConnectionCreds;
       } catch (err) {
         console.error('[odoo-sync] Failed to decrypt config, falling back to plaintext:', err);
       }
     }
 
-    const cfg = integration.config as Record<string, string> | null;
-    if (!cfg?.url) {
+    if (!creds) {
+      const cfg = integration.config as Record<string, string> | null;
+      if (cfg?.url) {
+        creds = {
+          url: cfg.url,
+          database: cfg.database || '',
+          user: cfg.user || '',
+          password: cfg.password || '',
+        };
+      }
+    }
+
+    if (!creds?.url) {
       throw new ApiError('INTEGRATION_NOT_CONFIGURED', 'Odoo no configurado', 422);
     }
 
-    return cfg as unknown as OdooConfig;
+    // Authenticate to get uid — OdooConfig requires { url, db, uid, apiKey }
+    const uid = await odooAuthenticate(creds.url, creds.database, creds.user, creds.password);
+
+    return {
+      url: creds.url,
+      db: creds.database,
+      uid,
+      apiKey: creds.password,
+    };
   }
 
   async fetch(config: OdooConfig, opts: SyncProviderConfig): Promise<SyncData> {
