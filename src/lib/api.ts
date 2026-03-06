@@ -412,4 +412,5 @@ export const api = {
   },
 
   dashboard: () => get<any>('/api/dashboard'),
+  dashboardIntegrations: () => get<any>('/api/dashboard/integrations'),
 };

@@ -18,6 +18,7 @@ import { formatMoney, formatDate, formatRelative } from '@/lib/utils/format';
 import { StatusBadge } from '@/components/shared/status-badge';
 import { KpiCard } from '@/components/shared/kpi-card';
 import { EmptyState } from '@/components/shared/empty-state';
+import { IntegrationSyncStatus } from '@/components/dashboard/integration-sync-status';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -178,6 +179,9 @@ export default function DashboardPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Integration Sync Status */}
+      <IntegrationSyncStatus />
 
       {/* Recent Payments + Overdue Invoices */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
