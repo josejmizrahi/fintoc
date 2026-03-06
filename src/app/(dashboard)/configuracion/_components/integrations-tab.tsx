@@ -594,8 +594,8 @@ export function IntegrationsTab() {
       }
       setActiveAction(null);
     },
-    onError: () => {
-      toast.error("Error de sincronizacion");
+    onError: (err: Error) => {
+      toast.error(err.message || "Error de sincronizacion");
       setActiveAction(null);
     },
   });

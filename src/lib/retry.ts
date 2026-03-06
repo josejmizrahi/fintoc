@@ -75,8 +75,16 @@ export function isRetryableError(err: unknown): boolean {
   // HTTP status-based classification
   if (typeof err === 'object' && err !== null && 'status' in err) {
     const status = (err as { status: number }).status;
+    // Never retry auth/permission/validation errors
+    if (status === 401 || status === 403 || status === 404 || status === 422) return false;
     // 408 Request Timeout, 429 Too Many Requests, 5xx Server Errors
     return status === 408 || status === 429 || status >= 500;
+  }
+
+  // Check for error code property (e.g. Supabase, custom ApiError)
+  if (typeof err === 'object' && err !== null && 'code' in err) {
+    const code = (err as { code: string }).code;
+    if (code === 'SYNC_IN_PROGRESS' || code === 'UNAUTHORIZED' || code === 'FORBIDDEN') return false;
   }
 
   return true; // Default: assume retryable

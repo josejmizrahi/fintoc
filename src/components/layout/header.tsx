@@ -122,13 +122,17 @@ export function Header() {
     if (isSyncing) return;
     setSync({ isSyncing: true });
     try {
-      await api.sync.trigger('all');
+      const result = await api.sync.trigger('all');
       setSync({ isSyncing: false, lastSync: new Date().toISOString() });
       queryClient.invalidateQueries();
-      toast.success('Sincronizacion completada');
-    } catch {
+      if (result.success) {
+        toast.success(result.message || 'Sincronizacion completada');
+      } else {
+        toast.error(result.message || 'Sincronizacion parcial');
+      }
+    } catch (err) {
       setSync({ isSyncing: false });
-      toast.error('Error en sincronizacion');
+      toast.error(err instanceof Error ? err.message : 'Error en sincronizacion');
     }
   };
 
