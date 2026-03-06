@@ -86,8 +86,8 @@ export function FintocWidget({ publicKey, onLinkToken, holderType = "business" }
           } else {
             toast.warning("Token intercambiado pero no se recibio link_token");
           }
-        } catch (err: any) {
-          toast.error(err.message || "Error al intercambiar token");
+        } catch (err: unknown) {
+          toast.error((err instanceof Error ? err.message : null) || "Error al intercambiar token");
         }
         setLoading(false);
       },

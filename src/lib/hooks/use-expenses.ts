@@ -20,7 +20,7 @@ export function useExpenses(filters: Record<string, unknown> = {}) {
 export function useCreateExpense() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (data: any) => api.expenses.create(data),
+    mutationFn: (data: Record<string, unknown>) => api.expenses.create(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: expenseKeys.all });
       toast.success('Gasto creado exitosamente');

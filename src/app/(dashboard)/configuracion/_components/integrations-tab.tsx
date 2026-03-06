@@ -32,7 +32,6 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Separator } from "@/components/ui/separator";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 
 import { api } from "@/lib/api";
@@ -436,12 +435,12 @@ function SatEditDialog({
 
   const testMutation = useMutation({
     mutationFn: () => api.sat.syntage.status(),
-    onSuccess: (data: any) => {
+    onSuccess: (data: Record<string, unknown>) => {
       if (data.ok)
         toast.success(
           `Syntage conectado — ${data.taxpayers} contribuyentes, ${data.credentials} credenciales`
         );
-      else toast.error(data.error || "Error de conexion con Syntage");
+      else toast.error((data.error as string) || "Error de conexion con Syntage");
     },
     onError: () => toast.error("Error de conexion con Syntage"),
   });

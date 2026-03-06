@@ -31,7 +31,7 @@ export function useVendor(id: string) {
 export function useCreateVendor() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (data: any) => api.vendors.create(data),
+    mutationFn: (data: Record<string, unknown>) => api.vendors.create(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: vendorKeys.all });
       toast.success('Proveedor creado exitosamente');
@@ -45,7 +45,7 @@ export function useCreateVendor() {
 export function useUpdateVendor() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, data }: { id: string; data: any }) => api.vendors.update(id, data),
+    mutationFn: ({ id, data }: { id: string; data: Record<string, unknown> }) => api.vendors.update(id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: vendorKeys.all });
       toast.success('Proveedor actualizado exitosamente');

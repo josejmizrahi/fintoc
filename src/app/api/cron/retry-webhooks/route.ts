@@ -1,14 +1,13 @@
 import { getAdminClient } from '@/lib/supabase/admin';
+import { verifyCronSecret } from '@/lib/middleware/cron-auth';
 
 const RETRY_WINDOW_HOURS = 48;
 const MAX_RETRY_ATTEMPTS = 3;
 const BATCH_LIMIT = 50;
 
 export async function GET(req: Request): Promise<Response> {
-  const secret = req.headers.get('authorization')?.replace('Bearer ', '');
-  if (secret !== process.env.CRON_SECRET) {
-    return Response.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const authError = verifyCronSecret(req);
+  if (authError) return authError;
 
   const admin = getAdminClient();
 
@@ -28,7 +27,7 @@ export async function GET(req: Request): Promise<Response> {
     let skippedMaxRetries = 0;
 
     for (const log of (unprocessed || [])) {
-      const retryCount = (log as any).retry_count ?? 0;
+      const retryCount = (log as Record<string, unknown>).retry_count as number ?? 0;
 
       // Skip if max retries exceeded
       if (retryCount >= MAX_RETRY_ATTEMPTS) {

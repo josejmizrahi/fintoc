@@ -56,7 +56,7 @@ export async function POST(req: Request): Promise<Response> {
           .eq('processed', true)
           .limit(10);
 
-        const isDuplicate = (dupCheck || []).some((log: any) => {
+        const isDuplicate = (dupCheck || []).some((log: { payload?: { data?: Record<string, unknown> } }) => {
           const logKey = extractEventKey({ type: payload.type, data: log.payload?.data || {} });
           return logKey === eventDedup;
         });

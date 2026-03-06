@@ -32,8 +32,7 @@ const LOCK_TIMEOUT_MINUTES = 30;
 // ---------------------------------------------------------------------------
 
 export interface SyncData {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  [entity: string]: any[];
+  [entity: string]: unknown[];
 }
 
 export interface SyncDiff {

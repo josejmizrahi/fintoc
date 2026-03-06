@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo } from "react";
 import { type ColumnDef } from "@tanstack/react-table";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm, Controller } from "react-hook-form";
@@ -44,7 +44,6 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Separator } from "@/components/ui/separator";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -55,8 +54,6 @@ import {
 import { DataTable } from "@/components/shared/data-table";
 import { EmptyState } from "@/components/shared/empty-state";
 import { PermissionGate } from "@/components/shared/permission-gate";
-import { ConfirmDialog } from "@/components/shared/confirm-dialog";
-import { StatusBadge } from "@/components/shared/status-badge";
 
 import { api } from "@/lib/api";
 import { formatMoney, formatDate } from "@/lib/utils/format";
@@ -103,7 +100,7 @@ interface ApprovalRule {
 
 /* ---------- Rules DataTable Columns ---------- */
 
-const ruleColumns: ColumnDef<ApprovalRule, any>[] = [
+const ruleColumns: ColumnDef<ApprovalRule, unknown>[] = [
   {
     accessorKey: "name",
     header: "Nombre",
@@ -200,7 +197,7 @@ function NewRuleDialog({
   const queryClient = useQueryClient();
 
   const createRule = useMutation({
-    mutationFn: (data: any) => api.approvals.createRule(data),
+    mutationFn: (data: Record<string, unknown>) => api.approvals.createRule(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: approvalKeys.rules() });
       toast.success("Regla creada exitosamente");
@@ -379,9 +376,9 @@ export default function AprobacionesPage() {
     onMutate: async (id) => {
       await queryClient.cancelQueries({ queryKey: approvalKeys.pending() });
       const previous = queryClient.getQueryData(approvalKeys.pending());
-      queryClient.setQueryData(approvalKeys.pending(), (old: any) =>
+      queryClient.setQueryData(approvalKeys.pending(), (old: ApprovalRequest[] | undefined) =>
         Array.isArray(old)
-          ? old.filter((item: any) => item.approval_id !== id)
+          ? old.filter((item) => item.approval_id !== id)
           : old
       );
       return { previous };

@@ -41,12 +41,6 @@ export type SyntageExtractionInsert = Tables['syntage_extractions']['Insert'];
 
 type TableName = keyof Tables;
 
-interface FindOptions {
-  match?: Record<string, unknown>;
-  order?: { column: string; ascending?: boolean };
-  limit?: number;
-}
-
 /**
  * Generic typed table helper. Provides findMany / findOne / insert / update / upsert
  * scoped to a specific table, with Supabase's PostgREST under the hood.

@@ -398,7 +398,7 @@ function NewPaymentDialog({
                 setVendorSearch(e.target.value);
                 setSelectedVendor(null);
                 form.setValue("vendor_name", e.target.value);
-                form.setValue("vendor_id", "" as any);
+                form.setValue("vendor_id", "");
                 setShowVendorDropdown(true);
               }}
               onFocus={() => setShowVendorDropdown(true)}
@@ -956,14 +956,14 @@ export default function PagosPage() {
     if (!paymentsResponse) return [];
     if (Array.isArray(paymentsResponse)) return paymentsResponse;
     if (paymentsResponse.data) return paymentsResponse.data;
-    if ((paymentsResponse as any).items) return (paymentsResponse as any).items;
+    if ((paymentsResponse as unknown as Record<string, unknown>).items) return (paymentsResponse as unknown as Record<string, unknown>).items as Payment[];
     return [];
   }, [paymentsResponse]);
 
   const totalCount = useMemo(() => {
     if (!paymentsResponse) return 0;
     if (Array.isArray(paymentsResponse)) return paymentsResponse.length;
-    return paymentsResponse.meta?.total ?? (paymentsResponse as any).total ?? (paymentsResponse as any).count ?? payments.length;
+    return paymentsResponse.meta?.total ?? (paymentsResponse as unknown as Record<string, number>).total ?? (paymentsResponse as unknown as Record<string, number>).count ?? payments.length;
   }, [paymentsResponse, payments.length]);
 
   // Mutations

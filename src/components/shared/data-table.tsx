@@ -5,6 +5,7 @@ import {
   type ColumnDef,
   type SortingState,
   type RowSelectionState,
+  type OnChangeFn,
   flexRender,
   getCoreRowModel,
   useReactTable,
@@ -120,9 +121,9 @@ export function DataTable<TData, TValue>({
 
   const table = useReactTable({
     data,
-    columns: allColumns as ColumnDef<TData, any>[],
+    columns: allColumns as ColumnDef<TData, unknown>[],
     getCoreRowModel: getCoreRowModel(),
-    onSortingChange: handleSortingChange as any,
+    onSortingChange: handleSortingChange as OnChangeFn<SortingState>,
     onRowSelectionChange: setRowSelection,
     manualSorting: true,
     manualPagination: true,

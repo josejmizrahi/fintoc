@@ -38,8 +38,7 @@ let mockPayments: Array<Record<string, unknown>> = [];
 
 // ── Supabase admin mock builder ──
 
-function createChainableMock(resolvedValue: unknown = { data: null, error: null }) {
-  const chain: Record<string, unknown> = {};
+function _createChainableMock(resolvedValue: unknown = { data: null, error: null }) {
   const methods = ['select', 'insert', 'update', 'delete', 'eq', 'gt', 'lt', 'neq', 'in', 'single', 'order', 'limit', 'maybeSingle'];
 
   function makeChain(finalValue: unknown) {
@@ -126,12 +125,12 @@ function buildMockAdmin() {
 // Build a query chain that resolves based on table + filters
 function createQueryChain(table: string) {
   const filters: Array<{ field: string; op: string; value: unknown }> = [];
-  let selectFields = '*';
-  let limitN = 100;
-  let orderField = '';
-  let orderAsc = true;
+  let _selectFields = '*';
+  let _limitN = 100;
+  let _orderField = '';
+  let _orderAsc = true;
   let insertData: unknown = null;
-  let updateData: unknown = null;
+  let _updateData: unknown = null;
 
   const resolveData = () => {
     if (table === 'user_companies') {
@@ -164,7 +163,7 @@ function createQueryChain(table: string) {
   const chain: Record<string, unknown> = {};
 
   chain.select = vi.fn().mockImplementation((fields?: string) => {
-    selectFields = fields || '*';
+    _selectFields = fields || '*';
     return chain;
   });
 
@@ -182,7 +181,7 @@ function createQueryChain(table: string) {
   });
 
   chain.update = vi.fn().mockImplementation((data: unknown) => {
-    updateData = data;
+    _updateData = data;
     // Apply updates to in-memory data
     if (table === 'user_companies') {
       for (const uc of mockUserCompanies) {
@@ -223,12 +222,12 @@ function createQueryChain(table: string) {
   chain.neq = vi.fn().mockReturnValue(chain);
   chain.in = vi.fn().mockReturnValue(chain);
   chain.order = vi.fn().mockImplementation((field: string, opts?: { ascending?: boolean }) => {
-    orderField = field;
-    orderAsc = opts?.ascending ?? true;
+    _orderField = field;
+    _orderAsc = opts?.ascending ?? true;
     return chain;
   });
   chain.limit = vi.fn().mockImplementation((n: number) => {
-    limitN = n;
+    _limitN = n;
     return chain;
   });
 
@@ -328,7 +327,7 @@ describe('E2E Flow: Register → Login → Me → Dashboard → Onboarding → C
     });
 
     it('rejects duplicate RFC', async () => {
-      mockCompanies.push({ id: 'existing', name: 'Existing', rfc: 'XAXX010101000', onboarding_completed: true });
+      mockCompanies.push({ id: 999, name: 'Existing', rfc: 'XAXX010101000', onboarding_completed: true });
 
       vi.resetModules();
       const { POST } = await import('../auth/register/route');

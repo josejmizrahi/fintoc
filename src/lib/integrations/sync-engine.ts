@@ -3,7 +3,7 @@ import { decrypt } from '@/lib/utils/crypto';
 import { ApiError } from '@/lib/utils/errors';
 import { withRetry, isRetryableError } from '@/lib/retry';
 import * as odoo from './odoo';
-import * as fintoc from './fintoc';
+import * as _fintoc from './fintoc';
 import * as syntage from './syntage';
 import type { OdooConfig, OdooPartner, OdooInvoice } from './odoo';
 
@@ -152,7 +152,7 @@ async function batchUpsert(
     const chunk = rows.slice(i, i + BATCH_SIZE);
     try {
       await withRetry(async () => {
-        const { error } = await admin.from(table).upsert(chunk as any, {
+        const { error } = await admin.from(table).upsert(chunk as Record<string, unknown>[], {
           onConflict,
           ignoreDuplicates: false,
         });

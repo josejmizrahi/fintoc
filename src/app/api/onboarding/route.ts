@@ -111,11 +111,20 @@ export async function POST(req: NextRequest) {
       }
     } catch (err) {
       console.error("[onboarding] Encryption failed:", err);
-      // Still save plaintext config so UI works, but log the error
+      return NextResponse.json(
+        { detail: "Error al encriptar configuración. Verifica que ENCRYPTION_KEY esté configurado correctamente." },
+        { status: 500 }
+      );
     }
 
+    // Strip sensitive fields from plaintext config stored for UI display
+    const safeConfig = { ...mergedConfig };
+    delete safeConfig.password;
+    delete safeConfig.secretKey;
+    delete safeConfig.syntageApiKey;
+
     const saveData: Record<string, unknown> = {
-      config: mergedConfig,
+      config: safeConfig,
       is_connected: true,
       status: 'valid',
       updated_at: new Date().toISOString(),

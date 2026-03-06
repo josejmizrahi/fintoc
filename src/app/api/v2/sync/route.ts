@@ -7,7 +7,7 @@
  */
 import { z } from 'zod';
 import { createHandler } from '@/lib/middleware/route-handler';
-import { withAuth, type AuthContext } from '@/lib/middleware/auth';
+import { withAuth } from '@/lib/middleware/auth';
 import { withValidation } from '@/lib/middleware/validate';
 import { withRbac } from '@/lib/middleware/rbac';
 import { getProvider } from '@/packages/sync-engine';

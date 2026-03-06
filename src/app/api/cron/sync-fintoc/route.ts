@@ -1,5 +1,6 @@
 import { getAdminClient } from '@/lib/supabase/admin';
 import { getProvider } from '@/packages/sync-engine';
+import { verifyCronSecret } from '@/lib/middleware/cron-auth';
 import '@/packages/integrations';
 
 interface CronResult {
@@ -11,10 +12,8 @@ interface CronResult {
 }
 
 export async function GET(req: Request): Promise<Response> {
-  const secret = req.headers.get('authorization')?.replace('Bearer ', '');
-  if (secret !== process.env.CRON_SECRET) {
-    return Response.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const authError = verifyCronSecret(req);
+  if (authError) return authError;
 
   const admin = getAdminClient();
   const results: CronResult[] = [];

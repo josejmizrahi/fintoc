@@ -11,11 +11,9 @@ import {
   Plus,
   Link2,
   Mail,
-  FileText,
   BarChart3,
   Loader2,
   CheckCircle2,
-  XCircle,
   Landmark,
 } from "lucide-react";
 
@@ -224,7 +222,7 @@ function CustomerDetailContent({ customerId }: { customerId: string }) {
   }, [customerId]);
 
   // Compute aging from invoices
-  const aging = useMemo(() => {
+  const _aging = useMemo(() => {
     const buckets = { "0-30d": 0, "31-60d": 0, "61-90d": 0, "90+d": 0 };
     invoices.forEach((inv) => {
       if ((inv.amount_residual ?? 0) <= 0) return;
@@ -367,8 +365,8 @@ export default function ClientesPage() {
     try {
       await api.collections.sendReminder({ customer_id: customer.id, type: "statement" });
       toast.success("Estado de cuenta enviado a " + customer.name);
-    } catch (err: any) {
-      toast.error(err.message || "Error al enviar estado de cuenta");
+    } catch (err: unknown) {
+      toast.error((err instanceof Error ? err.message : null) || "Error al enviar estado de cuenta");
     }
   }
 

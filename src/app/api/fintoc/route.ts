@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
   switch (action) {
     // ── Outbound Transfer (SPEI) via /transfers ──
     case "outbound-transfer": {
-      const { payment_id, clabe, amount, holder_name, reference_id, metadata } = body as {
+      const { payment_id, clabe, amount, holder_name: _holder_name, reference_id, metadata } = body as {
         payment_id?: number;
         clabe: string;
         amount: number;

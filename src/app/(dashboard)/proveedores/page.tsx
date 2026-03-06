@@ -19,7 +19,6 @@ import {
   CheckCircle2,
   XCircle,
   Loader2,
-  AlertTriangle,
 } from "lucide-react";
 
 import { api } from "@/lib/api";
@@ -33,20 +32,17 @@ import { useVendorFilters } from "@/lib/hooks/use-url-state";
 import { formatMoney, formatDate, formatCLABE, formatRFC } from "@/lib/utils/format";
 import { createVendorSchema } from "@/lib/utils/validation";
 import { getBankFromCLABE } from "@/lib/utils/constants";
-import type { Vendor, Invoice } from "@/types";
+import type { Vendor, Invoice, Payment } from "@/types";
 
 import { DataTable } from "@/components/shared/data-table";
 import { EmptyState } from "@/components/shared/empty-state";
-import { StatusBadge } from "@/components/shared/status-badge";
 import { SearchInput } from "@/components/shared/search-input";
 import { DetailPanel } from "@/components/shared/detail-panel";
-import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { PermissionGate } from "@/components/shared/permission-gate";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
   Dialog,
   DialogContent,
@@ -304,7 +300,7 @@ function CreateVendorDialog({
 function VendorDetailContent({ vendorId }: { vendorId: string }) {
   const [bills, setBills] = useState<Invoice[]>([]);
   const [billsLoading, setBillsLoading] = useState(true);
-  const [payments, setPayments] = useState<any[]>([]);
+  const [_payments, _setPayments] = useState<Payment[]>([]);
 
   useEffect(() => {
     setBillsLoading(true);
@@ -396,8 +392,8 @@ export default function ProveedoresPage() {
       } else {
         toast.error(`RFC ${vendor.rfc} es invalido`);
       }
-    } catch (err: any) {
-      toast.error(err.message || "Error al validar RFC");
+    } catch (err: unknown) {
+      toast.error((err instanceof Error ? err.message : null) || "Error al validar RFC");
     }
   }
 
@@ -411,8 +407,8 @@ export default function ProveedoresPage() {
       toast.success(
         `EFOS verificado: ${result.efos_status || result.status || "limpio"}`
       );
-    } catch (err: any) {
-      toast.error(err.message || "Error al verificar EFOS");
+    } catch (err: unknown) {
+      toast.error((err instanceof Error ? err.message : null) || "Error al verificar EFOS");
     }
   }
 
@@ -424,8 +420,8 @@ export default function ProveedoresPage() {
       const v = d?.vendors_synced ?? 0;
       toast.success(`Proveedores actualizados desde Odoo — ${v} registros`);
       queryClient.invalidateQueries({ queryKey: vendorKeys.all });
-    } catch (err: any) {
-      toast.error(err.message || "Error al sincronizar");
+    } catch (err: unknown) {
+      toast.error((err instanceof Error ? err.message : null) || "Error al sincronizar");
     } finally {
       setSyncingId(null);
     }

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { NextRequest } from "next/server";
 
 // Mock db module
 const mockQuery = vi.fn();
@@ -64,7 +65,7 @@ describe("POST /api/sat/upload", () => {
     const formData = createFormData({ cer: { name: "cert.cer", content: "data" } });
     const req = createRequest(formData);
 
-    const res = await POST(req as any);
+    const res = await POST(req as unknown as NextRequest);
     const data = await res.json();
     expect(res.status).toBe(401);
     expect(data.detail).toBe("No autorizado");
@@ -75,7 +76,7 @@ describe("POST /api/sat/upload", () => {
     const formData = new FormData();
     const req = createRequest(formData);
 
-    const res = await POST(req as any);
+    const res = await POST(req as unknown as NextRequest);
     const data = await res.json();
     expect(res.status).toBe(400);
     expect(data.detail).toContain("Se requiere al menos un archivo");
@@ -86,7 +87,7 @@ describe("POST /api/sat/upload", () => {
     const formData = createFormData({ cer: { name: "cert.txt", content: "data" } });
     const req = createRequest(formData);
 
-    const res = await POST(req as any);
+    const res = await POST(req as unknown as NextRequest);
     const data = await res.json();
     expect(res.status).toBe(400);
     expect(data.detail).toContain(".cer");
@@ -97,7 +98,7 @@ describe("POST /api/sat/upload", () => {
     const formData = createFormData({ key: { name: "key.pem", content: "data" } });
     const req = createRequest(formData);
 
-    const res = await POST(req as any);
+    const res = await POST(req as unknown as NextRequest);
     const data = await res.json();
     expect(res.status).toBe(400);
     expect(data.detail).toContain(".key");
@@ -111,7 +112,7 @@ describe("POST /api/sat/upload", () => {
     );
     const req = createRequest(formData);
 
-    const res = await POST(req as any);
+    const res = await POST(req as unknown as NextRequest);
     const data = await res.json();
 
     expect(data.success).toBe(true);
@@ -127,7 +128,7 @@ describe("POST /api/sat/upload", () => {
     });
     const req = createRequest(formData);
 
-    const res = await POST(req as any);
+    const res = await POST(req as unknown as NextRequest);
     const data = await res.json();
 
     expect(data.success).toBe(true);
@@ -150,7 +151,7 @@ describe("POST /api/sat/upload", () => {
     );
     const req = createRequest(formData);
 
-    const res = await POST(req as any);
+    const res = await POST(req as unknown as NextRequest);
     const data = await res.json();
 
     expect(data.success).toBe(true);
@@ -165,7 +166,7 @@ describe("POST /api/sat/upload", () => {
     );
     const req = createRequest(formData);
 
-    const res = await POST(req as any);
+    const res = await POST(req as unknown as NextRequest);
     expect(res.status).toBe(200);
 
     const data = await res.json();

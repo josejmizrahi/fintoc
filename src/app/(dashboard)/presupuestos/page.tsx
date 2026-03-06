@@ -28,7 +28,6 @@ import {
 } from "recharts";
 
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import {
   Card,
   CardContent,
@@ -53,8 +52,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Progress } from "@/components/ui/progress";
-
 import { DataTable } from "@/components/shared/data-table";
 import { KpiCard } from "@/components/shared/kpi-card";
 import { EmptyState } from "@/components/shared/empty-state";
@@ -90,12 +87,18 @@ type NewBudgetForm = z.infer<typeof newBudgetSchema>;
 
 /* ---------- Chart Tooltip ---------- */
 
-function ChartTooltip({ active, payload, label }: any) {
+interface ChartTooltipProps {
+  active?: boolean;
+  payload?: Array<{ name: string; value: number; color: string }>;
+  label?: string;
+}
+
+function ChartTooltip({ active, payload, label }: ChartTooltipProps) {
   if (!active || !payload?.length) return null;
   return (
     <div className="rounded-lg border bg-background p-3 shadow-md">
       <p className="mb-1 text-sm font-medium">{label}</p>
-      {payload.map((entry: any) => (
+      {payload.map((entry) => (
         <p key={entry.name} className="text-xs" style={{ color: entry.color }}>
           {entry.name}: {formatMoney(entry.value)}
         </p>
@@ -114,7 +117,7 @@ function getProgressColor(pct: number): string {
 
 /* ---------- Budget Columns ---------- */
 
-const budgetColumns: ColumnDef<Budget, any>[] = [
+const budgetColumns: ColumnDef<Budget, unknown>[] = [
   {
     accessorKey: "category",
     header: "Categoria",
@@ -210,7 +213,7 @@ function NewBudgetDialog({
   const queryClient = useQueryClient();
 
   const createBudget = useMutation({
-    mutationFn: (data: any) => api.budgets.create(data),
+    mutationFn: (data: Record<string, unknown>) => api.budgets.create(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: budgetKeys.all });
       toast.success("Presupuesto creado exitosamente");
@@ -222,6 +225,7 @@ function NewBudgetDialog({
   });
 
   const form = useForm<NewBudgetForm>({
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     resolver: zodResolver(newBudgetSchema) as any,
     defaultValues: {
       category: "",
@@ -386,7 +390,7 @@ export default function PresupuestosPage() {
   /* Chart data */
   const chartData = useMemo(
     () =>
-      vsActual.map((item: any) => ({
+      vsActual.map((item: Record<string, unknown>) => ({
         name: item.category || item.name || "-",
         Presupuestado: item.amount_budgeted ?? item.budgeted ?? 0,
         Real: item.amount_spent ?? item.actual ?? 0,

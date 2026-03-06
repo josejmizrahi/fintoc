@@ -15,8 +15,6 @@ import {
   Eye,
   Copy,
   Loader2,
-  RefreshCw,
-  Plus,
   Timer,
 } from "lucide-react";
 
@@ -29,7 +27,6 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { KpiCard } from "@/components/shared/kpi-card";
 import { SearchInput } from "@/components/shared/search-input";
-import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { PermissionGate } from "@/components/shared/permission-gate";
 
 import { Button } from "@/components/ui/button";
@@ -51,12 +48,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 
 /* ---------- helpers ---------- */
 
@@ -101,8 +92,8 @@ function PaymentLinkDialog({
   const generateMutation = useMutation({
     mutationFn: (data: { partner_id: string; amount: number }) =>
       api.collections.paymentLink(data),
-    onSuccess: (result: any) => {
-      setGeneratedUrl(result.payment_url || result.url || "");
+    onSuccess: (result: Record<string, unknown>) => {
+      setGeneratedUrl((result.payment_url as string) || (result.url as string) || "");
       toast.success("Link de pago generado");
     },
     onError: (err: Error) => {
@@ -220,7 +211,7 @@ function ManualPaymentDialog({
   const [reference, setReference] = useState("");
 
   const registerMutation = useMutation({
-    mutationFn: (data: any) => api.payments.create(data),
+    mutationFn: (data: Record<string, unknown>) => api.payments.create(data),
     onSuccess: () => {
       toast.success("Pago registrado exitosamente");
       setAmount("");
@@ -359,11 +350,14 @@ export default function CobranzaPage() {
     const raw = agingQuery.data;
     if (Array.isArray(raw)) return raw;
     if (raw && typeof raw === "object") {
-      return Object.entries(raw).map(([bucket, value]: [string, any]) => ({
-        bucket,
-        count: value?.count ?? 0,
-        total: value?.total ?? value ?? 0,
-      }));
+      return Object.entries(raw).map(([bucket, value]: [string, unknown]) => {
+        const v = value as Record<string, unknown> | undefined;
+        return {
+          bucket,
+          count: (v?.count as number) ?? 0,
+          total: (v?.total as number) ?? (value as number) ?? 0,
+        };
+      });
     }
     // Compute from overdue data if API returns nothing structured
     const overdue = (overdueQuery.data ?? []) as Invoice[];
@@ -644,7 +638,7 @@ export default function CobranzaPage() {
     []
   );
 
-  const isLoading =
+  const _isLoading =
     pendingQuery.isLoading || overdueQuery.isLoading || agingQuery.isLoading;
 
   // Aging KPI data

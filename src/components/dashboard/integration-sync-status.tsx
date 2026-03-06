@@ -19,7 +19,6 @@ import { useAuthStore } from '@/lib/store';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Tooltip,
@@ -202,7 +201,7 @@ export function IntegrationSyncStatus() {
       if (!d) return false;
       // Poll every 5s when there are active syncs or extractions
       const hasActive =
-        Object.values(d.integrations || {}).some((p: any) => p.is_syncing) ||
+        Object.values(d.integrations || {}).some((p) => (p as Record<string, unknown>).is_syncing) ||
         (d.extractions?.active?.length > 0);
       return hasActive ? 5_000 : 30_000;
     },
@@ -229,7 +228,7 @@ export function IntegrationSyncStatus() {
   const integrations = data.integrations || {};
   const activeExtractions: Extraction[] = data.extractions?.active || [];
   const recentExtractions: Extraction[] = data.extractions?.recent || [];
-  const hasAnyConnected = Object.values(integrations).some((p: any) => p.is_connected);
+  const hasAnyConnected = Object.values(integrations).some((p) => (p as Record<string, unknown>).is_connected);
 
   if (!hasAnyConnected && activeExtractions.length === 0) return null;
 

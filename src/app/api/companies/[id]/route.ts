@@ -7,7 +7,7 @@ import { getAdminClient } from '@/lib/supabase/admin';
 import { writeAuditLog } from '@/lib/middleware/audit';
 
 export const GET = createHandler(async (req, params) => {
-  return withAuth(async (_req, ctx) => {
+  return withAuth(async (_req, _ctx) => {
     const admin = getAdminClient();
     const { data } = await admin.from('companies').select('*').eq('id', params.id).single();
     if (!data) throw new ApiError('NOT_FOUND', 'Empresa no encontrada', 404);

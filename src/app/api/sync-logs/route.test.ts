@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { NextRequest } from "next/server";
 
 const mockQuery = vi.fn();
 const mockHasDB = vi.fn();
@@ -37,14 +38,14 @@ describe("GET /api/sync-logs", () => {
   it("returns 401 for unauthenticated requests", async () => {
     mockGetCompanyId.mockResolvedValue(null);
     const { GET } = await import("./route");
-    const res = await GET(makeRequest() as any);
+    const res = await GET(makeRequest() as unknown as NextRequest);
     expect(res.status).toBe(401);
   });
 
   it("returns empty logs when no DB", async () => {
     mockHasDB.mockReturnValue(false);
     const { GET } = await import("./route");
-    const res = await GET(makeRequest() as any);
+    const res = await GET(makeRequest() as unknown as NextRequest);
     const data = await res.json();
     expect(data.logs).toEqual([]);
   });
@@ -57,7 +58,7 @@ describe("GET /api/sync-logs", () => {
     mockQuery.mockResolvedValue({ data: logs, error: null });
 
     const { GET } = await import("./route");
-    const res = await GET(makeRequest() as any);
+    const res = await GET(makeRequest() as unknown as NextRequest);
     const data = await res.json();
 
     expect(data.logs).toHaveLength(2);
@@ -66,7 +67,7 @@ describe("GET /api/sync-logs", () => {
 
   it("filters by provider when specified", async () => {
     const { GET } = await import("./route");
-    await GET(makeRequest({ provider: "sat" }) as any);
+    await GET(makeRequest({ provider: "sat" }) as unknown as NextRequest);
 
     expect(mockQuery).toHaveBeenCalledWith("sync_history", expect.objectContaining({
       match: { company_id: 1, provider: "sat" },
@@ -75,7 +76,7 @@ describe("GET /api/sync-logs", () => {
 
   it("queries without provider filter when not specified", async () => {
     const { GET } = await import("./route");
-    await GET(makeRequest() as any);
+    await GET(makeRequest() as unknown as NextRequest);
 
     expect(mockQuery).toHaveBeenCalledWith("sync_history", expect.objectContaining({
       match: { company_id: 1 },
@@ -84,7 +85,7 @@ describe("GET /api/sync-logs", () => {
 
   it("applies limit parameter with max of 100", async () => {
     const { GET } = await import("./route");
-    await GET(makeRequest({ limit: "5" }) as any);
+    await GET(makeRequest({ limit: "5" }) as unknown as NextRequest);
 
     expect(mockQuery).toHaveBeenCalledWith("sync_history", expect.objectContaining({
       limit: 5,
@@ -93,7 +94,7 @@ describe("GET /api/sync-logs", () => {
 
   it("caps limit at 100", async () => {
     const { GET } = await import("./route");
-    await GET(makeRequest({ limit: "999" }) as any);
+    await GET(makeRequest({ limit: "999" }) as unknown as NextRequest);
 
     expect(mockQuery).toHaveBeenCalledWith("sync_history", expect.objectContaining({
       limit: 100,
@@ -102,7 +103,7 @@ describe("GET /api/sync-logs", () => {
 
   it("uses default limit of 20", async () => {
     const { GET } = await import("./route");
-    await GET(makeRequest() as any);
+    await GET(makeRequest() as unknown as NextRequest);
 
     expect(mockQuery).toHaveBeenCalledWith("sync_history", expect.objectContaining({
       limit: 20,
@@ -111,7 +112,7 @@ describe("GET /api/sync-logs", () => {
 
   it("orders by started_at descending", async () => {
     const { GET } = await import("./route");
-    await GET(makeRequest() as any);
+    await GET(makeRequest() as unknown as NextRequest);
 
     expect(mockQuery).toHaveBeenCalledWith("sync_history", expect.objectContaining({
       order: { column: "started_at", ascending: false },

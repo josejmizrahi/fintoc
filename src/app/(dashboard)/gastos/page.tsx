@@ -5,7 +5,6 @@ import { type ColumnDef } from "@tanstack/react-table";
 import { useForm, Controller } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { toast } from "sonner";
 import {
   Plus,
   Loader2,
@@ -49,8 +48,6 @@ import { DataTable } from "@/components/shared/data-table";
 import { EmptyState } from "@/components/shared/empty-state";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { SearchInput } from "@/components/shared/search-input";
-import { ConfirmDialog } from "@/components/shared/confirm-dialog";
-
 import {
   useExpenses,
   useCreateExpense,
@@ -95,7 +92,7 @@ function useExpenseColumns(
   onApprove: (id: string) => void,
   onRejectOpen: (id: string) => void,
   approvingId: string | null
-): ColumnDef<Expense, any>[] {
+): ColumnDef<Expense, unknown>[] {
   return useMemo(
     () => [
       {
@@ -219,6 +216,7 @@ function NewExpenseDialog({
   const [xmlFile, setXmlFile] = useState<File | null>(null);
 
   const form = useForm<NewExpenseForm>({
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     resolver: zodResolver(newExpenseSchema) as any,
     defaultValues: {
       employee_name: "",
