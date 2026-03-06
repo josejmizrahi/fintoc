@@ -63,8 +63,8 @@ export function FilterBar({
 
           {filter.type === "select" && filter.options ? (
             <Select
-              value={values[filter.key] || ""}
-              onValueChange={(val) => handleChange(filter.key, val)}
+              value={values[filter.key] || "__all__"}
+              onValueChange={(val) => handleChange(filter.key, val === "__all__" ? "" : val)}
             >
               <SelectTrigger className="w-[180px]">
                 <SelectValue
@@ -72,7 +72,7 @@ export function FilterBar({
                 />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="">Todos</SelectItem>
+                <SelectItem value="__all__">Todos</SelectItem>
                 {filter.options.map((opt) => (
                   <SelectItem key={opt.value} value={opt.value}>
                     {opt.label}
