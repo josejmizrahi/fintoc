@@ -211,7 +211,7 @@ export default function SatPage() {
     retry: false,
   });
 
-  // ── Taxpayers ──
+  // ── Taxpayers ── (el backend solo devuelve entidades cuyo RFC coincide con el de la empresa)
   const taxpayersQuery = useQuery({
     queryKey: satKeys.taxpayers(),
     queryFn: () => api.sat.syntage.taxpayers(),
@@ -220,8 +220,10 @@ export default function SatPage() {
   });
 
   const taxpayers: SyntageTaxpayer[] = taxpayersQuery.data?.taxpayers || [];
-  const [selectedTaxpayer, setSelectedTaxpayer] = useState<string>("");
-  const activeTaxpayer = selectedTaxpayer || taxpayers[0]?.id || "";
+  // Preferir la entidad vinculada a la empresa (syntage_taxpayer_id) para no mezclar datos
+  const linkedTaxpayerId = (statusQuery.data as { syntage_taxpayer_id?: string })?.syntage_taxpayer_id;
+  const [selectedTaxpayer, setSelectedTaxpayer] = useState<string>(linkedTaxpayerId || "");
+  const activeTaxpayer = selectedTaxpayer || linkedTaxpayerId || taxpayers[0]?.id || "";
 
   const permFallback = (
     <div className="flex flex-col items-center justify-center gap-4 py-24 text-muted-foreground">
@@ -248,6 +250,9 @@ export default function SatPage() {
     );
   }
 
+  const companyRfc = (statusQuery.data as { company_rfc?: string })?.company_rfc;
+  const noMatchingEntity = statusQuery.data?.ok && taxpayers.length === 0 && taxpayersQuery.isSuccess;
+
   return (
     <PermissionGate permission="invoices:read" fallback={permFallback}>
     <div className="space-y-6 p-6">
@@ -260,7 +265,12 @@ export default function SatPage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          {/* Taxpayer selector */}
+          {/* Selector de entidad: solo las que coinciden con el RFC de la empresa */}
+          {noMatchingEntity && (
+            <p className="text-sm text-amber-600">
+              No hay ninguna entidad en Syntage con el RFC de esta empresa{companyRfc ? ` (${companyRfc})` : ""}. Vincula una credencial con ese RFC en Syntage o revisa Configuracion.
+            </p>
+          )}
           {taxpayers.length > 1 && (
             <Select value={activeTaxpayer} onValueChange={setSelectedTaxpayer}>
               <SelectTrigger className="w-[200px]">

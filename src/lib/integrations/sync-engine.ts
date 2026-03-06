@@ -207,25 +207,40 @@ export async function syncOdoo(companyId: string, config: OdooConfig): Promise<S
     // --- Invoices only (vendors/customers are cache with TTL via getVendor/getCustomer) ---
     try {
       const invoices = await withRetry(() => odoo.fetchOdooInvoices(config, lastSyncAt), RETRY_OPTS);
-      const invoiceRows = invoices.map((inv: OdooInvoice) => ({
-        company_id: companyId,
-        type: inv.move_type,
-        invoice_number: inv.name,
-        uuid: odoo.normalizeOdooValue(inv.l10n_mx_edi_cfdi_uuid),
-        invoice_date: odoo.normalizeOdooValue(inv.invoice_date),
-        due_date: odoo.normalizeOdooValue(inv.invoice_date_due),
-        amount_total: inv.amount_total,
-        amount_residual: inv.amount_residual,
-        amount_paid: inv.amount_total - inv.amount_residual,
-        amount_tax: inv.amount_tax,
-        payment_state: inv.payment_state,
-        payment_method: odoo.normalizeOdooValue(inv.l10n_mx_edi_payment_policy),
-        partner_name: odoo.extractM2oName(inv.partner_id),
-        odoo_id: inv.id,
-        odoo_move_id: String(inv.id),
-        source: 'odoo',
-        sat_status: 'no_validado',
-      }));
+      const moveTypeToAppType: Record<string, 'payable' | 'receivable'> = {
+        in_invoice: 'payable',
+        in_refund: 'payable',
+        out_invoice: 'receivable',
+        out_refund: 'receivable',
+      };
+      const invoiceRows = invoices.map((inv: OdooInvoice) => {
+        const appType = moveTypeToAppType[inv.move_type] ?? 'payable';
+        return {
+          company_id: companyId,
+          type: appType,
+          move_type: inv.move_type,
+          invoice_number: inv.name,
+          uuid: odoo.normalizeOdooValue(inv.l10n_mx_edi_cfdi_uuid),
+          invoice_date: odoo.normalizeOdooValue(inv.invoice_date),
+          due_date: odoo.normalizeOdooValue(inv.invoice_date_due),
+          date_invoice: odoo.normalizeOdooValue(inv.invoice_date),
+          date_due: odoo.normalizeOdooValue(inv.invoice_date_due),
+          amount_total: inv.amount_total,
+          amount_residual: inv.amount_residual,
+          amount_paid: inv.amount_total - inv.amount_residual,
+          amount_tax: inv.amount_tax,
+          payment_state: inv.payment_state,
+          payment_method: odoo.normalizeOdooValue(inv.l10n_mx_edi_payment_policy),
+          partner_name: odoo.extractM2oName(inv.partner_id),
+          odoo_id: inv.id,
+          odoo_move_id: String(inv.id),
+          odoo_cfdi_uuid: odoo.normalizeOdooValue(inv.l10n_mx_edi_cfdi_uuid),
+          odoo_payment_method: odoo.normalizeOdooValue(inv.l10n_mx_edi_payment_policy),
+          odoo_usage: odoo.normalizeOdooValue(inv.l10n_mx_edi_usage),
+          source: 'odoo',
+          sat_status: 'no_validado',
+        };
+      });
 
       if (invoiceRows.length > 0) {
         const r = await batchUpsert(admin, 'invoices', invoiceRows, 'company_id,odoo_id', errors, 'invoices');

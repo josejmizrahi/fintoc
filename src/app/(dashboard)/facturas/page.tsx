@@ -1238,12 +1238,22 @@ export default function FacturasPage() {
   }, [queryClient]);
 
   // Empty state
+  const hasActiveFilters = Object.values(filterBarValues).some((v) => v !== "" && v != null);
+  const hasDataButFilteredOut = (currentData.length > 0 && filteredData.length === 0) && hasActiveFilters;
   const emptyState = (
     <EmptyState
       icon={FileText}
       title="No hay facturas"
-      description="No se encontraron facturas con los filtros seleccionados. Sincroniza tu ERP para importar facturas."
-      action={{ label: "Sincronizar Odoo", onClick: handleSyncOdoo }}
+      description={
+        hasDataButFilteredOut
+          ? "Los filtros no coinciden con ninguna factura. Prueba a limpiar filtros."
+          : "No se encontraron facturas con los filtros seleccionados. Sincroniza tu ERP (Odoo) para importar facturas."
+      }
+      action={
+        hasDataButFilteredOut
+          ? { label: "Limpiar filtros", onClick: () => setFilterBarValues({}) }
+          : { label: "Sincronizar Odoo", onClick: handleSyncOdoo }
+      }
     />
   );
 

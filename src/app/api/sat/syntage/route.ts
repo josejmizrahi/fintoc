@@ -2,6 +2,49 @@ import { NextRequest, NextResponse } from "next/server";
 import { hasDB, query, update, insert } from "@/lib/db";
 import { getCompanyId } from "@/lib/auth-helpers";
 import { createSyntageClient } from "@/lib/integrations/syntage";
+import { getAdminClient } from "@/lib/supabase/admin";
+
+/** Normalize RFC for comparison (uppercase, no spaces). */
+function normalizeRfc(rfc: string | null | undefined): string {
+  if (!rfc || typeof rfc !== "string") return "";
+  return rfc.replace(/\s/g, "").toUpperCase().trim();
+}
+
+/**
+ * Get company RFC for the given company_id. Used to match Syntage entity to company.
+ */
+async function getCompanyRfc(companyId: number): Promise<string | null> {
+  const admin = getAdminClient();
+  const { data } = await admin.from("companies").select("rfc").eq("id", companyId).single();
+  return data?.rfc ? normalizeRfc(data.rfc) : null;
+}
+
+/**
+ * Verifica que el taxpayerId corresponda a la empresa actual (evita ver datos de otra entidad).
+ * Acepta si: integration.syntage_taxpayer_id === taxpayerId, o si no hay vinculación y el RFC del taxpayer coincide con company.
+ */
+async function ensureTaxpayerBelongsToCompany(
+  companyId: number,
+  taxpayerId: string,
+  client: { listTaxpayers(): Promise<{ "hydra:member": unknown[] }> },
+): Promise<boolean> {
+  const admin = getAdminClient();
+  const { data: integration } = await admin
+    .from("integrations")
+    .select("syntage_taxpayer_id")
+    .eq("company_id", companyId)
+    .eq("provider", "sat")
+    .single();
+  if (integration?.syntage_taxpayer_id) {
+    return integration.syntage_taxpayer_id === taxpayerId;
+  }
+  const companyRfc = await getCompanyRfc(companyId);
+  if (!companyRfc) return true;
+  const data = await client.listTaxpayers();
+  const members = (data["hydra:member"] || []) as Array<{ id: string; rfc?: string }>;
+  const match = members.find((tp) => tp.id === taxpayerId && normalizeRfc(tp.rfc) === companyRfc);
+  return !!match;
+}
 
 /**
  * Syntage SAT API — Unified endpoint for all Syntage operations.
@@ -88,10 +131,19 @@ export async function GET(req: NextRequest) {
 
   try {
     switch (action) {
-      // ── Connection status ──
+      // ── Connection status ── (incluye entidad vinculada a la empresa para no mezclar datos)
       case "status": {
         const status = await client.testConnection();
-        return NextResponse.json(status);
+        const admin = getAdminClient();
+        const [companyRes, intRes] = await Promise.all([
+          admin.from("companies").select("rfc").eq("id", companyId).single(),
+          admin.from("integrations").select("syntage_taxpayer_id").eq("company_id", companyId).eq("provider", "sat").single(),
+        ]);
+        return NextResponse.json({
+          ...status,
+          company_rfc: companyRes.data?.rfc ? normalizeRfc(companyRes.data.rfc) : undefined,
+          syntage_taxpayer_id: intRes.data?.syntage_taxpayer_id || undefined,
+        });
       }
 
       // ── Credentials ──
@@ -106,16 +158,23 @@ export async function GET(req: NextRequest) {
         return NextResponse.json(data);
       }
 
-      // ── Taxpayers ──
+      // ── Taxpayers ── (solo entidades cuyo RFC coincide con el de la empresa para no mezclar datos)
       case "taxpayers": {
         const data = await client.listTaxpayers();
-        return NextResponse.json({ taxpayers: data["hydra:member"], total: data["hydra:totalItems"] });
+        const companyRfc = await getCompanyRfc(companyId);
+        let members = (data["hydra:member"] || []) as Array<{ id: string; rfc?: string; name?: string }>;
+        if (companyRfc) {
+          members = members.filter((tp) => normalizeRfc(tp.rfc) === companyRfc);
+        }
+        return NextResponse.json({ taxpayers: members, total: members.length });
       }
 
       // ── Invoices ──
       case "invoices": {
         const taxpayerId = searchParams.get("taxpayerId");
         if (!taxpayerId) return NextResponse.json({ detail: "Falta parametro 'taxpayerId'" }, { status: 400 });
+        const allowed = await ensureTaxpayerBelongsToCompany(companyId, taxpayerId, client);
+        if (!allowed) return NextResponse.json({ detail: "La entidad no corresponde a esta empresa" }, { status: 403 });
         const params: Record<string, string> = {};
         for (const [key, val] of searchParams.entries()) {
           if (key !== "action" && key !== "taxpayerId") params[key] = val;
@@ -152,6 +211,8 @@ export async function GET(req: NextRequest) {
       case "tax-returns": {
         const taxpayerId = searchParams.get("taxpayerId");
         if (!taxpayerId) return NextResponse.json({ detail: "Falta parametro 'taxpayerId'" }, { status: 400 });
+        const allowed = await ensureTaxpayerBelongsToCompany(companyId, taxpayerId, client);
+        if (!allowed) return NextResponse.json({ detail: "La entidad no corresponde a esta empresa" }, { status: 403 });
         const data = await client.listTaxReturns(taxpayerId);
         return NextResponse.json({ taxReturns: data["hydra:member"], total: data["hydra:totalItems"] });
       }
@@ -172,6 +233,8 @@ export async function GET(req: NextRequest) {
       case "tax-compliance": {
         const taxpayerId = searchParams.get("taxpayerId");
         if (!taxpayerId) return NextResponse.json({ detail: "Falta parametro 'taxpayerId'" }, { status: 400 });
+        const allowed = await ensureTaxpayerBelongsToCompany(companyId, taxpayerId, client);
+        if (!allowed) return NextResponse.json({ detail: "La entidad no corresponde a esta empresa" }, { status: 403 });
         const data = await client.listTaxComplianceChecks(taxpayerId);
         return NextResponse.json({ checks: data["hydra:member"], total: data["hydra:totalItems"] });
       }
@@ -180,6 +243,8 @@ export async function GET(req: NextRequest) {
       case "tax-status": {
         const taxpayerId = searchParams.get("taxpayerId");
         if (!taxpayerId) return NextResponse.json({ detail: "Falta parametro 'taxpayerId'" }, { status: 400 });
+        const allowed = await ensureTaxpayerBelongsToCompany(companyId, taxpayerId, client);
+        if (!allowed) return NextResponse.json({ detail: "La entidad no corresponde a esta empresa" }, { status: 403 });
         const data = await client.listTaxStatus(taxpayerId);
         return NextResponse.json({ statuses: data["hydra:member"], total: data["hydra:totalItems"] });
       }
@@ -188,6 +253,8 @@ export async function GET(req: NextRequest) {
       case "tax-retentions": {
         const taxpayerId = searchParams.get("taxpayerId");
         if (!taxpayerId) return NextResponse.json({ detail: "Falta parametro 'taxpayerId'" }, { status: 400 });
+        const allowed = await ensureTaxpayerBelongsToCompany(companyId, taxpayerId, client);
+        if (!allowed) return NextResponse.json({ detail: "La entidad no corresponde a esta empresa" }, { status: 403 });
         const data = await client.listTaxRetentions(taxpayerId);
         return NextResponse.json({ retentions: data["hydra:member"], total: data["hydra:totalItems"] });
       }
@@ -216,12 +283,16 @@ export async function GET(req: NextRequest) {
       case "insights-balance": {
         const taxpayerId = searchParams.get("taxpayerId");
         if (!taxpayerId) return NextResponse.json({ detail: "Falta parametro 'taxpayerId'" }, { status: 400 });
+        const allowed = await ensureTaxpayerBelongsToCompany(companyId, taxpayerId, client);
+        if (!allowed) return NextResponse.json({ detail: "La entidad no corresponde a esta empresa" }, { status: 403 });
         const data = await client.getBalanceSheet(taxpayerId);
         return NextResponse.json(data);
       }
       case "insights-income": {
         const taxpayerId = searchParams.get("taxpayerId");
         if (!taxpayerId) return NextResponse.json({ detail: "Falta parametro 'taxpayerId'" }, { status: 400 });
+        const allowed = await ensureTaxpayerBelongsToCompany(companyId, taxpayerId, client);
+        if (!allowed) return NextResponse.json({ detail: "La entidad no corresponde a esta empresa" }, { status: 403 });
         const data = await client.getIncomeStatement(taxpayerId);
         return NextResponse.json(data);
       }
@@ -322,6 +393,8 @@ export async function POST(req: NextRequest) {
           taxpayerId: string; extractor?: string; options?: { period?: { from: string; to: string }; issued?: boolean; received?: boolean };
         };
         if (!taxpayerId) return NextResponse.json({ detail: "Falta taxpayerId" }, { status: 400 });
+        const allowed = await ensureTaxpayerBelongsToCompany(companyId, taxpayerId, client);
+        if (!allowed) return NextResponse.json({ detail: "La entidad no corresponde a esta empresa" }, { status: 403 });
         const extraction = await client.createExtraction(
           taxpayerId,
           (extractor as any) || "invoice",
@@ -340,6 +413,8 @@ export async function POST(req: NextRequest) {
       case "export": {
         const { taxpayerId, format } = params as { taxpayerId: string; format?: "csv" | "xlsx" };
         if (!taxpayerId) return NextResponse.json({ detail: "Falta taxpayerId" }, { status: 400 });
+        const allowed = await ensureTaxpayerBelongsToCompany(companyId, taxpayerId, client);
+        if (!allowed) return NextResponse.json({ detail: "La entidad no corresponde a esta empresa" }, { status: 403 });
         const exportData = await client.createExport({
           taxpayer: `/taxpayers/${taxpayerId}`,
           format: format || "csv",
@@ -395,29 +470,52 @@ async function saveConfig(companyId: number, params: Record<string, unknown>) {
     ...(rfcEmisor ? { rfcEmisor } : {}),
   };
 
+  const admin = getAdminClient();
+  const updatePayload: Record<string, unknown> = {
+    config: mergedConfig,
+    is_connected: true,
+    updated_at: new Date().toISOString(),
+  };
+
+  // Resolver entidad Syntage por RFC: solo mostramos datos de la entidad que coincide con la empresa
+  const companyRfc = await getCompanyRfc(companyId);
+  const rfcToMatch = companyRfc || (rfcEmisor ? normalizeRfc(rfcEmisor) : null);
+  if (rfcToMatch) {
+    try {
+      const client = createSyntageClient(mergedConfig as Record<string, string>);
+      const data = await client.listTaxpayers();
+      const members = (data["hydra:member"] || []) as Array<{ id: string; rfc?: string }>;
+      const match = members.find((tp) => normalizeRfc(tp.rfc) === rfcToMatch);
+      if (match) {
+        updatePayload.syntage_taxpayer_id = match.id;
+      }
+    } catch {
+      // Si falla la API (ej. key inválida), guardamos config igual; el taxpayer se puede vincular después
+    }
+  }
+
   if (existing) {
-    await update("integrations", {
-      config: mergedConfig,
-      is_connected: true,
-      updated_at: new Date().toISOString(),
-    }, { company_id: companyId, provider: "sat" });
+    await admin.from("integrations").update(updatePayload).eq("company_id", companyId).eq("provider", "sat");
   } else {
-    await insert("integrations", {
+    await admin.from("integrations").insert({
       company_id: companyId,
       provider: "sat",
       config: mergedConfig,
       is_connected: true,
+      updated_at: updatePayload.updated_at,
+      ...(updatePayload.syntage_taxpayer_id ? { syntage_taxpayer_id: updatePayload.syntage_taxpayer_id } : {}),
     });
   }
 
   // Test connection
   try {
-    const client = createSyntageClient(mergedConfig);
+    const client = createSyntageClient(mergedConfig as Record<string, string>);
     const status = await client.testConnection();
     return NextResponse.json({
       success: true,
       message: "Syntage configurado correctamente",
       ...status,
+      syntage_taxpayer_id: (updatePayload.syntage_taxpayer_id as string) || undefined,
     });
   } catch (e) {
     return NextResponse.json({
