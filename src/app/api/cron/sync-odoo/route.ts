@@ -3,6 +3,14 @@ import { decrypt } from '@/lib/utils/crypto';
 import { syncOdoo } from '@/lib/integrations/sync-engine';
 import type { OdooConfig } from '@/lib/integrations/odoo';
 
+interface CronResult {
+  company_id: string;
+  status: string;
+  records_synced?: number;
+  error?: string;
+  skipped?: boolean;
+}
+
 export async function GET(req: Request): Promise<Response> {
   const secret = req.headers.get('authorization')?.replace('Bearer ', '');
   if (secret !== process.env.CRON_SECRET) {
@@ -10,7 +18,7 @@ export async function GET(req: Request): Promise<Response> {
   }
 
   const admin = getAdminClient();
-  const results: Array<{ company_id: string; status: string; records_synced?: number; error?: string }> = [];
+  const results: CronResult[] = [];
 
   try {
     const { data: integrations } = await admin.from('integrations')
@@ -19,12 +27,19 @@ export async function GET(req: Request): Promise<Response> {
       .eq('status', 'valid');
 
     for (const integration of (integrations || [])) {
-      if (!integration.config_encrypted) continue;
+      if (!integration.config_encrypted) {
+        results.push({
+          company_id: integration.company_id,
+          status: 'skipped',
+          skipped: true,
+          error: 'Missing config_encrypted',
+        });
+        continue;
+      }
 
       try {
         const config = decrypt(integration.config_encrypted) as unknown as OdooConfig;
         const result = await syncOdoo(integration.company_id, config);
-
         results.push({
           company_id: integration.company_id,
           status: result.status,
@@ -33,12 +48,16 @@ export async function GET(req: Request): Promise<Response> {
             ? result.errors.map(e => `${e.entity}: ${e.message}`).join('; ')
             : undefined,
         });
-      } catch (err) {
-        results.push({
-          company_id: integration.company_id,
-          status: 'failed',
-          error: err instanceof Error ? err.message : 'Unknown error',
-        });
+      } catch (err: any) {
+        if (err?.code === 'SYNC_IN_PROGRESS') {
+          results.push({ company_id: integration.company_id, status: 'skipped', skipped: true, error: 'Sync already running' });
+        } else {
+          results.push({
+            company_id: integration.company_id,
+            status: 'failed',
+            error: err instanceof Error ? err.message : 'Unknown error',
+          });
+        }
       }
     }
 

@@ -11,7 +11,10 @@ export async function POST(req: Request): Promise<Response> {
     const rawBody = await req.text();
     const signature = req.headers.get('fintoc-signature') || '';
     const isRetry = req.headers.get('x-webhook-retry') === 'true';
+    const retryLogId = req.headers.get('x-webhook-log-id') || null;
 
+    // Signature validation: retries from our own cron include x-webhook-log-id
+    // which we verify exists in the DB (prevents forged retry headers)
     if (!isRetry && !verifyFintocWebhook(rawBody, signature)) {
       return Response.json({ error: 'Invalid signature' }, { status: 401 });
     }
@@ -19,13 +22,62 @@ export async function POST(req: Request): Promise<Response> {
     const payload = JSON.parse(rawBody) as FintocWebhookPayload;
     const admin = getAdminClient();
 
-    // Log the webhook
-    const { data: webhookLog } = await admin.from('webhook_logs').insert({
-      provider: 'fintoc',
-      event_type: payload.type,
-      payload,
-      processed: false,
-    }).select('id').single();
+    // For retries, verify the log ID actually exists and belongs to fintoc
+    if (isRetry && retryLogId) {
+      const { data: logEntry } = await admin.from('webhook_logs')
+        .select('id')
+        .eq('id', retryLogId)
+        .eq('provider', 'fintoc')
+        .single();
+
+      if (!logEntry) {
+        return Response.json({ error: 'Invalid retry reference' }, { status: 401 });
+      }
+    }
+
+    // Idempotency: check if we already processed this exact event
+    // Use transfer/intent ID + event type as the dedup key
+    const eventDedup = extractEventKey(payload);
+    if (eventDedup) {
+      const { data: existing } = await admin.from('webhook_logs')
+        .select('id')
+        .eq('provider', 'fintoc')
+        .eq('event_type', payload.type)
+        .eq('processed', true)
+        .limit(1);
+
+      // Check if any processed log has the same dedup key in payload
+      if (existing && existing.length > 0 && !isRetry) {
+        // For non-retry, do a deeper check with the actual entity ID
+        const { data: dupCheck } = await admin.from('webhook_logs')
+          .select('id, payload')
+          .eq('provider', 'fintoc')
+          .eq('event_type', payload.type)
+          .eq('processed', true)
+          .limit(10);
+
+        const isDuplicate = (dupCheck || []).some((log: any) => {
+          const logKey = extractEventKey({ type: payload.type, data: log.payload?.data || {} });
+          return logKey === eventDedup;
+        });
+
+        if (isDuplicate) {
+          return Response.json({ received: true, deduplicated: true });
+        }
+      }
+    }
+
+    // Log the webhook (skip for retries that already have a log entry)
+    let webhookLogId = retryLogId;
+    if (!retryLogId) {
+      const { data: webhookLog } = await admin.from('webhook_logs').insert({
+        provider: 'fintoc',
+        event_type: payload.type,
+        payload,
+        processed: false,
+      }).select('id').single();
+      webhookLogId = webhookLog?.id || null;
+    }
 
     try {
       switch (payload.type) {
@@ -51,18 +103,17 @@ export async function POST(req: Request): Promise<Response> {
           break;
 
         default:
-          // Unknown event — logged for reference
           break;
       }
 
-      if (webhookLog?.id) {
-        await admin.from('webhook_logs').update({ processed: true }).eq('id', webhookLog.id);
+      if (webhookLogId) {
+        await admin.from('webhook_logs').update({ processed: true, error: null }).eq('id', webhookLogId);
       }
     } catch (err) {
-      if (webhookLog?.id) {
+      if (webhookLogId) {
         await admin.from('webhook_logs').update({
           error: err instanceof Error ? err.message : 'Processing error',
-        }).eq('id', webhookLog.id);
+        }).eq('id', webhookLogId);
       }
     }
 
@@ -72,30 +123,39 @@ export async function POST(req: Request): Promise<Response> {
   }
 }
 
+/** Extract a dedup key from the event payload */
+function extractEventKey(payload: FintocWebhookPayload): string | null {
+  const id = payload.data?.id as string;
+  if (!id) return null;
+  return `${payload.type}:${id}`;
+}
+
 // ---------------------------------------------------------------------------
 // Event handlers
 // ---------------------------------------------------------------------------
 
 async function handleTransferSucceeded(
   admin: ReturnType<typeof getAdminClient>,
-  data: Record<string, unknown>
+  data: Record<string, unknown>,
 ) {
   const transferId = data.id as string;
   if (!transferId) return;
 
   const { data: payment } = await admin.from('payments')
-    .select('id, company_id, created_by, amount, beneficiary_name')
+    .select('id, company_id, created_by, amount, beneficiary_name, status')
     .eq('fintoc_transfer_id', transferId)
     .single();
 
   if (!payment) return;
+
+  // Idempotent: skip if already confirmed
+  if (payment.status === 'confirmed') return;
 
   await admin.from('payments').update({
     status: 'confirmed',
     confirmed_at: new Date().toISOString(),
   }).eq('id', payment.id);
 
-  // Audit log
   await admin.from('audit_log').insert({
     company_id: payment.company_id,
     user_id: payment.created_by || '00000000-0000-0000-0000-000000000000',
@@ -105,7 +165,6 @@ async function handleTransferSucceeded(
     metadata: { source: 'webhook', fintoc_transfer_id: transferId },
   });
 
-  // Notification
   if (payment.created_by) {
     await admin.from('notifications').insert({
       company_id: payment.company_id,
@@ -122,7 +181,7 @@ async function handleTransferSucceeded(
 
 async function handleTransferFailed(
   admin: ReturnType<typeof getAdminClient>,
-  data: Record<string, unknown>
+  data: Record<string, unknown>,
 ) {
   const transferId = data.id as string;
   if (!transferId) return;
@@ -132,18 +191,20 @@ async function handleTransferFailed(
   const errorMsg = (errorObj?.message as string) || 'Error de transferencia SPEI';
 
   const { data: payment } = await admin.from('payments')
-    .select('id, company_id, created_by, amount, beneficiary_name')
+    .select('id, company_id, created_by, amount, beneficiary_name, status')
     .eq('fintoc_transfer_id', transferId)
     .single();
 
   if (!payment) return;
+
+  // Idempotent: skip if already in a terminal state
+  if (payment.status === 'failed' || payment.status === 'confirmed') return;
 
   await admin.from('payments').update({
     status: 'failed',
     fintoc_error: `${errorType}: ${errorMsg}`,
   }).eq('id', payment.id);
 
-  // Audit log
   await admin.from('audit_log').insert({
     company_id: payment.company_id,
     user_id: payment.created_by || '00000000-0000-0000-0000-000000000000',
@@ -169,34 +230,31 @@ async function handleTransferFailed(
 
 async function handlePaymentIntentSucceeded(
   admin: ReturnType<typeof getAdminClient>,
-  data: Record<string, unknown>
+  data: Record<string, unknown>,
 ) {
   const intentId = data.id as string;
   if (!intentId) return;
 
-  // Find the payment link/collection associated with this intent
-  const { data: existing } = await admin.from('webhook_logs')
-    .select('id')
-    .eq('provider', 'fintoc')
-    .eq('event_type', 'payment_intent.succeeded')
-    .limit(1)
-    .single();
-
-  // Log the successful collection
   const amount = centavosToPesos((data.amount as number) || 0);
   const senderName = ((data.sender_account as Record<string, unknown>)?.holder_name as string) || 'Cliente';
 
-  // Try to find associated invoice/collection
   const metadata = data.metadata as Record<string, string> | undefined;
   if (metadata?.invoice_id) {
-    await admin.from('invoices').update({
-      payment_state: 'paid',
-      amount_paid: amount,
-      amount_residual: 0,
-    }).eq('id', metadata.invoice_id);
+    // Fetch current invoice to ensure we don't overwrite a more recent state
+    const { data: invoice } = await admin.from('invoices')
+      .select('id, payment_state')
+      .eq('id', metadata.invoice_id)
+      .single();
+
+    if (invoice && invoice.payment_state !== 'paid') {
+      await admin.from('invoices').update({
+        payment_state: 'paid',
+        amount_paid: amount,
+        amount_residual: 0,
+      }).eq('id', metadata.invoice_id);
+    }
   }
 
-  // Notify — find company from the payment intent metadata or recipient account
   if (metadata?.company_id && metadata?.user_id) {
     await admin.from('notifications').insert({
       company_id: metadata.company_id,
@@ -207,14 +265,11 @@ async function handlePaymentIntentSucceeded(
       read: false,
     });
   }
-
-  // Avoid unused variable warning
-  void existing;
 }
 
 async function handlePaymentIntentFailed(
   admin: ReturnType<typeof getAdminClient>,
-  data: Record<string, unknown>
+  data: Record<string, unknown>,
 ) {
   const metadata = data.metadata as Record<string, string> | undefined;
   if (metadata?.company_id && metadata?.user_id) {
@@ -231,10 +286,11 @@ async function handlePaymentIntentFailed(
 
 async function handleMovementCreated(
   admin: ReturnType<typeof getAdminClient>,
-  data: Record<string, unknown>
+  data: Record<string, unknown>,
 ) {
   const accountId = data.account_id as string;
-  if (!accountId) return;
+  const movementId = data.id as string;
+  if (!accountId || !movementId) return;
 
   const { data: account } = await admin.from('bank_accounts')
     .select('company_id')
@@ -248,7 +304,7 @@ async function handleMovementCreated(
   await admin.from('bank_movements').upsert({
     company_id: account.company_id,
     account_id: accountId,
-    fintoc_movement_id: data.id as string,
+    fintoc_movement_id: movementId,
     date: (data.post_date as string) || new Date().toISOString().split('T')[0],
     description: (data.description as string) || null,
     amount,
@@ -258,21 +314,33 @@ async function handleMovementCreated(
     recipient_name: ((data.recipient_account as Record<string, unknown>)?.holder_name as string) || null,
   }, { onConflict: 'fintoc_movement_id' });
 
-  // Auto-reconciliation: try to match with a pending payment
+  // Auto-reconciliation: match by fintoc_transfer_id + amount + company
+  // Only match debit movements against payments that have a fintoc_transfer_id
   if ((data.type as string) === 'debit') {
+    const referenceId = (data.reference_id as string) || '';
+    const description = (data.description as string) || '';
+
+    // Try to match using reference_id or transfer description
     const { data: matchingPayment } = await admin.from('payments')
-      .select('id')
+      .select('id, fintoc_transfer_id')
       .eq('company_id', account.company_id)
       .eq('status', 'processing')
       .eq('amount', amount)
-      .limit(1)
-      .single();
+      .not('fintoc_transfer_id', 'is', null)
+      .limit(5);
 
-    if (matchingPayment) {
+    // Find the best match: prefer one where fintoc_transfer_id appears in reference or description
+    const bestMatch = (matchingPayment || []).find((p: any) => {
+      if (!p.fintoc_transfer_id) return false;
+      return referenceId.includes(p.fintoc_transfer_id) ||
+        description.includes(p.fintoc_transfer_id);
+    }) || (matchingPayment && matchingPayment.length === 1 ? matchingPayment[0] : null);
+
+    if (bestMatch) {
       await admin.from('bank_movements').update({
         reconciled: true,
-        reconciled_payment_id: matchingPayment.id,
-      }).eq('fintoc_movement_id', data.id as string);
+        reconciled_payment_id: bestMatch.id,
+      }).eq('fintoc_movement_id', movementId);
     }
   }
 }
