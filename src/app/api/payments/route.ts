@@ -129,6 +129,7 @@ export const POST = createHandler(async (req) => {
       .from('payments')
       .insert({
         company_id: ctx.company_id,
+        direction: 'outbound',
         vendor_id,
         invoice_id: invoice_id || null,
         amount: paymentAmount,

@@ -64,7 +64,7 @@ export const GET = createHandler(
   withAuth(async (req, ctx) => {
     const { getAdminClient } = await import('@/lib/supabase/admin');
     const admin = getAdminClient();
-    const companyId = String(ctx.company_id);
+    const companyId = Number(ctx.company_id);
 
     const { data: integrations } = await admin
       .from('integrations')

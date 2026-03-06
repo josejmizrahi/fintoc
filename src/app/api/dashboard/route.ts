@@ -14,7 +14,8 @@ export const GET = createHandler(async (req) => {
       balanceResult,
       receivableResult,
       payableResult,
-      overdueResult,
+      overdueDateDueResult,
+      overdueDueDateResult,
       recentPaymentsResult,
       overdueInvoicesResult,
     ] = await Promise.all([
@@ -26,9 +27,12 @@ export const GET = createHandler(async (req) => {
       // Accounts payable (open bills)
       admin.from('invoices').select('amount_residual')
         .eq('company_id', ctx.company_id).eq('type', 'payable').gt('amount_residual', 0),
-      // Overdue invoices (both types)
-      admin.from('invoices').select('amount_residual')
+      // Overdue invoices via date_due (seed data / manual creates)
+      admin.from('invoices').select('id, amount_residual')
         .eq('company_id', ctx.company_id).gt('amount_residual', 0).lt('date_due', today),
+      // Overdue invoices via due_date (Odoo sync creates)
+      admin.from('invoices').select('id, amount_residual')
+        .eq('company_id', ctx.company_id).gt('amount_residual', 0).lt('due_date', today),
       // Recent payments (last 5)
       admin.from('payments')
         .select('id, partner_name, reference_id, amount, status, direction, created_at, executed_at')
@@ -37,7 +41,7 @@ export const GET = createHandler(async (req) => {
         .limit(5),
       // Overdue invoice list (last 5)
       admin.from('invoices')
-        .select('id, partner_name, name, amount_total, amount_residual, date_due, type, status')
+        .select('id, partner_name, name, amount_total, amount_residual, date_due, due_date, type, status')
         .eq('company_id', ctx.company_id)
         .gt('amount_residual', 0)
         .lt('date_due', today)
@@ -48,7 +52,16 @@ export const GET = createHandler(async (req) => {
     const totalBalance = (balanceResult.data || []).reduce((s, a) => s + (a.balance || 0), 0);
     const receivable = receivableResult.data || [];
     const payable = payableResult.data || [];
-    const overdue = overdueResult.data || [];
+
+    // Merge overdue invoices from both date columns, deduplicating by id
+    const overdueMap = new Map<number, { amount_residual: number }>();
+    for (const inv of (overdueDateDueResult.data || [])) {
+      overdueMap.set(inv.id, inv);
+    }
+    for (const inv of (overdueDueDateResult.data || [])) {
+      if (!overdueMap.has(inv.id)) overdueMap.set(inv.id, inv);
+    }
+    const overdue = [...overdueMap.values()];
 
     return Response.json({
       total_balance: totalBalance,

@@ -17,7 +17,7 @@ export const POST = createHandler(async (req, params) => {
     const admin = getAdminClient();
     const { data: expense } = await admin.from('expenses').select('*').eq('id', params.id).eq('company_id', ctx.company_id).single();
     if (!expense) throw new ApiError('NOT_FOUND', 'Gasto no encontrado', 404);
-    if (expense.status !== 'pending') throw new ApiError('VALIDATION_ERROR', 'Solo se pueden rechazar gastos pendientes', 422);
+    if (!['pending', 'submitted'].includes(expense.status)) throw new ApiError('VALIDATION_ERROR', 'Solo se pueden rechazar gastos pendientes', 422);
 
     await admin.from('expenses').update({ status: 'rejected', rejected_reason: result.data.reason }).eq('id', params.id);
 

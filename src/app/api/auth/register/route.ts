@@ -2,11 +2,8 @@ import { createHandler } from '@/lib/middleware/route-handler';
 import { getAdminClient } from '@/lib/supabase/admin';
 import { registerSchema } from '@/lib/validations/schemas';
 import { ApiError } from '@/lib/utils/errors';
-import { checkRateLimit } from '@/lib/middleware/rate-limit';
 
 export const POST = createHandler(async (req) => {
-  checkRateLimit(req, 'auth');
-
   let body: unknown;
   try {
     body = await req.json();

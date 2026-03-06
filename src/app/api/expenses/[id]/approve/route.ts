@@ -10,7 +10,7 @@ export const POST = createHandler(async (req, params) => {
     const admin = getAdminClient();
     const { data: expense } = await admin.from('expenses').select('*').eq('id', params.id).eq('company_id', ctx.company_id).single();
     if (!expense) throw new ApiError('NOT_FOUND', 'Gasto no encontrado', 404);
-    if (expense.status !== 'pending') throw new ApiError('VALIDATION_ERROR', 'Solo se pueden aprobar gastos pendientes', 422);
+    if (!['pending', 'submitted'].includes(expense.status)) throw new ApiError('VALIDATION_ERROR', 'Solo se pueden aprobar gastos pendientes', 422);
 
     await admin.from('expenses').update({ status: 'approved', approved_by: ctx.user_id }).eq('id', params.id);
 

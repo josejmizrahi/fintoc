@@ -47,7 +47,7 @@ export const POST = createHandler(async (req) => {
       amount: result.data.amount,
       currency: 'MXN',
       xml_url: result.data.xml_url || null,
-      status: 'pending',
+      status: 'submitted',
       created_by: ctx.user_id,
     }).select().single();
 

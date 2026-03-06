@@ -27,12 +27,12 @@ export const POST = createHandler(async (req) => {
 
     if (!invoice) throw new ApiError('NOT_FOUND', 'Factura no encontrada', 404);
 
-    // Get Syntage taxpayer ID
+    // Get Syntage taxpayer ID (stored under provider='sat' in integrations table)
     const { data: integration } = await admin
       .from('integrations')
       .select('syntage_taxpayer_id')
       .eq('company_id', ctx.company_id)
-      .eq('provider', 'syntage')
+      .eq('provider', 'sat')
       .single();
 
     if (!integration?.syntage_taxpayer_id) {
