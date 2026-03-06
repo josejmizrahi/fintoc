@@ -19,7 +19,7 @@ import { getProvider } from '@/packages/sync-engine';
 import '@/packages/integrations'; // registers all providers
 
 const SyncRequestSchema = z.object({
-  provider: z.enum(['odoo', 'fintoc', 'syntage']),
+  provider: z.enum(['odoo', 'fintoc', 'syntage', 'sat']),
   options: z
     .object({
       dateFrom: z.string().date().optional(),
@@ -29,12 +29,20 @@ const SyncRequestSchema = z.object({
     .optional(),
 });
 
+// Map frontend provider names to internal engine names
+const PROVIDER_ALIASES: Record<string, 'odoo' | 'fintoc' | 'syntage'> = {
+  odoo: 'odoo',
+  fintoc: 'fintoc',
+  syntage: 'syntage',
+  sat: 'syntage',
+};
+
 export const POST = createHandler(
   withAuth(
     withRbac(
       'sync.execute',
       withValidation(SyncRequestSchema, async (req, ctx) => {
-        const { provider } = ctx.body;
+        const provider = PROVIDER_ALIASES[ctx.body.provider] || ctx.body.provider;
         const companyId = String(ctx.company_id);
 
         const engine = getProvider(provider);

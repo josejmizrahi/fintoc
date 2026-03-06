@@ -587,10 +587,15 @@ export function IntegrationsTab() {
     mutationFn: (provider: string) => api.sync.trigger(provider),
     onSuccess: (data) => {
       if (data.success) {
-        toast.success(data.message || "Sincronizacion completada");
+        const result = data.data;
+        const msg = result?.recordsSynced != null
+          ? `Sincronizacion completada — ${result.recordsSynced} registros`
+          : data.message || "Sincronizacion completada";
+        toast.success(msg);
         queryClient.invalidateQueries({ queryKey: QUERY_KEY });
       } else {
-        toast.error(data.message || "Error de sincronizacion");
+        const errMsg = data.data?.errors?.[0]?.message || data.message || "Error de sincronizacion";
+        toast.error(errMsg);
       }
       setActiveAction(null);
     },
