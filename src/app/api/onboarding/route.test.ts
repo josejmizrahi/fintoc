@@ -21,22 +21,15 @@ vi.mock("@/lib/auth-helpers", () => ({
   resolveConfig: vi.fn((a, b) => ({ ...b, ...a })),
 }));
 
-// Mock odoo
-vi.mock("@/lib/odoo", () => ({
-  odooJsonRpc: vi.fn().mockResolvedValue({ jsonrpc: "2.0", result: { server_version: "17.0" } }),
+// Mock odoo (integrations client)
+vi.mock("@/lib/integrations/odoo", () => ({
   odooAuthenticate: vi.fn().mockResolvedValue(42),
-  odooFetchAll: vi.fn().mockResolvedValue([]),
+  odooVersion: vi.fn().mockResolvedValue({ server_version: "17.0" }),
 }));
 
-// Mock fintoc
-vi.mock("@/lib/fintoc", () => ({
-  fintocGet: vi.fn().mockResolvedValue([]),
-}));
-
-// Mock sat
-vi.mock("@/lib/sat", () => ({
-  validateCfdiAgainstSat: vi.fn().mockResolvedValue("Vigente"),
-  testSatReachability: vi.fn().mockResolvedValue(true),
+// Mock fintoc (integrations client)
+vi.mock("@/lib/integrations/fintoc", () => ({
+  getAccounts: vi.fn().mockResolvedValue([]),
 }));
 
 function makeRequest(method: string, body?: unknown) {

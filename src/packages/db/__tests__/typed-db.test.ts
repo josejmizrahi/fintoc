@@ -61,7 +61,6 @@ describe('Typed DB Layer', () => {
     expect(db).toHaveProperty('integrations');
     expect(db).toHaveProperty('syncHistory');
     expect(db).toHaveProperty('bankAccounts');
-    expect(db).toHaveProperty('bankMovements');
   });
 
   it('findMany calls supabase with correct table name', async () => {
@@ -81,7 +80,7 @@ describe('Typed DB Layer', () => {
   it('table accessor methods exist for all tables', async () => {
     const { db } = await import('../index');
 
-    const tables = ['vendors', 'customers', 'invoices', 'payments', 'integrations', 'syncHistory', 'bankAccounts', 'bankMovements'] as const;
+    const tables = ['vendors', 'customers', 'invoices', 'payments', 'integrations', 'syncHistory', 'bankAccounts'] as const;
 
     for (const table of tables) {
       const accessor = db[table];

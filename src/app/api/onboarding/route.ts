@@ -2,9 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { hasDB, query, insert, update } from "@/lib/db";
 import { getCompanyId, maskConfig, resolveConfig } from "@/lib/auth-helpers";
 import { encrypt } from "@/lib/utils/crypto";
-import { odooJsonRpc, odooAuthenticate } from "@/lib/odoo";
-import { fintocGet } from "@/lib/fintoc";
-import { testSatReachability } from "@/lib/sat";
+import { odooAuthenticate, odooVersion } from "@/lib/integrations/odoo";
+import { getAccounts } from "@/lib/integrations/fintoc";
 
 // ── GET /api/onboarding — integration status + masked configs ──
 
@@ -152,9 +151,7 @@ async function testOdoo(companyId: number, config: Record<string, string>) {
     return NextResponse.json({ success: false, message: "Faltan campos requeridos (URL, base de datos, usuario, contrasena)" });
   }
   try {
-    const versionResult = await odooJsonRpc(url, "common", "version", []);
-    if (versionResult.error) throw new Error("No se pudo conectar al servidor Odoo");
-    const version = versionResult.result as { server_version?: string } | null;
+    const version = await odooVersion(url);
     const uid = await odooAuthenticate(url, database, user, password);
     const msg = `UID: ${uid}${version?.server_version ? ` — Odoo ${version.server_version}` : ""}`;
     await update("integrations", { is_connected: true, last_sync_status: "connected", last_sync_message: msg, updated_at: new Date().toISOString() }, { company_id: companyId, provider: "odoo" });
@@ -178,7 +175,7 @@ async function testFintoc(companyId: number, config: Record<string, string>) {
   // If not, just validate the API key by calling a simple endpoint
   try {
     if (linkToken) {
-      const accounts = await fintocGet("/accounts", secretKey, { link_token: linkToken }) as unknown[];
+      const accounts = await getAccounts(secretKey, { link_token: linkToken });
       const count = Array.isArray(accounts) ? accounts.length : 0;
       await update("integrations", {
         is_connected: true, last_sync_status: "connected",
@@ -208,7 +205,7 @@ async function testFintoc(companyId: number, config: Record<string, string>) {
 }
 
 // ── SAT: Test ──
-
+// SAT validation is done via Syntage; we only validate RFC format and config here.
 async function testSat(companyId: number, config: Record<string, string>) {
   const { rfcEmisor } = config;
   if (!rfcEmisor) return NextResponse.json({ success: false, message: "Falta el RFC del emisor" });
@@ -220,23 +217,23 @@ async function testSat(companyId: number, config: Record<string, string>) {
   const cfg = (existing?.config as Record<string, string>) || {};
   const hasCert = !!cfg.certBase64;
   const hasKey = !!cfg.keyBase64;
-
-  const reachable = await testSatReachability(rfcEmisor);
+  const hasSyntage = !!cfg.syntageApiKey;
   const certInfo = hasCert && hasKey ? " | Certificados: cargados" : hasCert ? " | Solo .cer cargado" : hasKey ? " | Solo .key cargado" : " | Sin certificados";
 
   await update("integrations", {
-    is_connected: true, last_sync_status: reachable ? "configured" : "warning",
-    last_sync_message: reachable
-      ? `RFC: ${rfcEmisor} — Servicio SAT verificado${certInfo}`
-      : `RFC: ${rfcEmisor} — SAT no responde${certInfo}`,
+    is_connected: true,
+    last_sync_status: hasSyntage ? "configured" : "warning",
+    last_sync_message: hasSyntage
+      ? `RFC: ${rfcEmisor} — Syntage configurado${certInfo}`
+      : `RFC: ${rfcEmisor} — Configura Syntage para validación SAT${certInfo}`,
     updated_at: new Date().toISOString(),
   }, { company_id: companyId, provider: "sat" }).catch(() => {});
 
   return NextResponse.json({
     success: true,
-    message: reachable
-      ? `RFC ${rfcEmisor} configurado — servicio SAT verificado${certInfo}`
-      : `RFC ${rfcEmisor} configurado — SAT temporalmente no disponible${certInfo}`,
+    message: hasSyntage
+      ? `RFC ${rfcEmisor} configurado — Syntage para validación SAT${certInfo}`
+      : `RFC ${rfcEmisor} configurado — Conecta Syntage para validar CFDIs${certInfo}`,
     certificates: { cer: hasCert, key: hasKey },
   });
 }

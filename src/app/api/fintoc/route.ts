@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { hasDB, query, update, insert } from "@/lib/db";
+import { hasDB, query, update } from "@/lib/db";
 import { getCompanyId } from "@/lib/auth-helpers";
 import {
-  fintocOutboundTransfer,
-  fintocVerifyClabe,
-  fintocCreateAccountNumber,
-  fintocGetAccountNumber,
-} from "@/lib/fintoc";
+  createTransfer,
+  verifyCLABE,
+  createAccountNumber,
+  getAccountNumber,
+} from "@/lib/integrations/fintoc";
 
 /**
  * POST /api/fintoc
@@ -39,10 +39,8 @@ export async function POST(req: NextRequest) {
     }, { status: 400 });
   }
 
-  const jwsPrivateKey = process.env.FINTOC_JWS_PRIVATE_KEY || "";
-
   switch (action) {
-    // ── Outbound Transfer (SPEI dispersion) ──
+    // ── Outbound Transfer (SPEI) via /transfers ──
     case "outbound-transfer": {
       const { payment_id, clabe, amount, holder_name, reference_id, metadata } = body as {
         payment_id?: number;
@@ -59,50 +57,45 @@ export async function POST(req: NextRequest) {
       if (!/^\d{18}$/.test(clabe)) {
         return NextResponse.json({ success: false, message: "CLABE debe tener 18 digitos" }, { status: 400 });
       }
-      if (!jwsPrivateKey) {
-        return NextResponse.json({
-          success: false,
-          message: "JWS private key no configurada. Genera las llaves en el dashboard de Fintoc y configura FINTOC_JWS_PRIVATE_KEY.",
-        }, { status: 500 });
-      }
 
       const amountCents = Math.round(amount * 100);
-      const result = await fintocOutboundTransfer(secretKey, jwsPrivateKey, {
-        amount: amountCents,
-        currency: "MXN",
-        counterparty: {
-          account_type: "CLABE",
-          account_number: clabe,
-          holder_name: holder_name || undefined,
-        },
-        reference_id: reference_id || (payment_id ? `PAY-${payment_id}` : `PAY-${Date.now()}`),
-        metadata: {
-          company_id: String(companyId),
-          ...(payment_id ? { payment_id: String(payment_id) } : {}),
-          ...metadata,
-        },
-      });
+      const concept = reference_id || (payment_id ? `PAY-${payment_id}` : `Pago`);
+      try {
+        const transfer = await createTransfer(
+          {
+            amount: amountCents,
+            currency: "MXN",
+            destination_account: { number: clabe },
+            concept,
+            reference_id: reference_id || (payment_id ? `PAY-${payment_id}` : undefined),
+            metadata: {
+              company_id: String(companyId),
+              ...(payment_id ? { payment_id: String(payment_id) } : {}),
+              ...metadata,
+            },
+          },
+          secretKey,
+          payment_id ? `pay-${payment_id}` : undefined
+        );
 
-      if (!result.ok) {
-        return NextResponse.json({ success: false, message: result.error || "Error al enviar transferencia SPEI" });
+        if (payment_id) {
+          await update("payments", {
+            status: "processing",
+            fintoc_transfer_id: transfer.id,
+            updated_at: new Date().toISOString(),
+          }, { id: payment_id, company_id: companyId });
+        }
+
+        return NextResponse.json({
+          success: true,
+          message: "Transferencia SPEI enviada",
+          transfer_id: transfer.id,
+          status: transfer.status,
+        });
+      } catch (e: unknown) {
+        const message = e instanceof Error ? e.message : "Error al enviar transferencia SPEI";
+        return NextResponse.json({ success: false, message });
       }
-
-      // Update payment record if we have one
-      if (payment_id) {
-        await update("payments", {
-          status: "processing",
-          fintoc_transfer_id: (result.data?.id as string) || null,
-          jws_signed: true,
-          updated_at: new Date().toISOString(),
-        }, { id: payment_id, company_id: companyId });
-      }
-
-      return NextResponse.json({
-        success: true,
-        message: "Transferencia SPEI enviada",
-        transfer_id: result.data?.id,
-        status: result.data?.status,
-      });
     }
 
     // ── CLABE Verification (micro-deposit) ──
@@ -112,37 +105,32 @@ export async function POST(req: NextRequest) {
       if (!clabe || !/^\d{18}$/.test(clabe)) {
         return NextResponse.json({ success: false, message: "CLABE invalida (18 digitos requeridos)" }, { status: 400 });
       }
-      if (!jwsPrivateKey) {
+
+      try {
+        const data = await verifyCLABE(clabe, secretKey) as { holder_name?: string; account_holder?: string; institution?: { name?: string } };
+        const holderName = data?.holder_name ?? data?.account_holder ?? null;
+        const bankName = data?.institution?.name ?? null;
+
+        if (vendor_id && holderName) {
+          await update("vendors", {
+            clabe_verified: true,
+            clabe_holder_name: holderName,
+          }, { id: vendor_id, company_id: companyId });
+        }
+
+        return NextResponse.json({
+          success: true,
+          message: "CLABE verificada exitosamente",
+          holder_name: holderName,
+          bank: bankName,
+          verified: true,
+        });
+      } catch (e: unknown) {
         return NextResponse.json({
           success: false,
-          message: "JWS private key no configurada para verificacion de CLABE.",
-        }, { status: 500 });
+          message: e instanceof Error ? e.message : "Error al verificar CLABE",
+        });
       }
-
-      const result = await fintocVerifyClabe(secretKey, jwsPrivateKey, clabe);
-
-      if (!result.ok) {
-        return NextResponse.json({ success: false, message: result.error || "Error al verificar CLABE" });
-      }
-
-      const holderName = (result.data?.holder_name as string) || (result.data?.account_holder as string) || null;
-      const bankName = (result.data?.institution as Record<string, unknown>)?.name as string || null;
-
-      // Update vendor if specified
-      if (vendor_id && holderName) {
-        await update("vendors", {
-          clabe_verified: true,
-          clabe_holder_name: holderName,
-        }, { id: vendor_id, company_id: companyId });
-      }
-
-      return NextResponse.json({
-        success: true,
-        message: "CLABE verificada exitosamente",
-        holder_name: holderName,
-        bank: bankName,
-        verified: true,
-      });
     }
 
     // ── Create Account Number (dedicated CLABE for customer) ──
@@ -160,41 +148,46 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ success: false, message: "Cliente no encontrado" }, { status: 404 });
       }
 
-      // Check if already has a dedicated CLABE
-      if ((customer as Record<string, unknown>).fintoc_account_number_id) {
+      const cust = customer as Record<string, unknown>;
+      if (cust.fintoc_account_number_id) {
         return NextResponse.json({
           success: true,
           message: "El cliente ya tiene una CLABE dedicada",
-          clabe: (customer as Record<string, unknown>).fintoc_clabe,
-          account_number_id: (customer as Record<string, unknown>).fintoc_account_number_id,
+          clabe: cust.fintoc_clabe,
+          account_number_id: cust.fintoc_account_number_id,
         });
       }
 
-      const result = await fintocCreateAccountNumber(secretKey, {
-        company_id: String(companyId),
-        customer_id: String(customer_id),
-        customer_name: (customer as Record<string, unknown>).name as string || "",
-      });
+      try {
+        const result = await createAccountNumber(
+          (cust.name as string) || "",
+          `CLABE dedicada cliente ${customer_id}`,
+          undefined,
+          secretKey,
+          {
+            company_id: String(companyId),
+            customer_id: String(customer_id),
+            customer_name: (cust.name as string) || "",
+          }
+        );
 
-      if (!result.ok) {
-        return NextResponse.json({ success: false, message: result.error || "Error al crear CLABE dedicada" });
+        await update("customers", {
+          fintoc_account_number_id: result.id,
+          fintoc_clabe: result.number,
+        }, { id: customer_id, company_id: companyId });
+
+        return NextResponse.json({
+          success: true,
+          message: "CLABE dedicada creada para el cliente",
+          account_number_id: result.id,
+          clabe: result.number,
+        });
+      } catch (e: unknown) {
+        return NextResponse.json({
+          success: false,
+          message: e instanceof Error ? e.message : "Error al crear CLABE dedicada",
+        });
       }
-
-      const accountNumberId = result.data?.id as string;
-      const clabe = result.data?.number as string || result.data?.clabe as string || "";
-
-      // Save to customer record
-      await update("customers", {
-        fintoc_account_number_id: accountNumberId,
-        fintoc_clabe: clabe,
-      }, { id: customer_id, company_id: companyId });
-
-      return NextResponse.json({
-        success: true,
-        message: "CLABE dedicada creada para el cliente",
-        account_number_id: accountNumberId,
-        clabe,
-      });
     }
 
     // ── Get Account Number details ──
@@ -205,9 +198,9 @@ export async function POST(req: NextRequest) {
       }
 
       try {
-        const data = await fintocGetAccountNumber(secretKey, account_number_id);
+        const data = await getAccountNumber(account_number_id, secretKey);
         return NextResponse.json({ success: true, data });
-      } catch (e) {
+      } catch (e: unknown) {
         return NextResponse.json({ success: false, message: e instanceof Error ? e.message : "Error" });
       }
     }

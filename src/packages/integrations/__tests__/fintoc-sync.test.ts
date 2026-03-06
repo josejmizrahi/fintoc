@@ -37,7 +37,6 @@ vi.mock('@/lib/utils/errors', () => ({
 
 vi.mock('@/lib/integrations/fintoc', () => ({
   getAccounts: vi.fn(),
-  getAllMovements: vi.fn(),
   centavosToPesos: (centavos: number) => Math.round(centavos) / 100,
 }));
 
@@ -61,13 +60,13 @@ describe('FintocSyncProvider', () => {
             balance: { available: 15000000, current: 15000000 },
           },
         ],
-        movements: [],
       };
 
       const diff = provider.transform(remote, 'company-1');
       expect(diff.accounts.table).toBe('bank_accounts');
       expect(diff.accounts.onConflict).toBe('fintoc_account_id');
       expect(diff.accounts.rows).toHaveLength(1);
+      expect(Object.keys(diff)).toEqual(['accounts']);
 
       const account = diff.accounts.rows[0] as Record<string, unknown>;
       expect(account.company_id).toBe('company-1');
@@ -75,51 +74,6 @@ describe('FintocSyncProvider', () => {
       expect(account.clabe).toBe('012345678901234567');
       expect(account.bank_name).toBe('Cuenta BBVA');
       expect(account.balance).toBe(150000); // centavos to pesos
-    });
-
-    it('transforms movements with sender/recipient names', () => {
-      const remote: SyncData = {
-        accounts: [],
-        movements: [
-          {
-            id: 'mov_456',
-            _accountId: 'acc_123',
-            amount: 5000000,
-            post_date: '2026-03-01',
-            description: 'SPEI recibido',
-            type: 'credit',
-            reference_id: 'REF-001',
-            sender_account: { holder_name: 'Acme SA' },
-            recipient_account: { holder_name: 'Mi Empresa' },
-          },
-          {
-            id: 'mov_789',
-            _accountId: 'acc_123',
-            amount: 2000000,
-            post_date: '2026-03-02',
-            description: 'Pago a proveedor',
-            type: 'debit',
-            reference_id: null,
-            sender_account: null,
-            recipient_account: { holder_name: 'Proveedor X' },
-          },
-        ],
-      };
-
-      const diff = provider.transform(remote, 'company-1');
-      expect(diff.movements.table).toBe('bank_movements');
-      expect(diff.movements.onConflict).toBe('fintoc_movement_id');
-      expect(diff.movements.rows).toHaveLength(2);
-
-      const mov1 = diff.movements.rows[0] as Record<string, unknown>;
-      expect(mov1.fintoc_movement_id).toBe('mov_456');
-      expect(mov1.amount).toBe(50000); // centavos to pesos
-      expect(mov1.type).toBe('credit');
-      expect(mov1.sender_name).toBe('Acme SA');
-
-      const mov2 = diff.movements.rows[1] as Record<string, unknown>;
-      expect(mov2.type).toBe('debit');
-      expect(mov2.recipient_name).toBe('Proveedor X');
     });
 
     it('handles accounts with null balance', () => {
@@ -134,7 +88,6 @@ describe('FintocSyncProvider', () => {
             balance: { available: null, current: null },
           },
         ],
-        movements: [],
       };
 
       const diff = provider.transform(remote, 'company-1');

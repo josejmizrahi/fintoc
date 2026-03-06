@@ -51,8 +51,8 @@ describe("GET /api/sync-logs", () => {
 
   it("returns logs for company", async () => {
     const logs = [
-      { id: 1, provider: "odoo", status: "success", started_at: "2026-01-01T00:00:00Z", completed_at: "2026-01-01T00:01:00Z", processed_items: 50, total_items: 50 },
-      { id: 2, provider: "odoo", status: "running", started_at: "2026-01-02T00:00:00Z", processed_items: 10, total_items: 100 },
+      { id: "1", provider: "odoo", status: "completed", started_at: "2026-01-01T00:00:00Z", completed_at: "2026-01-01T00:01:00Z", records_synced: 50 },
+      { id: "2", provider: "odoo", status: "running", started_at: "2026-01-02T00:00:00Z", records_synced: 10 },
     ];
     mockQuery.mockResolvedValue({ data: logs, error: null });
 
@@ -68,7 +68,7 @@ describe("GET /api/sync-logs", () => {
     const { GET } = await import("./route");
     await GET(makeRequest({ provider: "sat" }) as any);
 
-    expect(mockQuery).toHaveBeenCalledWith("sync_logs", expect.objectContaining({
+    expect(mockQuery).toHaveBeenCalledWith("sync_history", expect.objectContaining({
       match: { company_id: 1, provider: "sat" },
     }));
   });
@@ -77,7 +77,7 @@ describe("GET /api/sync-logs", () => {
     const { GET } = await import("./route");
     await GET(makeRequest() as any);
 
-    expect(mockQuery).toHaveBeenCalledWith("sync_logs", expect.objectContaining({
+    expect(mockQuery).toHaveBeenCalledWith("sync_history", expect.objectContaining({
       match: { company_id: 1 },
     }));
   });
@@ -86,7 +86,7 @@ describe("GET /api/sync-logs", () => {
     const { GET } = await import("./route");
     await GET(makeRequest({ limit: "5" }) as any);
 
-    expect(mockQuery).toHaveBeenCalledWith("sync_logs", expect.objectContaining({
+    expect(mockQuery).toHaveBeenCalledWith("sync_history", expect.objectContaining({
       limit: 5,
     }));
   });
@@ -95,7 +95,7 @@ describe("GET /api/sync-logs", () => {
     const { GET } = await import("./route");
     await GET(makeRequest({ limit: "999" }) as any);
 
-    expect(mockQuery).toHaveBeenCalledWith("sync_logs", expect.objectContaining({
+    expect(mockQuery).toHaveBeenCalledWith("sync_history", expect.objectContaining({
       limit: 100,
     }));
   });
@@ -104,7 +104,7 @@ describe("GET /api/sync-logs", () => {
     const { GET } = await import("./route");
     await GET(makeRequest() as any);
 
-    expect(mockQuery).toHaveBeenCalledWith("sync_logs", expect.objectContaining({
+    expect(mockQuery).toHaveBeenCalledWith("sync_history", expect.objectContaining({
       limit: 20,
     }));
   });
@@ -113,7 +113,7 @@ describe("GET /api/sync-logs", () => {
     const { GET } = await import("./route");
     await GET(makeRequest() as any);
 
-    expect(mockQuery).toHaveBeenCalledWith("sync_logs", expect.objectContaining({
+    expect(mockQuery).toHaveBeenCalledWith("sync_history", expect.objectContaining({
       order: { column: "started_at", ascending: false },
     }));
   });

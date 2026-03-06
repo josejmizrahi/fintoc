@@ -285,62 +285,9 @@ async function handlePaymentIntentFailed(
 }
 
 async function handleMovementCreated(
-  admin: ReturnType<typeof getAdminClient>,
-  data: Record<string, unknown>,
+  _admin: ReturnType<typeof getAdminClient>,
+  _data: Record<string, unknown>,
 ) {
-  const accountId = data.account_id as string;
-  const movementId = data.id as string;
-  if (!accountId || !movementId) return;
-
-  const { data: account } = await admin.from('bank_accounts')
-    .select('company_id')
-    .eq('fintoc_account_id', accountId)
-    .single();
-
-  if (!account) return;
-
-  const amount = centavosToPesos((data.amount as number) || 0);
-
-  await admin.from('bank_movements').upsert({
-    company_id: account.company_id,
-    account_id: accountId,
-    fintoc_movement_id: movementId,
-    date: (data.post_date as string) || new Date().toISOString().split('T')[0],
-    description: (data.description as string) || null,
-    amount,
-    type: (data.type as string) === 'credit' ? 'credit' : 'debit',
-    reference_id: (data.reference_id as string) || null,
-    sender_name: ((data.sender_account as Record<string, unknown>)?.holder_name as string) || null,
-    recipient_name: ((data.recipient_account as Record<string, unknown>)?.holder_name as string) || null,
-  }, { onConflict: 'fintoc_movement_id' });
-
-  // Auto-reconciliation: match by fintoc_transfer_id + amount + company
-  // Only match debit movements against payments that have a fintoc_transfer_id
-  if ((data.type as string) === 'debit') {
-    const referenceId = (data.reference_id as string) || '';
-    const description = (data.description as string) || '';
-
-    // Try to match using reference_id or transfer description
-    const { data: matchingPayment } = await admin.from('payments')
-      .select('id, fintoc_transfer_id')
-      .eq('company_id', account.company_id)
-      .eq('status', 'processing')
-      .eq('amount', amount)
-      .not('fintoc_transfer_id', 'is', null)
-      .limit(5);
-
-    // Find the best match: prefer one where fintoc_transfer_id appears in reference or description
-    const bestMatch = (matchingPayment || []).find((p: any) => {
-      if (!p.fintoc_transfer_id) return false;
-      return referenceId.includes(p.fintoc_transfer_id) ||
-        description.includes(p.fintoc_transfer_id);
-    }) || (matchingPayment && matchingPayment.length === 1 ? matchingPayment[0] : null);
-
-    if (bestMatch) {
-      await admin.from('bank_movements').update({
-        reconciled: true,
-        reconciled_payment_id: bestMatch.id,
-      }).eq('fintoc_movement_id', movementId);
-    }
-  }
+  // Movements are no longer stored; treasury and reconciliation fetch from Fintoc API on demand.
+  // No-op: optional auto-reconciliation could update payment.bank_movement_ref when we add that column.
 }

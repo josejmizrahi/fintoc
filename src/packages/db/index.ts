@@ -32,8 +32,6 @@ export type SyncHistoryRow = Tables['sync_history']['Row'];
 export type SyncHistoryInsert = Tables['sync_history']['Insert'];
 export type BankAccountRow = Tables['bank_accounts']['Row'];
 export type BankAccountInsert = Tables['bank_accounts']['Insert'];
-export type BankMovementRow = Tables['bank_movements']['Row'];
-export type BankMovementInsert = Tables['bank_movements']['Insert'];
 export type SyntageExtractionRow = Tables['syntage_extractions']['Row'];
 export type SyntageExtractionInsert = Tables['syntage_extractions']['Insert'];
 
@@ -160,7 +158,6 @@ export const db = {
   integrations: createTableAccessor<IntegrationRow, IntegrationInsert>('integrations'),
   syncHistory: createTableAccessor<SyncHistoryRow, SyncHistoryInsert>('sync_history'),
   bankAccounts: createTableAccessor<BankAccountRow, BankAccountInsert>('bank_accounts'),
-  bankMovements: createTableAccessor<BankMovementRow, BankMovementInsert>('bank_movements'),
   syntageExtractions: createTableAccessor<SyntageExtractionRow, SyntageExtractionInsert>('syntage_extractions'),
 };
 

@@ -249,6 +249,31 @@ export async function odooCheckConnection(config: OdooConfig): Promise<boolean> 
   }
 }
 
+/** Call common/version (no auth). Used for connection tests. */
+export async function odooVersion(url: string, timeout = 15_000): Promise<{ server_version?: string }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+  try {
+    const res = await fetch(`${url.replace(/\/$/, '')}/jsonrpc`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'call',
+        id: Date.now(),
+        params: { service: 'common', method: 'version', args: [] },
+      }),
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new ApiError('ODOO_ERROR', `Odoo HTTP ${res.status}`, 502);
+    const data = await res.json() as JsonRpcResponse & { result?: { server_version?: string } };
+    if (data.error) throw new ApiError('ODOO_ERROR', (data.error as { message?: string }).message || 'Version check failed', 502);
+    return (data.result as { server_version?: string }) || {};
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // CRUD Operations
 // ---------------------------------------------------------------------------
@@ -398,6 +423,21 @@ export async function fetchOdooCustomers(
     CUSTOMER_FIELDS,
     lastSyncAt
   ) as Promise<OdooPartner[]>;
+}
+
+/** Fetch a single partner by Odoo id (for cache refresh). */
+export async function fetchOdooPartnerById(
+  config: OdooConfig,
+  partnerId: number
+): Promise<OdooPartner | null> {
+  const rows = await odooSearchRead(
+    config,
+    'res.partner',
+    [['id', '=', partnerId]],
+    [...VENDOR_FIELDS],
+    1
+  );
+  return (rows?.[0] as OdooPartner) ?? null;
 }
 
 // ---------------------------------------------------------------------------

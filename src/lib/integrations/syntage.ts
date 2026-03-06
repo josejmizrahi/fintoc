@@ -142,8 +142,8 @@ export function isRetryableExtractionError(code: ExtractionErrorCode): boolean {
 // ---------------------------------------------------------------------------
 // Core HTTP client
 // ---------------------------------------------------------------------------
-function getApiKey(): string {
-  const key = process.env.SYNTAGE_API_KEY;
+function getApiKey(override?: string): string {
+  const key = override || process.env.SYNTAGE_API_KEY;
   if (!key) {
     throw new ApiError('INTEGRATION_NOT_CONFIGURED', 'Syntage API key no configurada', 422);
   }
@@ -153,9 +153,10 @@ function getApiKey(): string {
 function buildHeaders(options?: {
   pagination?: PaginationStyle;
   accept?: string;
+  apiKey?: string;
 }): Record<string, string> {
   const headers: Record<string, string> = {
-    'X-API-Key': getApiKey(),
+    'X-API-Key': getApiKey(options?.apiKey),
     'Content-Type': 'application/json',
     'Accept-Version': API_VERSION,
     'Accept': options?.accept || 'application/ld+json',
@@ -199,6 +200,8 @@ async function syntageRequest<T = unknown>(
     accept?: string;
     timeout?: number;
     retries?: number;
+    apiKey?: string;
+    baseUrl?: string;
   }
 ): Promise<{ data: T; meta: SyntageRequestMeta }> {
   const retries = options?.retries ?? MAX_RETRIES;
@@ -210,10 +213,11 @@ async function syntageRequest<T = unknown>(
   const timer = setTimeout(() => controller.abort(), timeout);
 
   try {
-    const url = path.startsWith('http') ? path : `${SYNTAGE_BASE_URL}${path}`;
+    const base = options?.baseUrl || SYNTAGE_BASE_URL;
+    const url = path.startsWith('http') ? path : `${base}${path}`;
     const res = await fetch(url, {
       method,
-      headers: buildHeaders({ pagination: options?.pagination, accept: options?.accept }),
+      headers: buildHeaders({ pagination: options?.pagination, accept: options?.accept, apiKey: options?.apiKey }),
       body: options?.body ? JSON.stringify(options.body) : undefined,
       signal: controller.signal,
     });
@@ -669,27 +673,34 @@ export function verifySyntageWebhook(webhookSecret: string, headerSecret: string
 }
 
 // ---------------------------------------------------------------------------
-// EFOS Helpers
+// EFOS Helpers — single canonical implementation (SAT 69-B / ValidacionEFOS)
 // ---------------------------------------------------------------------------
-export function parseEfosCode(code: number | string | undefined): {
-  code: EfosCode | null;
+export interface EfosResult {
+  code: string | null;
   label: string;
-  isBlocked: boolean;
-  isRisky: boolean;
-} {
+  isBlocked: boolean;  // 203 Definitivo
+  isRisky: boolean;    // 201 Presunto
+  safe: boolean;       // 200, 202, 204 or not listed
+}
+
+export function parseEfosCode(code: number | string | undefined): EfosResult {
   if (code === undefined || code === null) {
-    return { code: null, label: 'Sin información EFOS', isBlocked: false, isRisky: false };
+    return { code: null, label: 'Sin información EFOS', isBlocked: false, isRisky: false, safe: true };
   }
   const numCode = typeof code === 'string' ? parseInt(code, 10) : code;
-  if (!(numCode in EFOS_LABELS)) {
-    return { code: null, label: `Código EFOS desconocido: ${code}`, isBlocked: false, isRisky: false };
+  if (Number.isNaN(numCode) || !(numCode in EFOS_LABELS)) {
+    return { code: null, label: `Código EFOS desconocido: ${code}`, isBlocked: false, isRisky: false, safe: true };
   }
   const efosCode = numCode as EfosCode;
+  const isBlocked = efosCode === 203;
+  const isRisky = efosCode === 201;
+  const safe = !isBlocked && !isRisky; // 200, 202, 204 are safe
   return {
-    code: efosCode,
+    code: String(efosCode),
     label: EFOS_LABELS[efosCode],
-    isBlocked: efosCode === 203,     // Definitivo blocks payments
-    isRisky: efosCode === 201,       // Presunto is risky but not blocking
+    isBlocked,
+    isRisky,
+    safe,
   };
 }
 
@@ -714,4 +725,178 @@ export function mapSatStatus(syntageStatus: string): string {
     case 'cancelled': return 'cancelado';
     default: return syntageStatus;
   }
+}
+
+// ---------------------------------------------------------------------------
+// createSyntageClient — compatibility layer for sat/syntage route (unified client)
+// ---------------------------------------------------------------------------
+export type SyntageClientConfig = { syntageApiKey: string; syntageEnvironment?: string };
+
+export function createSyntageClient(config: SyntageClientConfig | Record<string, string>): {
+  testConnection(): Promise<{ ok: boolean; taxpayers: number; credentials: number; error?: string }>;
+  listCredentials(params?: Record<string, string>): Promise<{ 'hydra:member': unknown[]; 'hydra:totalItems': number }>;
+  getCredential(id: string): Promise<unknown>;
+  listTaxpayers(params?: Record<string, string>): Promise<{ 'hydra:member': unknown[]; 'hydra:totalItems': number }>;
+  listInvoices(taxpayerId: string, params?: Record<string, string>): Promise<{ 'hydra:member': unknown[]; 'hydra:totalItems': number; 'hydra:view'?: unknown }>;
+  getInvoice(id: string): Promise<unknown>;
+  getInvoiceCfdi(id: string): Promise<Response>;
+  getInvoiceLineItems(invoiceId: string): Promise<{ 'hydra:member': unknown[]; 'hydra:totalItems': number }>;
+  getInvoicePayments(invoiceId: string): Promise<{ 'hydra:member': unknown[]; 'hydra:totalItems': number }>;
+  listTaxReturns(taxpayerId: string): Promise<{ 'hydra:member': unknown[]; 'hydra:totalItems': number }>;
+  getTaxReturn(id: string): Promise<unknown>;
+  getTaxReturnData(id: string): Promise<unknown>;
+  listTaxComplianceChecks(taxpayerId: string): Promise<{ 'hydra:member': unknown[]; 'hydra:totalItems': number }>;
+  listTaxStatus(taxpayerId: string): Promise<{ 'hydra:member': unknown[]; 'hydra:totalItems': number }>;
+  listTaxRetentions(taxpayerId: string): Promise<{ 'hydra:member': unknown[]; 'hydra:totalItems': number }>;
+  listCertificates(entityId: string): Promise<{ 'hydra:member': unknown[]; 'hydra:totalItems': number }>;
+  listExtractions(): Promise<{ 'hydra:member': unknown[]; 'hydra:totalItems': number }>;
+  getExtraction(id: string): Promise<unknown>;
+  getBalanceSheet(taxpayerId: string): Promise<unknown>;
+  getIncomeStatement(taxpayerId: string): Promise<unknown>;
+  getCashFlow(insightId: string): Promise<unknown>;
+  getFinancialRatios(insightId: string): Promise<unknown>;
+  getScores(entityId: string): Promise<unknown>;
+  listEvents(): Promise<{ 'hydra:member': unknown[]; 'hydra:totalItems': number }>;
+  createCredential(rfc: string, password: string, certificate?: string, privateKey?: string): Promise<unknown>;
+  deleteCredential(id: string): Promise<void>;
+  revalidateCredential(id: string): Promise<unknown>;
+  createExtraction(taxpayerId: string, extractor?: string, options?: unknown): Promise<unknown>;
+  stopExtraction(extractionId: string): Promise<void>;
+  createExport(params: { taxpayer: string; format: string }): Promise<unknown>;
+  createWebhook(url: string, events: string[]): Promise<unknown>;
+  createEntity(data: { rfc?: string; name?: string }): Promise<unknown>;
+} {
+  const apiKey = (config as SyntageClientConfig).syntageApiKey || (config as Record<string, string>).syntageApiKey;
+  if (!apiKey) throw new ApiError('INTEGRATION_NOT_CONFIGURED', 'Falta la API Key de Syntage', 422);
+  const baseUrl = (config as SyntageClientConfig).syntageEnvironment === 'sandbox' || (config as Record<string, string>).syntageEnvironment === 'sandbox'
+    ? 'https://api.sandbox.syntage.com' : SYNTAGE_BASE_URL;
+  const opts = { apiKey, baseUrl };
+
+  const req = async <T>(method: string, path: string, body?: unknown): Promise<T> => {
+    const { data } = await syntageRequest<T>(method, path, { ...opts, body });
+    return data;
+  };
+
+  return {
+    async testConnection() {
+      try {
+        const [taxpayers, credentials] = await Promise.all([
+          req<{ 'hydra:totalItems': number }>('GET', '/taxpayers'),
+          req<{ 'hydra:totalItems': number }>('GET', '/credentials'),
+        ]);
+        return {
+          ok: true,
+          taxpayers: taxpayers['hydra:totalItems'] ?? 0,
+          credentials: credentials['hydra:totalItems'] ?? 0,
+        };
+      } catch (e) {
+        return { ok: false, taxpayers: 0, credentials: 0, error: e instanceof Error ? e.message : 'Error de conexion' };
+      }
+    },
+    listCredentials(params) {
+      const qs = params && Object.keys(params).length ? '?' + new URLSearchParams(params).toString() : '';
+      return req('GET', `/credentials${qs}`);
+    },
+    getCredential(id) {
+      return req('GET', `/credentials/${id}`);
+    },
+    listTaxpayers(params) {
+      const qs = params && Object.keys(params).length ? '?' + new URLSearchParams(params).toString() : '';
+      return req('GET', `/taxpayers${qs}`);
+    },
+    listInvoices(taxpayerId, params) {
+      const qs = params && Object.keys(params).length ? '?' + new URLSearchParams(params).toString() : '';
+      return req('GET', `/taxpayers/${taxpayerId}/invoices${qs}`);
+    },
+    getInvoice(id) {
+      return req('GET', `/invoices/${id}`);
+    },
+    async getInvoiceCfdi(id) {
+      const url = `${baseUrl}/invoices/${id}/cfdi`;
+      const res = await fetch(url, {
+        headers: buildHeaders({ apiKey, accept: 'application/xml' }),
+      });
+      if (!res.ok) throw new ApiError('SYNTAGE_ERROR', `Error al descargar CFDI: ${res.status}`, 502);
+      return res;
+    },
+    getInvoiceLineItems(invoiceId) {
+      return req('GET', `/invoices/${invoiceId}/line-items`);
+    },
+    getInvoicePayments(invoiceId) {
+      return req('GET', `/invoices/${invoiceId}/payments`);
+    },
+    listTaxReturns(taxpayerId) {
+      return req('GET', `/taxpayers/${taxpayerId}/tax-returns`);
+    },
+    getTaxReturn(id) {
+      return req('GET', `/tax-returns/${id}`);
+    },
+    getTaxReturnData(id) {
+      return req('GET', `/tax-returns/${id}/data`);
+    },
+    listTaxComplianceChecks(taxpayerId) {
+      return req('GET', `/taxpayers/${taxpayerId}/tax-compliance-checks`);
+    },
+    listTaxStatus(taxpayerId) {
+      return req('GET', `/taxpayers/${taxpayerId}/tax-status`);
+    },
+    listTaxRetentions(taxpayerId) {
+      return req('GET', `/taxpayers/${taxpayerId}/tax-retentions`);
+    },
+    listCertificates(entityId) {
+      return req('GET', `/entities/${entityId}/sat-certificates`);
+    },
+    listExtractions() {
+      return req('GET', '/extractions');
+    },
+    getExtraction(id) {
+      return req('GET', `/extractions/${id}`);
+    },
+    getBalanceSheet(taxpayerId) {
+      return req('GET', `/taxpayers/${taxpayerId}/insights/balance-sheet`);
+    },
+    getIncomeStatement(taxpayerId) {
+      return req('GET', `/taxpayers/${taxpayerId}/insights/income-statement`);
+    },
+    getCashFlow(insightId) {
+      return req('GET', `/insights/${insightId}/cash-flow`);
+    },
+    getFinancialRatios(insightId) {
+      return req('GET', `/insights/${insightId}/ratios`);
+    },
+    getScores(entityId) {
+      return req('GET', `/entities/${entityId}/scores`);
+    },
+    listEvents() {
+      return req('GET', '/events');
+    },
+    createCredential(rfc, password, certificate?, privateKey?) {
+      return req('POST', '/credentials', { rfc, password, certificate, privateKey });
+    },
+    async deleteCredential(id) {
+      await syntageRequest('DELETE', `/credentials/${id}`, opts);
+    },
+    revalidateCredential(id) {
+      return req('POST', `/credentials/${id}/revalidate`);
+    },
+    createExtraction(taxpayerId, extractor = 'invoice', options?) {
+      const body: Record<string, unknown> = { taxpayer: `/taxpayers/${taxpayerId}`, extractor };
+      if (options && typeof options === 'object' && !Array.isArray(options)) {
+        body.options = options;
+      }
+      return req('POST', '/extractions', body);
+    },
+    async stopExtraction(extractionId) {
+      await syntageRequest('POST', `/extractions/${extractionId}/cancel`, opts);
+    },
+    createExport(params) {
+      return req('POST', '/exports', params);
+    },
+    createWebhook(url, events) {
+      return req('POST', '/webhooks', { url, enabledEvents: events });
+    },
+    createEntity(data) {
+      return req('POST', '/entities', data);
+    },
+  };
 }

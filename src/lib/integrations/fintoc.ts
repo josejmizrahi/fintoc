@@ -321,20 +321,35 @@ export async function getPaymentIntent(intentId: string): Promise<FintocPaymentI
 export async function createAccountNumber(
   holderName: string,
   description: string,
-  idempotencyKey?: string
+  idempotencyKey?: string,
+  secretKey?: string,
+  metadata?: Record<string, string>
 ): Promise<{ id: string; number: string; holder_name: string }> {
   const { data } = await fintocRequest('POST', '/account_numbers', {
-    body: { holder_name: holderName, description },
+    body: { holder_name: holderName, description, ...(metadata && Object.keys(metadata).length > 0 ? { metadata } : {}) },
     idempotencyKey,
+    secretKey,
   });
   return data as { id: string; number: string; holder_name: string };
+}
+
+export async function getAccountNumber(
+  accountNumberId: string,
+  secretKey?: string
+): Promise<{ id: string; number: string; holder_name?: string; [key: string]: unknown }> {
+  const { data } = await fintocRequest('GET', `/account_numbers/${accountNumberId}`, { secretKey });
+  return data as { id: string; number: string; holder_name?: string; [key: string]: unknown };
 }
 
 // ---------------------------------------------------------------------------
 // Accounts & Movements
 // ---------------------------------------------------------------------------
-export async function getAccounts(secretKey?: string): Promise<FintocAccount[]> {
-  const { data } = await fintocRequest<FintocAccount[]>('GET', '/accounts', { secretKey });
+export async function getAccounts(
+  secretKey?: string,
+  params?: { link_token?: string }
+): Promise<FintocAccount[]> {
+  const qs = params?.link_token ? `?link_token=${encodeURIComponent(params.link_token)}` : '';
+  const { data } = await fintocRequest<FintocAccount[]>('GET', `/accounts${qs}`, { secretKey });
   return data;
 }
 

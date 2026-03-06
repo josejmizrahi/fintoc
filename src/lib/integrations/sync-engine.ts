@@ -6,7 +6,6 @@ import * as odoo from './odoo';
 import * as fintoc from './fintoc';
 import * as syntage from './syntage';
 import type { OdooConfig, OdooPartner, OdooInvoice } from './odoo';
-import type { FintocAccount, FintocMovement } from './fintoc';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -189,7 +188,7 @@ export async function syncOdoo(companyId: string, config: OdooConfig): Promise<S
   const errors: SyncError[] = [];
   let recordsSynced = 0;
   let recordsFailed = 0;
-  const details: Record<string, number> = { vendors: 0, customers: 0, invoices: 0 };
+  const details: Record<string, number> = { invoices: 0 };
 
   const syncId = await acquireSyncLock(admin, companyId, 'odoo');
 
@@ -205,52 +204,7 @@ export async function syncOdoo(companyId: string, config: OdooConfig): Promise<S
 
     const lastSyncAt = lastSync?.completed_at || undefined;
 
-    // --- Vendors ---
-    try {
-      const vendors = await withRetry(() => odoo.fetchOdooVendors(config, lastSyncAt), RETRY_OPTS);
-      const vendorRows = vendors
-        .filter((v: OdooPartner) => (odoo.normalizeOdooValue(v.vat) || '').toUpperCase().length > 0)
-        .map((v: OdooPartner) => ({
-          company_id: companyId,
-          name: v.name,
-          rfc: (odoo.normalizeOdooValue(v.vat) || '').toUpperCase(),
-          email: odoo.normalizeOdooValue(v.email),
-          phone: odoo.normalizeOdooValue(v.phone),
-          odoo_id: String(v.id),
-          synced_at: new Date().toISOString(),
-        }));
-
-      if (vendorRows.length > 0) {
-        const r = await batchUpsert(admin, 'vendors', vendorRows, 'company_id,rfc', errors, 'vendors');
-        recordsSynced += r.synced; recordsFailed += r.failed; details.vendors = r.synced;
-      }
-    } catch (err) {
-      errors.push({ entity: 'vendors', message: err instanceof Error ? err.message : 'Error fetching vendors', retryable: isRetryableError(err) });
-    }
-
-    // --- Customers ---
-    try {
-      const customers = await withRetry(() => odoo.fetchOdooCustomers(config, lastSyncAt), RETRY_OPTS);
-      const customerRows = customers
-        .filter((c: OdooPartner) => (odoo.normalizeOdooValue(c.vat) || '').toUpperCase().length > 0)
-        .map((c: OdooPartner) => ({
-          company_id: companyId,
-          name: c.name,
-          rfc: (odoo.normalizeOdooValue(c.vat) || '').toUpperCase(),
-          email: odoo.normalizeOdooValue(c.email),
-          phone: odoo.normalizeOdooValue(c.phone),
-          odoo_id: String(c.id),
-        }));
-
-      if (customerRows.length > 0) {
-        const r = await batchUpsert(admin, 'customers', customerRows, 'company_id,rfc', errors, 'customers');
-        recordsSynced += r.synced; recordsFailed += r.failed; details.customers = r.synced;
-      }
-    } catch (err) {
-      errors.push({ entity: 'customers', message: err instanceof Error ? err.message : 'Error fetching customers', retryable: isRetryableError(err) });
-    }
-
-    // --- Invoices ---
+    // --- Invoices only (vendors/customers are cache with TTL via getVendor/getCustomer) ---
     try {
       const invoices = await withRetry(() => odoo.fetchOdooInvoices(config, lastSyncAt), RETRY_OPTS);
       const invoiceRows = invoices.map((inv: OdooInvoice) => ({
@@ -267,13 +221,14 @@ export async function syncOdoo(companyId: string, config: OdooConfig): Promise<S
         payment_state: inv.payment_state,
         payment_method: odoo.normalizeOdooValue(inv.l10n_mx_edi_payment_policy),
         partner_name: odoo.extractM2oName(inv.partner_id),
+        odoo_id: inv.id,
         odoo_move_id: String(inv.id),
         source: 'odoo',
         sat_status: 'no_validado',
       }));
 
       if (invoiceRows.length > 0) {
-        const r = await batchUpsert(admin, 'invoices', invoiceRows, 'odoo_move_id', errors, 'invoices');
+        const r = await batchUpsert(admin, 'invoices', invoiceRows, 'company_id,odoo_id', errors, 'invoices');
         recordsSynced += r.synced; recordsFailed += r.failed; details.invoices = r.synced;
       }
     } catch (err) {
@@ -285,94 +240,6 @@ export async function syncOdoo(companyId: string, config: OdooConfig): Promise<S
     return { provider: 'odoo', status, recordsSynced, recordsFailed, errors, startedAt, completedAt: new Date().toISOString(), details };
   } catch (err) {
     await finalizeSyncEntry(admin, syncId, companyId, 'odoo', 'failed', recordsSynced, [
-      { entity: 'sync', message: err instanceof Error ? err.message : 'Unknown error', retryable: true },
-    ]);
-    throw err;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Fintoc Sync
-// ---------------------------------------------------------------------------
-
-export async function syncFintoc(
-  companyId: string,
-  secretKey: string,
-  options?: { syncDays?: number },
-): Promise<SyncResult> {
-  const startedAt = new Date().toISOString();
-  const admin = getAdminClient();
-  const errors: SyncError[] = [];
-  let recordsSynced = 0;
-  let recordsFailed = 0;
-  const details: Record<string, number> = { accounts: 0, movements: 0 };
-  const syncDays = options?.syncDays || 30;
-
-  const syncId = await acquireSyncLock(admin, companyId, 'fintoc');
-
-  try {
-    const accounts = await withRetry(() => fintoc.getAccounts(secretKey), RETRY_OPTS);
-
-    for (const account of (accounts || [])) {
-      // Upsert account
-      try {
-        await withRetry(async () => {
-          const { error } = await admin.from('bank_accounts').upsert({
-            company_id: companyId,
-            fintoc_account_id: account.id,
-            clabe: account.number || '',
-            bank_name: account.name || null,
-            account_holder: account.holder_name || null,
-            balance: account.balance?.available != null
-              ? fintoc.centavosToPesos(account.balance.available) : null,
-            currency: account.currency || 'MXN',
-            last_synced: new Date().toISOString(),
-          }, { onConflict: 'fintoc_account_id' });
-          if (error) throw new Error(error.message);
-        }, { maxRetries: 2, baseDelay: 1000, retryOn: isRetryableError });
-        details.accounts++;
-        recordsSynced++;
-      } catch (err) {
-        errors.push({ entity: 'bank_accounts', entityId: account.id, message: err instanceof Error ? err.message : 'Error upserting account', retryable: isRetryableError(err) });
-        recordsFailed++;
-      }
-
-      // Movements
-      try {
-        const since = new Date();
-        since.setDate(since.getDate() - syncDays);
-        const movements = await withRetry(
-          () => fintoc.getAllMovements(account.id, { since: since.toISOString().split('T')[0] }, secretKey),
-          RETRY_OPTS,
-        );
-
-        const movementRows = (movements || []).map((mov: FintocMovement) => ({
-          company_id: companyId,
-          account_id: account.id,
-          fintoc_movement_id: mov.id,
-          date: mov.post_date || new Date().toISOString().split('T')[0],
-          description: mov.description || null,
-          amount: fintoc.centavosToPesos(mov.amount),
-          type: mov.type === 'credit' ? 'credit' : 'debit',
-          reference_id: mov.reference_id || null,
-          sender_name: mov.sender_account?.holder_name || null,
-          recipient_name: mov.recipient_account?.holder_name || null,
-        }));
-
-        if (movementRows.length > 0) {
-          const r = await batchUpsert(admin, 'bank_movements', movementRows, 'fintoc_movement_id', errors, 'movements');
-          recordsSynced += r.synced; recordsFailed += r.failed; details.movements += r.synced;
-        }
-      } catch (err) {
-        errors.push({ entity: 'movements', entityId: account.id, message: err instanceof Error ? err.message : 'Error fetching movements', retryable: true });
-      }
-    }
-
-    const status = computeStatus(errors, recordsSynced);
-    await finalizeSyncEntry(admin, syncId, companyId, 'fintoc', status, recordsSynced, errors);
-    return { provider: 'fintoc', status, recordsSynced, recordsFailed, errors, startedAt, completedAt: new Date().toISOString(), details };
-  } catch (err) {
-    await finalizeSyncEntry(admin, syncId, companyId, 'fintoc', 'failed', recordsSynced, [
       { entity: 'sync', message: err instanceof Error ? err.message : 'Unknown error', retryable: true },
     ]);
     throw err;
@@ -498,26 +365,40 @@ export async function getOdooConfigForCompany(companyId: string): Promise<OdooCo
 }
 
 export async function getFintocKeyForCompany(companyId: string): Promise<string> {
+  const cfg = await getFintocConfigForCompany(companyId);
+  return cfg.secretKey;
+}
+
+/** Returns Fintoc secretKey and optional linkToken for API calls (e.g. movements). */
+export async function getFintocConfigForCompany(companyId: string): Promise<{ secretKey: string; linkToken?: string }> {
   const admin = getAdminClient();
   let secretKey = process.env.FINTOC_SECRET_KEY;
+  let linkToken: string | undefined;
 
   const { data: integration } = await admin.from('integrations')
-    .select('config_encrypted')
+    .select('config_encrypted, config')
     .eq('company_id', companyId)
     .eq('provider', 'fintoc')
     .single();
 
   if (integration?.config_encrypted) {
     try {
-      secretKey = (decrypt(integration.config_encrypted) as Record<string, string>).secret_key;
-    } catch { /* fallback to env */ }
+      const dec = decrypt(integration.config_encrypted) as Record<string, string>;
+      secretKey = dec.secret_key ?? secretKey;
+      linkToken = dec.linkToken ?? dec.link_token;
+    } catch { /* fallback */ }
+  }
+  if (!secretKey && integration?.config) {
+    const cfg = integration.config as Record<string, string>;
+    secretKey = cfg.secretKey ?? secretKey;
+    linkToken = cfg.linkToken ?? cfg.link_token ?? linkToken;
   }
 
   if (!secretKey) {
     throw new ApiError('INTEGRATION_NOT_CONFIGURED', 'Fintoc no configurado', 422);
   }
 
-  return secretKey;
+  return { secretKey, linkToken };
 }
 
 export async function getSyntageTaxpayerForCompany(companyId: string): Promise<string> {
@@ -533,4 +414,96 @@ export async function getSyntageTaxpayerForCompany(companyId: string): Promise<s
   }
 
   return integration.syntage_taxpayer_id;
+}
+
+/** TTL for vendor/customer cache (1 hour). */
+const CACHE_TTL_MS = 60 * 60 * 1000;
+
+/**
+ * Get vendor by internal id; refresh from Odoo if cache is stale (synced_at older than TTL).
+ * Returns null if not found. Enrichments (efos_status, clabe_verified, etc.) stay in DB.
+ */
+export async function getVendor(companyId: string, vendorId: string): Promise<Record<string, unknown> | null> {
+  const admin = getAdminClient();
+  const { data: row } = await admin.from('vendors')
+    .select('*')
+    .eq('company_id', companyId)
+    .eq('id', vendorId)
+    .single();
+
+  if (!row) return null;
+
+  const syncedAt = row.synced_at ? new Date(row.synced_at).getTime() : 0;
+  if (Date.now() - syncedAt < CACHE_TTL_MS) {
+    return row as Record<string, unknown>;
+  }
+
+  const odooId = row.odoo_id != null ? Number(row.odoo_id) : NaN;
+  if (Number.isNaN(odooId)) return row as Record<string, unknown>;
+
+  try {
+    const config = await getOdooConfigForCompany(companyId);
+    const partner = await odoo.fetchOdooPartnerById(config, odooId);
+    if (!partner) return row as Record<string, unknown>;
+
+    const rfc = (odoo.normalizeOdooValue(partner.vat) || '').toUpperCase();
+    if (!rfc) return row as Record<string, unknown>;
+
+    const update = {
+      name: partner.name,
+      email: odoo.normalizeOdooValue(partner.email),
+      phone: odoo.normalizeOdooValue(partner.phone),
+      odoo_id: String(partner.id),
+      synced_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    await admin.from('vendors').update(update).eq('id', vendorId);
+    return { ...row, ...update } as Record<string, unknown>;
+  } catch {
+    return row as Record<string, unknown>;
+  }
+}
+
+/**
+ * Get customer by internal id; refresh from Odoo if cache is stale (updated_at older than TTL).
+ * Returns null if not found.
+ */
+export async function getCustomer(companyId: string, customerId: string): Promise<Record<string, unknown> | null> {
+  const admin = getAdminClient();
+  const { data: row } = await admin.from('customers')
+    .select('*')
+    .eq('company_id', companyId)
+    .eq('id', customerId)
+    .single();
+
+  if (!row) return null;
+
+  const updatedAt = row.updated_at ? new Date(row.updated_at).getTime() : 0;
+  if (Date.now() - updatedAt < CACHE_TTL_MS) {
+    return row as Record<string, unknown>;
+  }
+
+  const odooId = row.odoo_id != null ? Number(row.odoo_id) : NaN;
+  if (Number.isNaN(odooId)) return row as Record<string, unknown>;
+
+  try {
+    const config = await getOdooConfigForCompany(companyId);
+    const partner = await odoo.fetchOdooPartnerById(config, odooId);
+    if (!partner) return row as Record<string, unknown>;
+
+    const rfc = (odoo.normalizeOdooValue(partner.vat) || '').toUpperCase();
+    if (!rfc) return row as Record<string, unknown>;
+
+    const update = {
+      name: partner.name,
+      email: odoo.normalizeOdooValue(partner.email),
+      phone: odoo.normalizeOdooValue(partner.phone),
+      odoo_id: String(partner.id),
+      updated_at: new Date().toISOString(),
+    };
+    await admin.from('customers').update(update).eq('id', customerId);
+    return { ...row, ...update } as Record<string, unknown>;
+  } catch {
+    return row as Record<string, unknown>;
+  }
 }

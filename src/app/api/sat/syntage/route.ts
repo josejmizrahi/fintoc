@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { hasDB, query, update, insert } from "@/lib/db";
 import { getCompanyId } from "@/lib/auth-helpers";
-import { createSyntageClient } from "@/lib/syntage";
+import { createSyntageClient } from "@/lib/integrations/syntage";
 
 /**
  * Syntage SAT API — Unified endpoint for all Syntage operations.

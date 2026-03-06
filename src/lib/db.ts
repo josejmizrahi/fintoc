@@ -185,10 +185,6 @@ export async function seedDB(companyId: number) {
       { company_id: companyId, type: "fintoc-odoo", status: "matched", total_transactions: 45, matched: 42, unmatched: 3, amount_matched: 1850000 },
       { company_id: companyId, type: "sat", status: "matched", total_transactions: 30, matched: 28, unmatched: 2, amount_matched: 2100000 },
     ]),
-    sb.from("cfdi_documents").insert([
-      { company_id: companyId, uuid: "ABC12345-XXXX-YYYY-ZZZZ-000000000001", tipo_comprobante: "I", rfc_emisor: "ACM010101AAA", nombre_emisor: "Acme SA", rfc_receptor: "DCO230101AAA", total: 125000, sat_status: "Vigente" },
-      { company_id: companyId, uuid: "DEF67890-XXXX-YYYY-ZZZZ-000000000002", tipo_comprobante: "I", rfc_emisor: "TCS020202BBB", nombre_emisor: "TechCorp", rfc_receptor: "DCO230101AAA", total: 89000, sat_status: "Vigente" },
-    ]),
   ]);
 
   return { seeded: true };

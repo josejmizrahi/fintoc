@@ -1,13 +1,13 @@
 import { createHandler } from '@/lib/middleware/route-handler';
 import { withAuth } from '@/lib/middleware/auth';
 import { withRbac } from '@/lib/middleware/rbac';
-import { syncOdoo, getOdooConfigForCompany } from '@/lib/integrations/sync-engine';
+import { getProvider } from '@/packages/sync-engine';
+import '@/packages/integrations';
 
 export const POST = createHandler(async (req) => {
   return withAuth(withRbac('sync.execute', async (_req, ctx) => {
     const companyId = String(ctx.company_id);
-    const config = await getOdooConfigForCompany(companyId);
-    const result = await syncOdoo(companyId, config);
+    const result = await getProvider('odoo').run(companyId);
 
     return Response.json({
       data: {

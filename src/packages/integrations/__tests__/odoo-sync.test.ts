@@ -1,13 +1,10 @@
 /**
- * Odoo Sync Provider Tests
- *
- * Tests the OdooSyncProvider transform logic without real API calls.
+ * Odoo Sync Provider Tests — invoices only.
  */
 import { describe, it, expect, vi } from 'vitest';
 import { OdooSyncProvider } from '../odoo/sync';
 import type { SyncData } from '@/packages/sync-engine';
 
-// Mock all external dependencies
 vi.mock('@/lib/supabase/admin', () => ({
   getAdminClient: () => ({
     from: () => ({
@@ -39,8 +36,6 @@ vi.mock('@/lib/utils/errors', () => ({
 }));
 
 vi.mock('@/lib/integrations/odoo', () => ({
-  fetchOdooVendors: vi.fn(),
-  fetchOdooCustomers: vi.fn(),
   fetchOdooInvoices: vi.fn(),
   normalizeOdooValue: <T>(v: T | false): T | null => (v === false ? null : v),
   extractM2oName: (field: [number, string] | false): string | null =>
@@ -55,53 +50,8 @@ describe('OdooSyncProvider', () => {
   });
 
   describe('transform', () => {
-    it('merges new vendors correctly', () => {
-      const remote: SyncData = {
-        vendors: [
-          { id: 1, name: 'Acme SA', vat: 'ACM010101AAA', email: 'acme@test.mx', phone: '5512345678' },
-          { id: 2, name: 'Beta Corp', vat: 'BET020202BBB', email: false, phone: false },
-        ],
-        customers: [],
-        invoices: [],
-      };
-
-      const diff = provider.transform(remote, '1');
-
-      // Vendors
-      expect(diff.vendors.rows).toHaveLength(2);
-      expect(diff.vendors.table).toBe('vendors');
-      expect(diff.vendors.onConflict).toBe('company_id,rfc');
-
-      const vendor1 = diff.vendors.rows[0] as Record<string, unknown>;
-      expect(vendor1.company_id).toBe(1);
-      expect(vendor1.name).toBe('Acme SA');
-      expect(vendor1.rfc).toBe('ACM010101AAA');
-      expect(vendor1.email).toBe('acme@test.mx');
-
-      const vendor2 = diff.vendors.rows[1] as Record<string, unknown>;
-      expect(vendor2.email).toBeNull();
-    });
-
-    it('filters out vendors without RFC', () => {
-      const remote: SyncData = {
-        vendors: [
-          { id: 1, name: 'Has RFC', vat: 'ABC010101AAA', email: false, phone: false },
-          { id: 2, name: 'No RFC', vat: false, email: false, phone: false },
-          { id: 3, name: 'Empty RFC', vat: '', email: false, phone: false },
-        ],
-        customers: [],
-        invoices: [],
-      };
-
-      const diff = provider.transform(remote, '1');
-      expect(diff.vendors.rows).toHaveLength(1);
-      expect((diff.vendors.rows[0] as Record<string, unknown>).name).toBe('Has RFC');
-    });
-
     it('transforms invoices with correct field mapping', () => {
       const remote: SyncData = {
-        vendors: [],
-        customers: [],
         invoices: [
           {
             id: 100,
@@ -121,6 +71,7 @@ describe('OdooSyncProvider', () => {
       };
 
       const diff = provider.transform(remote, '1');
+      expect(Object.keys(diff)).toEqual(['invoices']);
       expect(diff.invoices.rows).toHaveLength(1);
       expect(diff.invoices.table).toBe('invoices');
       expect(diff.invoices.onConflict).toBe('company_id,odoo_id');
@@ -140,12 +91,7 @@ describe('OdooSyncProvider', () => {
     });
 
     it('handles empty remote data', () => {
-      const diff = provider.transform(
-        { vendors: [], customers: [], invoices: [] },
-        '1',
-      );
-      expect(diff.vendors.rows).toHaveLength(0);
-      expect(diff.customers.rows).toHaveLength(0);
+      const diff = provider.transform({ invoices: [] }, '1');
       expect(diff.invoices.rows).toHaveLength(0);
     });
   });

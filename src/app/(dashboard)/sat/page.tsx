@@ -28,7 +28,7 @@ import {
 
 import { api } from "@/lib/api";
 import { formatMoney, formatDate } from "@/lib/utils/format";
-import { TIPO_COMPROBANTE } from "@/lib/sat";
+import { TIPO_COMPROBANTE } from "@/lib/constants/cfdi";
 
 import { DataTable } from "@/components/shared/data-table";
 import { EmptyState } from "@/components/shared/empty-state";

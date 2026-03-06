@@ -336,28 +336,6 @@ type BankAccountRow = {
   created_at: string;
 };
 
-type BankMovementRow = {
-  id: string;
-  company_id: string;
-  fintoc_id: string | null;
-  fintoc_movement_id: string | null;
-  account_id: string | null;
-  amount: number;
-  currency: string;
-  description: string | null;
-  post_date: string | null;
-  date: string | null;
-  type: string | null;
-  reference_id: string | null;
-  sender_account: string | null;
-  counterpart_name: string | null;
-  counterpart_account: string | null;
-  balance_after: number | null;
-  reconciled: boolean;
-  reconciled_payment_id: string | null;
-  created_at: string;
-};
-
 type SyntageExtractionRow = {
   id: string;
   company_id: string;
@@ -419,35 +397,6 @@ type ReconciliationRow = {
   created_at: string;
 };
 
-type CfdiDocumentRow = {
-  id: string;
-  company_id: string;
-  uuid: string | null;
-  tipo_comprobante: string | null;
-  rfc_emisor: string | null;
-  nombre_emisor: string | null;
-  rfc_receptor: string | null;
-  nombre_receptor: string | null;
-  total: number;
-  subtotal: number;
-  sat_status: string;
-  fecha_emision: string;
-  moneda: string | null;
-  forma_pago: string | null;
-  metodo_pago: string | null;
-  uso_cfdi: string | null;
-  lugar_expedicion: string | null;
-  descuento: number;
-  emisor_regimen: string | null;
-  receptor_regimen: string | null;
-  efos_status: string | null;
-  xml_storage_path: string | null;
-  conceptos: Json | null;
-  invoice_id: string | null;
-  created_at: string;
-  updated_at: string | null;
-};
-
 // ── Database type ──
 
 export type Database = {
@@ -469,13 +418,11 @@ export type Database = {
       budgets: TableDef<BudgetRow, WithOptional<BudgetRow, 'id' | 'name' | 'category' | 'period_start' | 'period_end' | 'amount_budgeted' | 'amount_spent' | 'amount_committed' | 'amount' | 'alert_threshold_pct' | 'is_active' | 'created_at'>>;
       notifications: TableDef<NotificationRow, WithOptional<NotificationRow, 'id' | 'user_id' | 'notification_type' | 'event_type' | 'entity_type' | 'entity_id' | 'title' | 'message' | 'channel' | 'is_read' | 'read' | 'created_at'>>;
       bank_accounts: TableDef<BankAccountRow, WithOptional<BankAccountRow, 'id' | 'bank_name' | 'account_holder' | 'balance' | 'currency' | 'last_synced' | 'created_at'>>;
-      bank_movements: TableDef<BankMovementRow, WithOptional<BankMovementRow, 'id' | 'fintoc_id' | 'fintoc_movement_id' | 'account_id' | 'currency' | 'description' | 'post_date' | 'date' | 'type' | 'reference_id' | 'sender_account' | 'counterpart_name' | 'counterpart_account' | 'balance_after' | 'reconciled' | 'reconciled_payment_id' | 'created_at'>>;
       syntage_extractions: TableDef<SyntageExtractionRow, WithOptional<SyntageExtractionRow, 'id' | 'status' | 'records_found' | 'error_message' | 'started_at' | 'completed_at'>>;
       audit_log: TableDef<AuditLogRow, WithOptional<AuditLogRow, 'id' | 'changes' | 'metadata' | 'user_email' | 'description' | 'ip_address' | 'created_at'>>;
       sync_history: TableDef<SyncHistoryRow, WithOptional<SyncHistoryRow, 'id' | 'status' | 'records_synced' | 'error_message' | 'started_at' | 'completed_at'>>;
       webhook_logs: TableDef<WebhookLogRow, WithOptional<WebhookLogRow, 'id' | 'company_id' | 'processed' | 'error' | 'created_at'>>;
       reconciliations: TableDef<ReconciliationRow, WithOptional<ReconciliationRow, 'id' | 'type' | 'status' | 'total_transactions' | 'matched' | 'unmatched' | 'amount_matched' | 'created_at'>>;
-      cfdi_documents: TableDef<CfdiDocumentRow, WithOptional<CfdiDocumentRow, 'id' | 'uuid' | 'tipo_comprobante' | 'rfc_emisor' | 'nombre_emisor' | 'rfc_receptor' | 'nombre_receptor' | 'total' | 'subtotal' | 'sat_status' | 'fecha_emision' | 'moneda' | 'forma_pago' | 'metodo_pago' | 'uso_cfdi' | 'lugar_expedicion' | 'descuento' | 'emisor_regimen' | 'receptor_regimen' | 'efos_status' | 'xml_storage_path' | 'conceptos' | 'invoice_id' | 'created_at' | 'updated_at'>>;
     };
     Views: {};
     Functions: Record<string, never>;

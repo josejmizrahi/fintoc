@@ -1,13 +1,13 @@
 import { createHandler } from '@/lib/middleware/route-handler';
 import { withAuth } from '@/lib/middleware/auth';
 import { withRbac } from '@/lib/middleware/rbac';
-import { syncFintoc, getFintocKeyForCompany } from '@/lib/integrations/sync-engine';
+import { getProvider } from '@/packages/sync-engine';
+import '@/packages/integrations';
 
 export const POST = createHandler(async (req) => {
   return withAuth(withRbac('sync.execute', async (_req, ctx) => {
     const companyId = String(ctx.company_id);
-    const secretKey = await getFintocKeyForCompany(companyId);
-    const result = await syncFintoc(companyId, secretKey);
+    const result = await getProvider('fintoc').run(companyId);
 
     return Response.json({
       data: {

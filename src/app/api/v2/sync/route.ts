@@ -1,14 +1,9 @@
 /**
  * Unified Sync API Route (v2)
  *
- * Replaces both:
- *   - /api/sync (1000+ line monolithic route)
- *   - Individual /api/sync/odoo, /api/sync/fintoc, /api/sync/sat routes
- *
- * Usage:
- *   POST /api/v2/sync { "provider": "odoo" }
- *   POST /api/v2/sync { "provider": "fintoc" }
- *   POST /api/v2/sync { "provider": "syntage", "options": { "dateFrom": "2026-01-01" } }
+ * POST /api/v2/sync { "provider": "odoo" }
+ * POST /api/v2/sync { "provider": "fintoc" }
+ * SAT (Syntage) data is updated via webhooks; no periodic sync.
  */
 import { z } from 'zod';
 import { createHandler } from '@/lib/middleware/route-handler';
@@ -16,7 +11,7 @@ import { withAuth, type AuthContext } from '@/lib/middleware/auth';
 import { withValidation } from '@/lib/middleware/validate';
 import { withRbac } from '@/lib/middleware/rbac';
 import { getProvider } from '@/packages/sync-engine';
-import '@/packages/integrations'; // registers all providers
+import '@/packages/integrations'; // registers providers
 
 const SyncRequestSchema = z.object({
   provider: z.enum(['odoo', 'fintoc', 'syntage', 'sat']),
@@ -29,7 +24,7 @@ const SyncRequestSchema = z.object({
     .optional(),
 });
 
-// Map frontend provider names to internal engine names
+// SAT (Syntage) has no periodic sync — data comes from webhooks; extractions are on-demand via /api/sync/sat
 const PROVIDER_ALIASES: Record<string, 'odoo' | 'fintoc' | 'syntage'> = {
   odoo: 'odoo',
   fintoc: 'fintoc',
@@ -44,6 +39,24 @@ export const POST = createHandler(
       withValidation(SyncRequestSchema, async (req, ctx) => {
         const provider = PROVIDER_ALIASES[ctx.body.provider] || ctx.body.provider;
         const companyId = String(ctx.company_id);
+
+        // SAT (Syntage): no periodic sync; data via webhooks. Use POST /api/sync/sat for on-demand extractions.
+        if (provider === 'syntage') {
+          return Response.json({
+            success: true,
+            data: {
+              provider: 'syntage',
+              status: 'completed',
+              recordsSynced: 0,
+              recordsFailed: 0,
+              errors: [],
+              startedAt: new Date().toISOString(),
+              completedAt: new Date().toISOString(),
+              details: {},
+              message: 'SAT data is updated via webhooks. Use Sync SAT for on-demand extractions.',
+            },
+          });
+        }
 
         const engine = getProvider(provider);
         const result = await engine.run(companyId);

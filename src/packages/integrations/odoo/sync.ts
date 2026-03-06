@@ -1,8 +1,6 @@
 /**
- * Odoo Sync Provider
- *
- * Implements BaseSyncProvider for Odoo ERP integration.
- * Syncs vendors, customers, and invoices from Odoo via JSON-RPC.
+ * Odoo Sync Provider — invoices only.
+ * Vendors and customers are cached on-demand via getVendor/getCustomer (sync-engine).
  */
 import { BaseSyncProvider, type SyncData, type SyncDiff, type SyncProviderConfig } from '@/packages/sync-engine';
 import { getAdminClient } from '@/lib/supabase/admin';
@@ -10,11 +8,8 @@ import { decrypt } from '@/lib/utils/crypto';
 import { ApiError } from '@/lib/utils/errors';
 import {
   type OdooConfig,
-  type OdooPartner,
   type OdooInvoice,
   odooAuthenticate,
-  fetchOdooVendors,
-  fetchOdooCustomers,
   fetchOdooInvoices,
   normalizeOdooValue,
   extractM2oName,
@@ -45,7 +40,6 @@ export class OdooSyncProvider extends BaseSyncProvider<OdooConfig> {
       throw new ApiError('INTEGRATION_NOT_CONFIGURED', 'Odoo no configurado', 422);
     }
 
-    // Get raw connection credentials (prefer encrypted, fall back to plaintext)
     let creds: OdooConnectionCreds | null = null;
 
     if (integration.config_encrypted) {
@@ -72,7 +66,6 @@ export class OdooSyncProvider extends BaseSyncProvider<OdooConfig> {
       throw new ApiError('INTEGRATION_NOT_CONFIGURED', 'Odoo no configurado', 422);
     }
 
-    // Authenticate to get uid — OdooConfig requires { url, db, uid, apiKey }
     const uid = await odooAuthenticate(creds.url, creds.database, creds.user, creds.password);
 
     return {
@@ -84,71 +77,17 @@ export class OdooSyncProvider extends BaseSyncProvider<OdooConfig> {
   }
 
   async fetch(config: OdooConfig, opts: SyncProviderConfig): Promise<SyncData> {
-    const errors: Error[] = [];
-    const [vendors, customers, invoices] = await Promise.all([
-      fetchOdooVendors(config, opts.lastSyncAt).catch((err) => {
-        console.error('[odoo-sync] Error fetching vendors:', err);
-        errors.push(err instanceof Error ? err : new Error(String(err)));
-        return [] as OdooPartner[];
-      }),
-      fetchOdooCustomers(config, opts.lastSyncAt).catch((err) => {
-        console.error('[odoo-sync] Error fetching customers:', err);
-        errors.push(err instanceof Error ? err : new Error(String(err)));
-        return [] as OdooPartner[];
-      }),
-      fetchOdooInvoices(config, opts.lastSyncAt).catch((err) => {
-        console.error('[odoo-sync] Error fetching invoices:', err);
-        errors.push(err instanceof Error ? err : new Error(String(err)));
-        return [] as OdooInvoice[];
-      }),
-    ]);
-
-    if (errors.length === 3) {
-      throw new ApiError('ODOO_ERROR',
-        `Failed to fetch all entities: ${errors.map(e => e.message).join('; ')}`, 502);
-    }
-
-    return { vendors, customers, invoices };
+    const invoices = await fetchOdooInvoices(config, opts.lastSyncAt).catch((err) => {
+      console.error('[odoo-sync] Error fetching invoices:', err);
+      throw err instanceof Error ? err : new Error(String(err));
+    });
+    return { invoices: invoices || [] };
   }
 
   transform(remote: SyncData, companyId: string): SyncDiff {
     const cid = Number(companyId);
-
-    // Deduplicate vendors by RFC (Odoo can have multiple partners with same VAT)
-    const vendorByRfc = new Map<string, Record<string, unknown>>();
-    for (const v of remote.vendors as OdooPartner[]) {
-      const rfc = (normalizeOdooValue(v.vat) || '').toUpperCase();
-      if (rfc.length === 0) continue;
-      vendorByRfc.set(`${cid}:${rfc}`, {
-        company_id: cid,
-        name: v.name,
-        rfc,
-        email: normalizeOdooValue(v.email),
-        phone: normalizeOdooValue(v.phone),
-        odoo_id: String(v.id),
-        synced_at: new Date().toISOString(),
-      });
-    }
-    const vendors = [...vendorByRfc.values()];
-
-    // Deduplicate customers by RFC
-    const customerByRfc = new Map<string, Record<string, unknown>>();
-    for (const c of remote.customers as OdooPartner[]) {
-      const rfc = (normalizeOdooValue(c.vat) || '').toUpperCase();
-      if (rfc.length === 0) continue;
-      customerByRfc.set(`${cid}:${rfc}`, {
-        company_id: cid,
-        name: c.name,
-        rfc,
-        email: normalizeOdooValue(c.email),
-        phone: normalizeOdooValue(c.phone),
-        odoo_id: String(c.id),
-      });
-    }
-    const customers = [...customerByRfc.values()];
-
-    // Transform invoices — nullify duplicate UUIDs to avoid unique constraint violation
     const seenUuids = new Set<string>();
+
     const invoices = (remote.invoices as OdooInvoice[]).map((inv) => {
       let uuid = normalizeOdooValue(inv.l10n_mx_edi_cfdi_uuid);
       if (uuid) {
@@ -181,8 +120,6 @@ export class OdooSyncProvider extends BaseSyncProvider<OdooConfig> {
     });
 
     return {
-      vendors: { rows: vendors, onConflict: 'company_id,rfc', table: 'vendors' },
-      customers: { rows: customers, onConflict: 'company_id,rfc', table: 'customers' },
       invoices: { rows: invoices, onConflict: 'company_id,odoo_id', table: 'invoices' },
     };
   }
