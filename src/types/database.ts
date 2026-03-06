@@ -78,6 +78,9 @@ type IntegrationRow = {
   last_sync_message: string | null;
   sync_errors: Json | null;
   status: string;
+  cert_serial: string | null;
+  cert_expires_at: string | null;
+  cert_uploaded_at: string | null;
   created_at: string;
   updated_at: string | null;
 };
@@ -453,7 +456,7 @@ export type Database = {
       companies: TableDef<CompanyRow, WithOptional<CompanyRow, 'id' | 'is_active' | 'onboarding_completed' | 'address' | 'phone' | 'logo_url' | 'created_at' | 'updated_at'>>;
       users: TableDef<UserRow, WithOptional<UserRow, 'id' | 'auth_uid' | 'password_hash' | 'role' | 'company_id' | 'is_active' | 'created_at'>>;
       user_companies: TableDef<UserCompanyRow, WithOptional<UserCompanyRow, 'id' | 'is_active' | 'status' | 'invited_by' | 'invited_at' | 'accepted_at' | 'created_at'>>;
-      integrations: TableDef<IntegrationRow, WithOptional<IntegrationRow, 'id' | 'is_connected' | 'config' | 'config_encrypted' | 'syntage_credential_id' | 'syntage_taxpayer_id' | 'last_sync' | 'last_sync_at' | 'last_sync_status' | 'last_sync_message' | 'sync_errors' | 'status' | 'created_at' | 'updated_at'>>;
+      integrations: TableDef<IntegrationRow, WithOptional<IntegrationRow, 'id' | 'is_connected' | 'config' | 'config_encrypted' | 'syntage_credential_id' | 'syntage_taxpayer_id' | 'last_sync' | 'last_sync_at' | 'last_sync_status' | 'last_sync_message' | 'sync_errors' | 'status' | 'cert_serial' | 'cert_expires_at' | 'cert_uploaded_at' | 'created_at' | 'updated_at'>>;
       payments: TableDef<PaymentRow, WithOptional<PaymentRow, 'id' | 'status' | 'currency' | 'partner_name' | 'partner_rfc' | 'reference_id' | 'clabe_origin' | 'clabe_destination' | 'comment' | 'scheduled_date' | 'vendor_id' | 'invoice_id' | 'beneficiary_name' | 'beneficiary_clabe' | 'clabe' | 'concept' | 'reference' | 'confirmed_at' | 'fintoc_transfer_id' | 'fintoc_payment_intent_id' | 'fintoc_error' | 'odoo_payment_id' | 'odoo_synced_at' | 'created_by' | 'executed_at' | 'sat_status' | 'payment_state' | 'reconciled_invoice_ids' | 'odoo_state' | 'created_at' | 'updated_at'>>;
       invoices: TableDef<InvoiceRow, WithOptional<InvoiceRow, 'id' | 'type' | 'partner_name' | 'partner_rfc' | 'amount_total' | 'amount_residual' | 'amount_paid' | 'amount_tax' | 'date_invoice' | 'date_due' | 'status' | 'cfdi_uuid' | 'name' | 'source' | 'sat_status' | 'payment_status' | 'payment_state' | 'vendor_id' | 'customer_id' | 'invoice_number' | 'uuid' | 'issuer_rfc' | 'receiver_rfc' | 'invoice_date' | 'due_date' | 'currency' | 'payment_method' | 'efos_status' | 'cancellable' | 'xml_url' | 'odoo_move_id' | 'odoo_cfdi_uuid' | 'odoo_payment_method' | 'odoo_usage' | 'move_type' | 'invoice_line_count' | 'syntage_invoice_id' | 'validated_at' | 'created_at' | 'updated_at'>>;
       invoice_payments: TableDef<InvoicePaymentRow, WithOptional<InvoicePaymentRow, 'id' | 'created_at'>>;
