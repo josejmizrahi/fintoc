@@ -623,6 +623,9 @@ async function syncFintoc(companyId: number, config: Record<string, string>) {
   if (!secretKey) {
     return NextResponse.json({ success: false, message: "Falta la Secret Key de Fintoc" });
   }
+  if (!linkToken) {
+    return NextResponse.json({ success: false, message: "Falta el Link Token de Fintoc. Conecta tu cuenta bancaria primero." });
+  }
 
   const logId = await createSyncLog(companyId, "fintoc", "full");
   const errors: string[] = [];
@@ -633,7 +636,8 @@ async function syncFintoc(companyId: number, config: Record<string, string>) {
     // ── Phase 1: FETCH ──
     await updateSyncLog(logId, { details: { phase: "fetching" } });
 
-    const accounts = await fintocGet("/accounts", secretKey) as Array<Record<string, unknown>>;
+    // Fintoc API requires link_token for all account/movement queries
+    const accounts = await fintocGet("/accounts", secretKey, { link_token: linkToken }) as Array<Record<string, unknown>>;
     const accountList = Array.isArray(accounts) ? accounts : [];
 
     // Fetch all movements from all accounts
@@ -642,21 +646,19 @@ async function syncFintoc(companyId: number, config: Record<string, string>) {
       const accountId = account.id as string;
       if (!accountId) continue;
       try {
-        const movements = await fintocGet(`/accounts/${accountId}/movements`, secretKey, { since }) as Array<Record<string, unknown>>;
+        const movements = await fintocGet(`/accounts/${accountId}/movements`, secretKey, { since, link_token: linkToken }) as Array<Record<string, unknown>>;
         if (Array.isArray(movements)) {
           for (const mov of movements) allMovements.push({ accountId, mov });
         }
       } catch { errors.push(`Movimientos cuenta ${accountId}: error`); }
     }
 
-    // Fetch fiscal invoices
+    // Fetch fiscal invoices (also requires link_token)
     let remoteInvoices: Array<Record<string, unknown>> = [];
-    if (linkToken) {
-      try {
-        const invoices = await fintocGet("/invoices", secretKey, { link_token: linkToken }) as Array<Record<string, unknown>>;
-        if (Array.isArray(invoices)) remoteInvoices = invoices;
-      } catch (e) { errors.push(`Facturas fiscales: ${e instanceof Error ? e.message : "error"}`); }
-    }
+    try {
+      const invoices = await fintocGet("/invoices", secretKey, { link_token: linkToken }) as Array<Record<string, unknown>>;
+      if (Array.isArray(invoices)) remoteInvoices = invoices;
+    } catch (e) { errors.push(`Facturas fiscales: ${e instanceof Error ? e.message : "error"}`); }
 
     // ── Phase 2: DIFF ──
     await updateSyncLog(logId, {

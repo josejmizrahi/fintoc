@@ -29,7 +29,19 @@ export function CompanySwitcher() {
       setIsLoading(true);
       try {
         const res = await api.auth.switchCompany({ company_id: company.id });
-        switchCompany(company, res.role);
+        const role = res?.active_company?.role || res?.role || 'viewer';
+        // Update token in store if a new one was returned
+        if (res?.access_token) {
+          useAuthStore.getState().loginWithToken(
+            res.access_token,
+            useAuthStore.getState().user!,
+            company,
+            role,
+            res.refresh_token,
+          );
+        } else {
+          switchCompany(company, role);
+        }
         queryClient.clear();
       } catch {
         // Error handled by api layer (toast / redirect)

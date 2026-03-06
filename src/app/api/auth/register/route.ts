@@ -85,12 +85,6 @@ export const POST = createHandler(async (req) => {
     throw new ApiError('INTERNAL_ERROR', `Error al crear membresia: ${memberError.message}`, 500);
   }
 
-  // Sign in to get access token
-  const { data: signInData, error: signInError } = await admin.auth.admin.generateLink({
-    type: 'magiclink',
-    email,
-  });
-
   // Generate a session for the user
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -118,5 +112,6 @@ export const POST = createHandler(async (req) => {
     role: 'admin',
     onboarding_completed: false,
     access_token: session?.session?.access_token || null,
+    refresh_token: session?.session?.refresh_token || null,
   }, { status: 201 });
 }, { rateLimit: 'auth', public: true });

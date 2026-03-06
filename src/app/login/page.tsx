@@ -170,6 +170,7 @@ function LoginPageInner() {
         user,
         { id: res.tenant?.id || res.company?.id, name: res.tenant?.name || res.company?.name, rfc: data.rfc },
         'admin',
+        res.refresh_token,
       );
       toast.success('Cuenta creada. Configura tus integraciones.');
       router.push('/onboarding');

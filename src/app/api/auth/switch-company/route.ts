@@ -1,3 +1,4 @@
+import { createClient } from '@supabase/supabase-js';
 import { createHandler } from '@/lib/middleware/route-handler';
 import { withAuth } from '@/lib/middleware/auth';
 import { switchCompanySchema } from '@/lib/validations/schemas';
@@ -55,17 +56,33 @@ export const POST = createHandler(async (req) => {
       .eq('id', company_id)
       .single();
 
-    // Generate new session with updated claims
-    // The custom_access_token_hook will include the new active_company_id
-    const { data: session } = await admin.auth.admin.generateLink({
-      type: 'magiclink',
-      email: ctx.email,
-    });
+    // Force a token refresh so the JWT gets the new active_company_id claim
+    let newAccessToken: string | null = null;
+    let newRefreshToken: string | null = null;
+
+    const refreshToken = _req.headers.get('x-refresh-token');
+    if (refreshToken) {
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+      const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+      const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+        auth: { autoRefreshToken: false, persistSession: false },
+      });
+
+      const { data: session } = await supabase.auth.refreshSession({
+        refresh_token: refreshToken,
+      });
+
+      if (session?.session) {
+        newAccessToken = session.session.access_token;
+        newRefreshToken = session.session.refresh_token;
+      }
+    }
 
     return Response.json({
       data: {
         active_company: { ...company, role: membership.role },
-        message: 'Empresa activa actualizada. Recarga para obtener nuevo token.',
+        access_token: newAccessToken,
+        refresh_token: newRefreshToken,
       },
     });
   })(req, { params: Promise.resolve({}) });
