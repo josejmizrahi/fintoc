@@ -32,6 +32,11 @@ export interface SatSyncResult extends SyncResult {
 export class SyntageSyncProvider extends BaseSyncProvider<SyntageSyncConfig> {
   readonly name: ProviderName = 'syntage';
 
+  /** The integrations table stores this provider as 'sat', not 'syntage' */
+  override get dbProviderName(): string {
+    return 'sat';
+  }
+
   private extractionResults: SatSyncResult['extractions'] = [];
 
   async getConfig(companyId: string): Promise<SyntageSyncConfig> {
@@ -40,7 +45,7 @@ export class SyntageSyncProvider extends BaseSyncProvider<SyntageSyncConfig> {
       .from('integrations')
       .select('syntage_taxpayer_id')
       .eq('company_id', companyId)
-      .eq('provider', 'syntage')
+      .eq('provider', 'sat')
       .single();
 
     if (!integration?.syntage_taxpayer_id) {

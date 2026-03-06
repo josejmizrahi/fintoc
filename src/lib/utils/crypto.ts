@@ -29,12 +29,24 @@ export function encrypt(data: Record<string, unknown>): Buffer {
   return Buffer.concat([iv, tag, encrypted]);
 }
 
-export function decrypt(encrypted: Buffer): Record<string, unknown> {
+export function decrypt(encrypted: Buffer | string): Record<string, unknown> {
   const key = getEncryptionKey();
 
-  const iv = encrypted.subarray(0, IV_LENGTH);
-  const tag = encrypted.subarray(IV_LENGTH, IV_LENGTH + TAG_LENGTH);
-  const ciphertext = encrypted.subarray(IV_LENGTH + TAG_LENGTH);
+  // Supabase returns bytea columns as hex or base64 strings, not Buffers
+  let buf: Buffer;
+  if (Buffer.isBuffer(encrypted)) {
+    buf = encrypted;
+  } else if (typeof encrypted === 'string') {
+    buf = encrypted.startsWith('\\x')
+      ? Buffer.from(encrypted.slice(2), 'hex')
+      : Buffer.from(encrypted, 'base64');
+  } else {
+    throw new Error('config_encrypted must be a Buffer or string');
+  }
+
+  const iv = buf.subarray(0, IV_LENGTH);
+  const tag = buf.subarray(IV_LENGTH, IV_LENGTH + TAG_LENGTH);
+  const ciphertext = buf.subarray(IV_LENGTH + TAG_LENGTH);
 
   const decipher = crypto.createDecipheriv(ALGORITHM, key, iv);
   decipher.setAuthTag(tag);

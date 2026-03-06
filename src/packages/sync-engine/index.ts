@@ -53,6 +53,14 @@ export abstract class BaseSyncProvider<TConfig = unknown> {
   abstract readonly name: ProviderName;
 
   /**
+   * The provider name as stored in the integrations DB table.
+   * Override when the engine name differs from the DB value (e.g. 'syntage' → 'sat').
+   */
+  get dbProviderName(): string {
+    return this.name;
+  }
+
+  /**
    * Retrieve provider-specific config (decrypted credentials, etc.)
    */
   abstract getConfig(companyId: string): Promise<TConfig>;
@@ -107,7 +115,7 @@ export abstract class BaseSyncProvider<TConfig = unknown> {
       }
 
       const status = computeStatus(errors, recordsSynced);
-      await finalizeSyncEntry(admin, syncId, companyId, this.name, status, recordsSynced, errors);
+      await finalizeSyncEntry(admin, syncId, companyId, this.dbProviderName, status, recordsSynced, errors);
 
       return {
         provider: this.name,
@@ -121,7 +129,7 @@ export abstract class BaseSyncProvider<TConfig = unknown> {
       };
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Unknown error';
-      await finalizeSyncEntry(admin, syncId, companyId, this.name, 'failed', recordsSynced, [
+      await finalizeSyncEntry(admin, syncId, companyId, this.dbProviderName, 'failed', recordsSynced, [
         { entity: 'sync', message: errorMsg, retryable: true },
       ]);
       throw err;
@@ -206,7 +214,7 @@ async function finalizeSyncEntry(
   admin: ReturnType<typeof getAdminClient>,
   syncId: string,
   companyId: string,
-  provider: ProviderName,
+  provider: string,
   status: SyncStatus,
   recordsSynced: number,
   errors: SyncError[],
