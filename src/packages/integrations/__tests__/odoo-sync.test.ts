@@ -65,7 +65,7 @@ describe('OdooSyncProvider', () => {
         invoices: [],
       };
 
-      const diff = provider.transform(remote, 'company-1');
+      const diff = provider.transform(remote, '1');
 
       // Vendors
       expect(diff.vendors.rows).toHaveLength(2);
@@ -73,7 +73,7 @@ describe('OdooSyncProvider', () => {
       expect(diff.vendors.onConflict).toBe('company_id,rfc');
 
       const vendor1 = diff.vendors.rows[0] as Record<string, unknown>;
-      expect(vendor1.company_id).toBe('company-1');
+      expect(vendor1.company_id).toBe(1);
       expect(vendor1.name).toBe('Acme SA');
       expect(vendor1.rfc).toBe('ACM010101AAA');
       expect(vendor1.email).toBe('acme@test.mx');
@@ -93,7 +93,7 @@ describe('OdooSyncProvider', () => {
         invoices: [],
       };
 
-      const diff = provider.transform(remote, 'company-1');
+      const diff = provider.transform(remote, '1');
       expect(diff.vendors.rows).toHaveLength(1);
       expect((diff.vendors.rows[0] as Record<string, unknown>).name).toBe('Has RFC');
     });
@@ -120,19 +120,20 @@ describe('OdooSyncProvider', () => {
         ],
       };
 
-      const diff = provider.transform(remote, 'company-1');
+      const diff = provider.transform(remote, '1');
       expect(diff.invoices.rows).toHaveLength(1);
       expect(diff.invoices.table).toBe('invoices');
-      expect(diff.invoices.onConflict).toBe('odoo_move_id');
+      expect(diff.invoices.onConflict).toBe('company_id,odoo_id');
 
       const invoice = diff.invoices.rows[0] as Record<string, unknown>;
-      expect(invoice.company_id).toBe('company-1');
+      expect(invoice.company_id).toBe(1);
       expect(invoice.invoice_number).toBe('INV/2026/001');
       expect(invoice.type).toBe('out_invoice');
       expect(invoice.amount_total).toBe(125000);
       expect(invoice.amount_residual).toBe(50000);
       expect(invoice.amount_paid).toBe(75000); // 125000 - 50000
       expect(invoice.partner_name).toBe('Acme SA');
+      expect(invoice.odoo_id).toBe(100);
       expect(invoice.odoo_move_id).toBe('100');
       expect(invoice.source).toBe('odoo');
       expect(invoice.uuid).toBe('UUID-12345');
@@ -141,7 +142,7 @@ describe('OdooSyncProvider', () => {
     it('handles empty remote data', () => {
       const diff = provider.transform(
         { vendors: [], customers: [], invoices: [] },
-        'company-1',
+        '1',
       );
       expect(diff.vendors.rows).toHaveLength(0);
       expect(diff.customers.rows).toHaveLength(0);

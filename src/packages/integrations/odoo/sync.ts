@@ -84,71 +84,106 @@ export class OdooSyncProvider extends BaseSyncProvider<OdooConfig> {
   }
 
   async fetch(config: OdooConfig, opts: SyncProviderConfig): Promise<SyncData> {
+    const errors: Error[] = [];
     const [vendors, customers, invoices] = await Promise.all([
       fetchOdooVendors(config, opts.lastSyncAt).catch((err) => {
         console.error('[odoo-sync] Error fetching vendors:', err);
+        errors.push(err instanceof Error ? err : new Error(String(err)));
         return [] as OdooPartner[];
       }),
       fetchOdooCustomers(config, opts.lastSyncAt).catch((err) => {
         console.error('[odoo-sync] Error fetching customers:', err);
+        errors.push(err instanceof Error ? err : new Error(String(err)));
         return [] as OdooPartner[];
       }),
       fetchOdooInvoices(config, opts.lastSyncAt).catch((err) => {
         console.error('[odoo-sync] Error fetching invoices:', err);
+        errors.push(err instanceof Error ? err : new Error(String(err)));
         return [] as OdooInvoice[];
       }),
     ]);
+
+    if (errors.length === 3) {
+      throw new ApiError('ODOO_ERROR',
+        `Failed to fetch all entities: ${errors.map(e => e.message).join('; ')}`, 502);
+    }
 
     return { vendors, customers, invoices };
   }
 
   transform(remote: SyncData, companyId: string): SyncDiff {
-    const vendors = (remote.vendors as OdooPartner[])
-      .filter((v) => (normalizeOdooValue(v.vat) || '').toUpperCase().length > 0)
-      .map((v) => ({
-        company_id: companyId,
+    const cid = Number(companyId);
+
+    // Deduplicate vendors by RFC (Odoo can have multiple partners with same VAT)
+    const vendorByRfc = new Map<string, Record<string, unknown>>();
+    for (const v of remote.vendors as OdooPartner[]) {
+      const rfc = (normalizeOdooValue(v.vat) || '').toUpperCase();
+      if (rfc.length === 0) continue;
+      vendorByRfc.set(`${cid}:${rfc}`, {
+        company_id: cid,
         name: v.name,
-        rfc: (normalizeOdooValue(v.vat) || '').toUpperCase(),
+        rfc,
         email: normalizeOdooValue(v.email),
         phone: normalizeOdooValue(v.phone),
         odoo_id: String(v.id),
         synced_at: new Date().toISOString(),
-      }));
+      });
+    }
+    const vendors = [...vendorByRfc.values()];
 
-    const customers = (remote.customers as OdooPartner[])
-      .filter((c) => (normalizeOdooValue(c.vat) || '').toUpperCase().length > 0)
-      .map((c) => ({
-        company_id: companyId,
+    // Deduplicate customers by RFC
+    const customerByRfc = new Map<string, Record<string, unknown>>();
+    for (const c of remote.customers as OdooPartner[]) {
+      const rfc = (normalizeOdooValue(c.vat) || '').toUpperCase();
+      if (rfc.length === 0) continue;
+      customerByRfc.set(`${cid}:${rfc}`, {
+        company_id: cid,
         name: c.name,
-        rfc: (normalizeOdooValue(c.vat) || '').toUpperCase(),
+        rfc,
         email: normalizeOdooValue(c.email),
         phone: normalizeOdooValue(c.phone),
         odoo_id: String(c.id),
-      }));
+      });
+    }
+    const customers = [...customerByRfc.values()];
 
-    const invoices = (remote.invoices as OdooInvoice[]).map((inv) => ({
-      company_id: companyId,
-      type: inv.move_type,
-      invoice_number: inv.name,
-      uuid: normalizeOdooValue(inv.l10n_mx_edi_cfdi_uuid),
-      invoice_date: normalizeOdooValue(inv.invoice_date),
-      due_date: normalizeOdooValue(inv.invoice_date_due),
-      amount_total: inv.amount_total,
-      amount_residual: inv.amount_residual,
-      amount_paid: inv.amount_total - inv.amount_residual,
-      amount_tax: inv.amount_tax,
-      payment_state: inv.payment_state,
-      payment_method: normalizeOdooValue(inv.l10n_mx_edi_payment_policy),
-      partner_name: extractM2oName(inv.partner_id),
-      odoo_move_id: String(inv.id),
-      source: 'odoo',
-      sat_status: 'no_validado',
-    }));
+    // Transform invoices — nullify duplicate UUIDs to avoid unique constraint violation
+    const seenUuids = new Set<string>();
+    const invoices = (remote.invoices as OdooInvoice[]).map((inv) => {
+      let uuid = normalizeOdooValue(inv.l10n_mx_edi_cfdi_uuid);
+      if (uuid) {
+        const lower = uuid.toLowerCase();
+        if (seenUuids.has(lower)) {
+          uuid = null;
+        } else {
+          seenUuids.add(lower);
+        }
+      }
+      return {
+        company_id: cid,
+        type: inv.move_type,
+        invoice_number: inv.name,
+        uuid,
+        invoice_date: normalizeOdooValue(inv.invoice_date),
+        due_date: normalizeOdooValue(inv.invoice_date_due),
+        amount_total: inv.amount_total,
+        amount_residual: inv.amount_residual,
+        amount_paid: inv.amount_total - inv.amount_residual,
+        amount_tax: inv.amount_tax,
+        payment_state: inv.payment_state,
+        payment_method: normalizeOdooValue(inv.l10n_mx_edi_payment_policy),
+        partner_name: extractM2oName(inv.partner_id),
+        odoo_id: inv.id,
+        odoo_move_id: String(inv.id),
+        source: 'odoo',
+        sat_status: 'no_validado',
+      };
+    });
 
     return {
       vendors: { rows: vendors, onConflict: 'company_id,rfc', table: 'vendors' },
       customers: { rows: customers, onConflict: 'company_id,rfc', table: 'customers' },
-      invoices: { rows: invoices, onConflict: 'odoo_move_id', table: 'invoices' },
+      invoices: { rows: invoices, onConflict: 'company_id,odoo_id', table: 'invoices' },
     };
   }
 }

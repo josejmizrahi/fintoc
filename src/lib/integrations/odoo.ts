@@ -107,9 +107,19 @@ async function odooRpc(
   const timer = setTimeout(() => controller.abort(), timeout);
 
   try {
-    const rpcArgs = service === 'object'
-      ? [config.db, config.uid, config.apiKey, method, ...args]
-      : [config.db, ...args];
+    // Odoo execute_kw signature: (db, uid, password, model, method, args_list[, kwargs_dict])
+    // - args[0] is the Odoo method name (e.g. 'search_read')
+    // - args[1:] are positional arguments, wrapped as args_list
+    // - kwargs_dict is appended as the last element (not a separate params field)
+    let rpcArgs: unknown[];
+    if (service === 'object') {
+      const odooMethod = args[0];
+      const methodArgs = args.slice(1);
+      rpcArgs = [config.db, config.uid, config.apiKey, method, odooMethod, methodArgs,
+        ...(Object.keys(kwargs).length > 0 ? [kwargs] : [])];
+    } else {
+      rpcArgs = [config.db, ...args];
+    }
 
     const res = await fetch(`${config.url}/jsonrpc`, {
       method: 'POST',
@@ -122,7 +132,6 @@ async function odooRpc(
           service,
           method: service === 'object' ? 'execute_kw' : method,
           args: rpcArgs,
-          kwargs: service === 'object' ? kwargs : undefined,
         },
       }),
       signal: controller.signal,
@@ -336,7 +345,9 @@ export async function odooFetchIncremental(
 ): Promise<unknown[]> {
   const domain = [...baseDomain];
   if (lastSyncAt) {
-    domain.push(['write_date', '>', lastSyncAt]);
+    // Odoo requires naive datetimes (no timezone) in 'YYYY-MM-DD HH:MM:SS' format
+    const naiveDate = lastSyncAt.replace('T', ' ').replace(/\.\d+/, '').replace(/[+-]\d{2}:\d{2}$/, '').replace(/Z$/, '');
+    domain.push(['write_date', '>', naiveDate]);
   }
   const fieldsWithDate = fields.includes('write_date') ? fields : [...fields, 'write_date'];
   return odooFetchAll(config, model, domain, fieldsWithDate, {
