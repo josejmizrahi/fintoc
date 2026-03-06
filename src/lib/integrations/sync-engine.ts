@@ -246,6 +246,84 @@ export async function syncOdoo(companyId: string, config: OdooConfig): Promise<S
   }
 }
 
+/**
+ * Sync Odoo partners (vendors + customers) to Supabase cache.
+ * Does not use sync_history lock; safe to call alongside invoice sync.
+ * Use after deploy so vendor/customer lists have data.
+ */
+export async function syncOdooPartners(companyId: string): Promise<{ vendors: number; customers: number; errors: string[] }> {
+  const admin = getAdminClient();
+  const errors: string[] = [];
+  let vendorsSynced = 0;
+  let customersSynced = 0;
+
+  const config = await getOdooConfigForCompany(companyId);
+
+  const vendorRows: Record<string, unknown>[] = [];
+  const customerRows: Record<string, unknown>[] = [];
+  const cid = Number(companyId);
+
+  try {
+    const [vendors, customers] = await Promise.all([
+      odoo.fetchOdooVendors(config).catch((err) => {
+        errors.push(err instanceof Error ? err.message : 'Error fetching vendors');
+        return [] as OdooPartner[];
+      }),
+      odoo.fetchOdooCustomers(config).catch((err) => {
+        errors.push(err instanceof Error ? err.message : 'Error fetching customers');
+        return [] as OdooPartner[];
+      }),
+    ]);
+
+    const vendorByRfc = new Map<string, Record<string, unknown>>();
+    for (const v of vendors) {
+      const rfc = (odoo.normalizeOdooValue(v.vat) || '').toUpperCase();
+      if (rfc.length === 0) continue;
+      vendorByRfc.set(`${cid}:${rfc}`, {
+        company_id: cid,
+        name: v.name,
+        rfc,
+        email: odoo.normalizeOdooValue(v.email),
+        phone: odoo.normalizeOdooValue(v.phone),
+        odoo_id: String(v.id),
+        synced_at: new Date().toISOString(),
+      });
+    }
+    vendorRows.push(...vendorByRfc.values());
+
+    const customerByRfc = new Map<string, Record<string, unknown>>();
+    for (const c of customers) {
+      const rfc = (odoo.normalizeOdooValue(c.vat) || '').toUpperCase();
+      if (rfc.length === 0) continue;
+      customerByRfc.set(`${cid}:${rfc}`, {
+        company_id: cid,
+        name: c.name,
+        rfc,
+        email: odoo.normalizeOdooValue(c.email),
+        phone: odoo.normalizeOdooValue(c.phone),
+        odoo_id: String(c.id),
+      });
+    }
+    customerRows.push(...customerByRfc.values());
+
+    const syncErrors: SyncError[] = [];
+    if (vendorRows.length > 0) {
+      const r = await batchUpsert(admin, 'vendors', vendorRows, 'company_id,rfc', syncErrors, 'vendors');
+      vendorsSynced = r.synced;
+      if (r.failed > 0) errors.push(...syncErrors.map((e) => e.message));
+    }
+    if (customerRows.length > 0) {
+      const r = await batchUpsert(admin, 'customers', customerRows, 'company_id,rfc', syncErrors, 'customers');
+      customersSynced = r.synced;
+      if (r.failed > 0) errors.push(...syncErrors.map((e) => e.message));
+    }
+  } catch (err) {
+    errors.push(err instanceof Error ? err.message : 'Unknown error');
+  }
+
+  return { vendors: vendorsSynced, customers: customersSynced, errors };
+}
+
 // ---------------------------------------------------------------------------
 // Syntage SAT Sync
 // ---------------------------------------------------------------------------

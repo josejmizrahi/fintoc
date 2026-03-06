@@ -399,6 +399,7 @@ export const api = {
     status: () => get<any>('/api/v2/sync'),
     logs: () => get<any[]>('/api/sync-logs'),
     odoo: () => post<any>('/api/v2/sync', { provider: 'odoo' }),
+    odooPartners: () => post<any>('/api/sync/odoo/partners'),
     fintoc: () => post<any>('/api/v2/sync', { provider: 'fintoc' }),
     sat: () => post<any>('/api/v2/sync', { provider: 'syntage' }),
   },
