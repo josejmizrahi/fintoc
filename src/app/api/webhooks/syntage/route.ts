@@ -57,12 +57,11 @@ export async function POST(req: Request): Promise<Response> {
           break;
 
         default:
-          // Unknown event type — logged for future reference
           break;
       }
 
       if (webhookLog?.id) {
-        await admin.from('webhook_logs').update({ processed: true }).eq('id', webhookLog.id);
+        await admin.from('webhook_logs').update({ processed: true, error: null }).eq('id', webhookLog.id);
       }
     } catch (err) {
       if (webhookLog?.id) {
@@ -84,7 +83,7 @@ export async function POST(req: Request): Promise<Response> {
 
 async function handleCredentialUpdated(
   admin: ReturnType<typeof getAdminClient>,
-  data: Record<string, unknown>
+  data: Record<string, unknown>,
 ) {
   const credentialId = data.id as string;
   const status = data.status as string;
@@ -99,7 +98,6 @@ async function handleCredentialUpdated(
     syntage_taxpayer_id: (data.taxpayer_id as string) || null,
   }).eq('id', integration.id);
 
-  // Notify admins
   const title = status === 'valid' ? 'FIEL validada exitosamente' : 'Error al validar FIEL';
   const message = status === 'valid'
     ? 'Tu FIEL fue validada con el SAT. Las extracciones de datos están habilitadas.'
@@ -110,7 +108,7 @@ async function handleCredentialUpdated(
 
 async function handleExtractionUpdated(
   admin: ReturnType<typeof getAdminClient>,
-  data: Record<string, unknown>
+  data: Record<string, unknown>,
 ) {
   const extractionId = data.id as string;
   const status = data.status as ExtractionStatus;
@@ -133,7 +131,6 @@ async function handleExtractionUpdated(
   await admin.from('syntage_extractions').update(updateData)
     .eq('syntage_extraction_id', extractionId);
 
-  // If extraction failed, notify admins
   if (status === 'failed') {
     const { data: extraction } = await admin.from('syntage_extractions')
       .select('company_id, extractor')
@@ -146,7 +143,7 @@ async function handleExtractionUpdated(
         extraction.company_id,
         'sat.extraction_failed',
         'Extracción SAT fallida',
-        `La extracción de ${extraction.extractor} falló: ${errorCode || 'Error desconocido'}`
+        `La extracción de ${extraction.extractor} falló: ${errorCode || 'Error desconocido'}`,
       );
     }
   }
@@ -154,12 +151,12 @@ async function handleExtractionUpdated(
 
 async function handleInvoiceEvent(
   admin: ReturnType<typeof getAdminClient>,
-  data: Record<string, unknown>
+  data: Record<string, unknown>,
 ) {
   const uuid = ((data.uuid as string) || '').toLowerCase();
   if (!uuid) return;
 
-  const taxpayerId = data.taxpayer_id as string || data.taxpayerId as string;
+  const taxpayerId = (data.taxpayer_id as string) || (data.taxpayerId as string);
   if (!taxpayerId) return;
 
   const { data: integration } = await admin.from('integrations')
@@ -175,27 +172,30 @@ async function handleInvoiceEvent(
   const invoiceType = mapInvoiceType((data.type as string) || '');
   const efos = parseEfosCode(data.efosValidation as number | undefined);
 
-  // Build the invoice data
-  const invoiceData: Record<string, unknown> = {
+  const invoiceFields: Record<string, unknown> = {
     sat_status: satStatus,
     syntage_invoice_id: data.id as string,
     validated_at: new Date().toISOString(),
   };
 
   if (efos.code !== null) {
-    invoiceData.efos_status = efos.isBlocked ? 'definitivo' : efos.isRisky ? 'presunto' : null;
+    invoiceFields.efos_status = efos.isBlocked ? 'definitivo' : efos.isRisky ? 'presunto' : null;
   }
 
-  // Check if invoice already exists
+  // Use upsert-style: try update first, then insert if not found.
+  // This avoids the race condition of check-then-insert.
   const { data: existing } = await admin.from('invoices')
-    .select('id').eq('uuid', uuid).eq('company_id', companyId).single();
+    .select('id')
+    .eq('uuid', uuid)
+    .eq('company_id', companyId)
+    .limit(1)
+    .single();
 
   if (existing) {
-    // Update existing invoice
-    await admin.from('invoices').update(invoiceData).eq('id', existing.id);
+    await admin.from('invoices').update(invoiceFields).eq('id', existing.id);
   } else {
-    // Create new invoice from SAT data
-    await admin.from('invoices').insert({
+    // Insert new invoice — use a unique constraint-safe approach
+    const newInvoice = {
       company_id: companyId,
       uuid,
       source: 'sat',
@@ -211,17 +211,43 @@ async function handleInvoiceEvent(
       receiver_name: (data.receiverName as string) || null,
       payment_method: (data.paymentMethod as string) || null,
       currency: (data.currency as string) || 'MXN',
-      ...invoiceData,
-    });
+      ...invoiceFields,
+    };
+
+    const { error: insertError } = await admin.from('invoices').insert(newInvoice);
+
+    // If insert fails due to duplicate (concurrent webhook), fall back to update
+    if (insertError?.code === '23505') {
+      const { data: retryExisting } = await admin.from('invoices')
+        .select('id')
+        .eq('uuid', uuid)
+        .eq('company_id', companyId)
+        .limit(1)
+        .single();
+
+      if (retryExisting) {
+        await admin.from('invoices').update(invoiceFields).eq('id', retryExisting.id);
+      }
+    } else if (insertError) {
+      throw new Error(`Failed to insert invoice: ${insertError.message}`);
+    }
   }
 
-  // Handle EFOS detection
+  // Handle EFOS detection: update vendor and invoice atomically
   if (efos.isBlocked || efos.isRisky) {
     const issuerRfc = ((data.issuerRfc as string) || (data.issuer_rfc as string) || '').toUpperCase();
     if (issuerRfc) {
       const efosStatus = efos.isBlocked ? 'definitivo' : 'presunto';
-      await admin.from('vendors').update({ efos_status: efosStatus })
-        .eq('company_id', companyId).eq('rfc', issuerRfc);
+
+      // Update vendor EFOS status
+      const { error: vendorError } = await admin.from('vendors')
+        .update({ efos_status: efosStatus })
+        .eq('company_id', companyId)
+        .eq('rfc', issuerRfc);
+
+      if (vendorError) {
+        console.error(`[syntage-webhook] Failed to update vendor EFOS for ${issuerRfc}:`, vendorError.message);
+      }
 
       const severity = efos.isBlocked ? 'ALERTA CRÍTICA' : 'Advertencia';
       await notifyAdmins(
@@ -229,7 +255,7 @@ async function handleInvoiceEvent(
         companyId,
         'vendor.efos_detected',
         `${severity}: Proveedor en lista EFOS`,
-        `RFC ${issuerRfc} detectado como ${efos.label}. ${efos.isBlocked ? 'Los pagos a este proveedor están bloqueados.' : 'Se recomienda revisar la relación comercial.'}`
+        `RFC ${issuerRfc} detectado como ${efos.label}. ${efos.isBlocked ? 'Los pagos a este proveedor están bloqueados.' : 'Se recomienda revisar la relación comercial.'}`,
       );
     }
   }
@@ -237,9 +263,9 @@ async function handleInvoiceEvent(
 
 async function handleTaxStatusUpdated(
   admin: ReturnType<typeof getAdminClient>,
-  data: Record<string, unknown>
+  data: Record<string, unknown>,
 ) {
-  const taxpayerId = data.taxpayer_id as string || data.taxpayerId as string;
+  const taxpayerId = (data.taxpayer_id as string) || (data.taxpayerId as string);
   if (!taxpayerId) return;
 
   const { data: integration } = await admin.from('integrations')
@@ -255,15 +281,15 @@ async function handleTaxStatusUpdated(
     integration.company_id,
     'sat.tax_status_updated',
     'Constancia de situación fiscal actualizada',
-    'Se detectó un cambio en la constancia de situación fiscal ante el SAT.'
+    'Se detectó un cambio en la constancia de situación fiscal ante el SAT.',
   );
 }
 
 async function handleTaxComplianceCreated(
   admin: ReturnType<typeof getAdminClient>,
-  data: Record<string, unknown>
+  data: Record<string, unknown>,
 ) {
-  const taxpayerId = data.taxpayer_id as string || data.taxpayerId as string;
+  const taxpayerId = (data.taxpayer_id as string) || (data.taxpayerId as string);
   if (!taxpayerId) return;
 
   const { data: integration } = await admin.from('integrations')
@@ -282,19 +308,20 @@ async function handleTaxComplianceCreated(
     integration.company_id,
     'sat.tax_compliance',
     'Opinión de cumplimiento SAT',
-    `Resultado de opinión de cumplimiento: ${opinion}${!isPositive ? '. Se recomienda atención inmediata.' : '.'}`
+    `Resultado de opinión de cumplimiento: ${opinion}${!isPositive ? '. Se recomienda atención inmediata.' : '.'}`,
   );
 }
 
 // ---------------------------------------------------------------------------
 // Notification helper
 // ---------------------------------------------------------------------------
+
 async function notifyAdmins(
   admin: ReturnType<typeof getAdminClient>,
   companyId: string,
   eventType: string,
   title: string,
-  message: string
+  message: string,
 ) {
   const { data: admins } = await admin.from('user_companies')
     .select('user_id')
