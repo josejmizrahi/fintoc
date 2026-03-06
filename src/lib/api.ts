@@ -195,8 +195,24 @@ export const api = {
     me: () => get<any>('/api/auth/me'),
     resetPassword: (data: { email: string }) =>
       authRequest<any>('/api/auth/reset-password', data),
-    switchCompany: (data: { company_id: string }) =>
-      post<any>('/api/auth/switch-company', data),
+    switchCompany: async (data: { company_id: string | number }) => {
+      const refreshToken = typeof window !== 'undefined' ? localStorage.getItem('refresh_token') : null;
+      const headers: Record<string, string> = {};
+      if (refreshToken) headers['x-refresh-token'] = refreshToken;
+      const res = await request<any>('/api/auth/switch-company', {
+        method: 'POST',
+        body: JSON.stringify(data),
+        headers,
+      });
+      // Store new tokens if returned (JWT now has updated active_company_id)
+      if (res?.data?.access_token && typeof window !== 'undefined') {
+        localStorage.setItem('token', res.data.access_token);
+        if (res.data.refresh_token) {
+          localStorage.setItem('refresh_token', res.data.refresh_token);
+        }
+      }
+      return res?.data || res;
+    },
   },
 
   payments: {

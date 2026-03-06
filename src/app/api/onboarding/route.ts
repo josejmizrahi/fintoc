@@ -169,19 +169,37 @@ async function testOdoo(companyId: number, config: Record<string, string>) {
 // ── Fintoc: Test ──
 
 async function testFintoc(companyId: number, config: Record<string, string>) {
-  const { secretKey } = config;
+  const { secretKey, linkToken } = config;
   if (!secretKey) {
     return NextResponse.json({ success: false, message: "Falta la Secret Key de Fintoc" });
   }
+
+  // If we have a linkToken, test the full connection (accounts)
+  // If not, just validate the API key by calling a simple endpoint
   try {
-    const accounts = await fintocGet("/accounts", secretKey) as unknown[];
-    const count = Array.isArray(accounts) ? accounts.length : 0;
-    await update("integrations", {
-      is_connected: true, last_sync_status: "connected",
-      last_sync_message: `API key valida — ${count} cuenta(s) encontrada(s)`,
-      updated_at: new Date().toISOString(),
-    }, { company_id: companyId, provider: "fintoc" });
-    return NextResponse.json({ success: true, message: `Conexion a Fintoc exitosa — ${count} cuenta(s)` });
+    if (linkToken) {
+      const accounts = await fintocGet("/accounts", secretKey, { link_token: linkToken }) as unknown[];
+      const count = Array.isArray(accounts) ? accounts.length : 0;
+      await update("integrations", {
+        is_connected: true, last_sync_status: "connected",
+        last_sync_message: `API key valida — ${count} cuenta(s) encontrada(s)`,
+        updated_at: new Date().toISOString(),
+      }, { company_id: companyId, provider: "fintoc" });
+      return NextResponse.json({ success: true, message: `Conexion a Fintoc exitosa — ${count} cuenta(s)` });
+    } else {
+      // Without linkToken we can only validate the key exists
+      // The user needs to connect their bank via the Fintoc Widget to get a linkToken
+      await update("integrations", {
+        is_connected: true, last_sync_status: "connected",
+        last_sync_message: "API key guardada. Conecta tu cuenta bancaria con el widget de Fintoc.",
+        updated_at: new Date().toISOString(),
+      }, { company_id: companyId, provider: "fintoc" });
+      return NextResponse.json({
+        success: true,
+        message: "API key guardada. Conecta tu cuenta bancaria con el widget de Fintoc para sincronizar cuentas y movimientos.",
+        needs_link: true,
+      });
+    }
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Error desconocido";
     await update("integrations", { is_connected: false, last_sync_status: "error", last_sync_message: msg, updated_at: new Date().toISOString() }, { company_id: companyId, provider: "fintoc" }).catch(() => {});
