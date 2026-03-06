@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2 } from "lucide-react";
+import { Loader2, Settings } from "lucide-react";
 import { useForm, Controller } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -41,9 +41,9 @@ const preferencesSchema = z.object({
 
 type PreferencesForm = z.infer<typeof preferencesSchema>;
 
-/* ---------- Notification toggle row ---------- */
+/* ---------- Toggle row ---------- */
 
-function NotificationRow({
+function ToggleRow({
   label,
   description,
   control,
@@ -55,8 +55,8 @@ function NotificationRow({
   name: keyof PreferencesForm;
 }) {
   return (
-    <div className="flex items-center justify-between">
-      <div>
+    <div className="flex items-center justify-between gap-4">
+      <div className="min-w-0">
         <p className="text-sm">{label}</p>
         <p className="text-xs text-muted-foreground">{description}</p>
       </div>
@@ -67,6 +67,7 @@ function NotificationRow({
           <Switch
             checked={field.value as boolean}
             onCheckedChange={field.onChange}
+            className="shrink-0"
           />
         )}
       />
@@ -102,10 +103,18 @@ export function PreferencesTab() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Preferencias</CardTitle>
-        <CardDescription>
-          Configura moneda, zona horaria, notificaciones y automatizaciones.
-        </CardDescription>
+        <div className="flex items-center gap-2">
+          <div className="flex size-8 items-center justify-center rounded-lg bg-primary/10">
+            <Settings className="size-4 text-primary" />
+          </div>
+          <div>
+            <CardTitle>Preferencias</CardTitle>
+            <CardDescription>
+              Configura moneda, zona horaria, notificaciones y
+              automatizaciones.
+            </CardDescription>
+          </div>
+        </div>
       </CardHeader>
       <CardContent>
         <form
@@ -115,7 +124,7 @@ export function PreferencesTab() {
           {/* Regional */}
           <div>
             <p className="text-sm font-medium mb-4">Regional</p>
-            <div className="grid gap-4 sm:grid-cols-3">
+            <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
               <div className="space-y-2">
                 <Label>Moneda</Label>
                 <Controller
@@ -160,9 +169,7 @@ export function PreferencesTab() {
                         <SelectItem value="America/Tijuana">
                           Tijuana
                         </SelectItem>
-                        <SelectItem value="America/Cancun">
-                          Cancun
-                        </SelectItem>
+                        <SelectItem value="America/Cancun">Cancun</SelectItem>
                       </SelectContent>
                     </Select>
                   )}
@@ -199,19 +206,19 @@ export function PreferencesTab() {
           <div>
             <p className="text-sm font-medium mb-4">Notificaciones</p>
             <div className="space-y-4">
-              <NotificationRow
+              <ToggleRow
                 label="Pagos ejecutados"
                 description="Recibir notificacion cuando se ejecuta un pago."
                 control={form.control}
                 name="notify_payments"
               />
-              <NotificationRow
+              <ToggleRow
                 label="Aprobaciones pendientes"
                 description="Notificar cuando hay aprobaciones pendientes."
                 control={form.control}
                 name="notify_approvals"
               />
-              <NotificationRow
+              <ToggleRow
                 label="Facturas vencidas"
                 description="Notificar sobre facturas vencidas."
                 control={form.control}
@@ -226,14 +233,14 @@ export function PreferencesTab() {
           <div>
             <p className="text-sm font-medium mb-4">Automatizacion</p>
             <div className="space-y-4">
-              <NotificationRow
+              <ToggleRow
                 label="Validacion automatica SAT"
                 description="Validar automaticamente CFDIs nuevos contra el SAT."
                 control={form.control}
                 name="auto_validate_sat"
               />
-              <div className="flex items-center gap-4">
-                <div className="flex-1">
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
+                <div className="min-w-0 flex-1">
                   <p className="text-sm">Frecuencia de sincronizacion</p>
                   <p className="text-xs text-muted-foreground">
                     Cada cuanto sincronizar datos automaticamente.
@@ -247,7 +254,7 @@ export function PreferencesTab() {
                       value={field.value}
                       onValueChange={field.onChange}
                     >
-                      <SelectTrigger className="w-[160px]">
+                      <SelectTrigger className="w-full sm:w-[160px] shrink-0">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -266,7 +273,11 @@ export function PreferencesTab() {
           <Separator />
 
           <div className="flex justify-end">
-            <Button type="submit" disabled={saveMutation.isPending}>
+            <Button
+              type="submit"
+              disabled={saveMutation.isPending}
+              className="w-full sm:w-auto"
+            >
               {saveMutation.isPending && (
                 <Loader2 className="mr-2 size-4 animate-spin" />
               )}
