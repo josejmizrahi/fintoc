@@ -44,7 +44,11 @@ export function errorResponse(error: ApiError): Response {
       ...(error.details && { details: error.details }),
     },
   };
-  return Response.json(body, { status: error.status });
+  const headers: Record<string, string> = {};
+  if (error.status === 429 && error.details?.retry_after) {
+    headers['Retry-After'] = String(error.details.retry_after);
+  }
+  return Response.json(body, { status: error.status, headers });
 }
 
 export function handleError(err: unknown): Response {

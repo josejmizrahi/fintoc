@@ -202,8 +202,8 @@ function XmlViewerDialog({
     try {
       const data = await api.invoices.cfdi(invoiceId);
       setXml(data.xml || data.xml_content || "No se encontro contenido XML");
-    } catch (err: any) {
-      toast.error(err.message || "Error al cargar XML");
+    } catch (err: unknown) {
+      toast.error((err instanceof Error ? err.message : null) || "Error al cargar XML");
       setXml(null);
     } finally {
       setLoading(false);
@@ -293,8 +293,8 @@ function CancellationDialog({
       toast.success("Solicitud de cancelacion enviada");
       queryClient.invalidateQueries({ queryKey: invoiceKeys.all });
       onOpenChange(false);
-    } catch (err: any) {
-      toast.error(err.message || "Error al solicitar cancelacion");
+    } catch (err: unknown) {
+      toast.error((err instanceof Error ? err.message : null) || "Error al solicitar cancelacion");
     } finally {
       setLoading(false);
     }
@@ -480,6 +480,7 @@ function ComplementsDialog({
   onOpenChange: (open: boolean) => void;
   invoice: Invoice | null;
 }) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [complements, setComplements] = useState<any[] | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -490,8 +491,8 @@ function ComplementsDialog({
       const data = await api.invoices.cfdi(invoice.id);
       const comps = data.complementos || data.complemento_pago || [];
       setComplements(Array.isArray(comps) ? comps : [comps].filter(Boolean));
-    } catch (err: any) {
-      toast.error(err.message || "Error al cargar complementos");
+    } catch (err: unknown) {
+      toast.error((err instanceof Error ? err.message : null) || "Error al cargar complementos");
       setComplements([]);
     } finally {
       setLoading(false);
@@ -722,7 +723,7 @@ function InvoicePaymentsContent({ invoice }: { invoice: Invoice }) {
 function useInvoiceColumns(
   tab: "payable" | "receivable",
   onAction: (action: string, invoice: Invoice) => void
-): ColumnDef<Invoice, any>[] {
+): ColumnDef<Invoice, unknown>[] {
   const canValidate = usePermission("invoices:validate");
   const canCancelCfdi = usePermission("invoices:cancel-cfdi");
   const canCreatePayment = usePermission("payments:create");
@@ -989,7 +990,7 @@ export default function FacturasPage() {
   const receivableData: Invoice[] = Array.isArray(receivableQuery.data) ? receivableQuery.data : (receivableQuery.data?.data ?? []);
 
   const currentData = activeTab === "payable" ? payableData : receivableData;
-  const currentQuery = activeTab === "payable" ? payableQuery : receivableQuery;
+  const _currentQuery = activeTab === "payable" ? payableQuery : receivableQuery;
 
   // Filter bar values
   const [filterBarValues, setFilterBarValues] = useState<Record<string, string>>({});
@@ -1085,8 +1086,8 @@ export default function FacturasPage() {
         const newStatus = result.estado || result.sat_status || result.status;
         toast.success(`Validacion: ${newStatus || "completada"}`);
         queryClient.invalidateQueries({ queryKey: invoiceKeys.all });
-      } catch (err: any) {
-        toast.error(err.message || "Error al validar en SAT");
+      } catch (err: unknown) {
+        toast.error((err instanceof Error ? err.message : null) || "Error al validar en SAT");
       }
     },
     [queryClient]
@@ -1173,8 +1174,8 @@ export default function FacturasPage() {
       } else {
         toast.success("Link de cobro generado");
       }
-    } catch (err: any) {
-      toast.error(err.message || "Error al generar link de cobro");
+    } catch (err: unknown) {
+      toast.error((err instanceof Error ? err.message : null) || "Error al generar link de cobro");
     }
   }, []);
 
@@ -1232,8 +1233,8 @@ export default function FacturasPage() {
       await api.sync.trigger("odoo");
       toast.success("Sincronizacion con Odoo iniciada");
       queryClient.invalidateQueries({ queryKey: invoiceKeys.all });
-    } catch (err: any) {
-      toast.error(err.message || "Error al sincronizar");
+    } catch (err: unknown) {
+      toast.error((err instanceof Error ? err.message : null) || "Error al sincronizar");
     }
   }, [queryClient]);
 

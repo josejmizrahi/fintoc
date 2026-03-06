@@ -13,8 +13,9 @@ import {
   Plug,
 } from 'lucide-react';
 import { api } from '@/lib/api';
+import type { Payment, Invoice } from '@/types';
 import { useAuthStore } from '@/lib/store';
-import { formatMoney, formatDate, formatRelative } from '@/lib/utils/format';
+import { formatMoney, formatDate } from '@/lib/utils/format';
 import { StatusBadge } from '@/components/shared/status-badge';
 import { KpiCard } from '@/components/shared/kpi-card';
 import { EmptyState } from '@/components/shared/empty-state';
@@ -205,7 +206,7 @@ export default function DashboardPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {data.recent_payments.slice(0, 5).map((p: any) => (
+                  {data.recent_payments.slice(0, 5).map((p: Payment) => (
                     <TableRow key={p.id}>
                       <TableCell>
                         <div className="font-medium text-sm">{p.partner_name || p.reference_id || `PAY-${p.id}`}</div>
@@ -245,7 +246,7 @@ export default function DashboardPage() {
           <CardContent>
             {data.overdue_invoice_list?.length > 0 ? (
               <div className="space-y-3">
-                {data.overdue_invoice_list.slice(0, 5).map((inv: any) => (
+                {data.overdue_invoice_list.slice(0, 5).map((inv: Invoice) => (
                   <div key={inv.id} className="flex items-center justify-between py-2 border-b last:border-0">
                     <div>
                       <div className="font-medium text-sm">{inv.partner_name || inv.name}</div>

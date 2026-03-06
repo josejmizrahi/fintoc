@@ -1,5 +1,6 @@
 import { getAdminClient } from '@/lib/supabase/admin';
 import { syncSat } from '@/lib/integrations/sync-engine';
+import { verifyCronSecret } from '@/lib/middleware/cron-auth';
 
 interface CronResult {
   company_id: string;
@@ -10,10 +11,8 @@ interface CronResult {
 }
 
 export async function GET(req: Request): Promise<Response> {
-  const secret = req.headers.get('authorization')?.replace('Bearer ', '');
-  if (secret !== process.env.CRON_SECRET) {
-    return Response.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const authError = verifyCronSecret(req);
+  if (authError) return authError;
 
   const admin = getAdminClient();
   const results: CronResult[] = [];
@@ -46,8 +45,8 @@ export async function GET(req: Request): Promise<Response> {
             ? result.errors.map(e => `${e.entity}: ${e.message}`).join('; ')
             : undefined,
         });
-      } catch (err: any) {
-        if (err?.code === 'SYNC_IN_PROGRESS') {
+      } catch (err: unknown) {
+        if (err instanceof Error && (err as Error & { code?: string }).code === 'SYNC_IN_PROGRESS') {
           results.push({ company_id: integration.company_id, status: 'skipped', skipped: true, error: 'Sync already running' });
         } else {
           results.push({

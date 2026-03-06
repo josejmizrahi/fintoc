@@ -4,8 +4,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock Supabase
-const mockData = vi.fn();
-const mockError = vi.fn();
 const mockMaybeSingle = vi.fn();
 const mockSingle = vi.fn();
 const mockLimit = vi.fn(() => ({ maybeSingle: mockMaybeSingle, single: mockSingle }));

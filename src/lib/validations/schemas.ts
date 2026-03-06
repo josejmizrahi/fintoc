@@ -4,10 +4,24 @@ import { z } from 'zod';
 // Entity IDs: database uses integer PKs. Accept both numbers and numeric strings.
 const entityId = z.union([z.number().int().positive(), z.string().regex(/^\d+$/, 'ID must be numeric')]).transform(v => typeof v === 'string' ? parseInt(v, 10) : v);
 const rfcRegex = /^[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}$/;
-const clabeRegex = /^\d{18}$/;
+
+/**
+ * Validates CLABE check digit (last digit) using the standard modulus 10 algorithm.
+ * Weights cycle: [3, 7, 1] applied to each digit, summed mod 10, check = (10 - sum) mod 10.
+ */
+function isValidClabe(clabe: string): boolean {
+  if (!/^\d{18}$/.test(clabe)) return false;
+  const weights = [3, 7, 1];
+  let sum = 0;
+  for (let i = 0; i < 17; i++) {
+    sum += (parseInt(clabe[i], 10) * weights[i % 3]) % 10;
+  }
+  const checkDigit = (10 - (sum % 10)) % 10;
+  return checkDigit === parseInt(clabe[17], 10);
+}
 
 export const rfcSchema = z.string().min(12).max(13).regex(rfcRegex, 'Formato de RFC invalido');
-export const clabeSchema = z.string().length(18).regex(clabeRegex, 'CLABE debe ser 18 digitos');
+export const clabeSchema = z.string().length(18).refine(isValidClabe, { message: 'CLABE invalida (digito verificador incorrecto)' });
 export const emailSchema = z.string().email().transform(v => v.toLowerCase());
 
 // --- Auth ---

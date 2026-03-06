@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { type ColumnDef } from "@tanstack/react-table";
 import {
   DollarSign,
@@ -37,8 +37,6 @@ import { KpiCard } from "@/components/shared/kpi-card";
 import { EmptyState } from "@/components/shared/empty-state";
 import { PermissionGate } from "@/components/shared/permission-gate";
 import { SearchInput } from "@/components/shared/search-input";
-import { StatusBadge } from "@/components/shared/status-badge";
-
 import {
   useTreasurySnapshot,
   useTreasuryForecast,
@@ -69,12 +67,18 @@ interface BankAccount {
 
 /* ---------- Forecast Chart Tooltip ---------- */
 
-function ForecastTooltip({ active, payload, label }: any) {
+interface ForecastTooltipProps {
+  active?: boolean;
+  payload?: Array<{ name: string; value: number; color: string }>;
+  label?: string;
+}
+
+function ForecastTooltip({ active, payload, label }: ForecastTooltipProps) {
   if (!active || !payload?.length) return null;
   return (
     <div className="rounded-lg border bg-background p-3 shadow-md">
       <p className="mb-1 text-sm font-medium">{label}</p>
-      {payload.map((entry: any) => (
+      {payload.map((entry) => (
         <p key={entry.name} className="text-xs" style={{ color: entry.color }}>
           {entry.name}: {formatMoney(entry.value)}
         </p>
@@ -85,12 +89,12 @@ function ForecastTooltip({ active, payload, label }: any) {
 
 /* ---------- Columns ---------- */
 
-const movementColumns: ColumnDef<Movement, any>[] = [
+const movementColumns: ColumnDef<Movement, unknown>[] = [
   {
     accessorKey: "date",
     header: "Fecha",
     cell: ({ getValue }) => (
-      <span className="text-muted-foreground">{formatDate(getValue())}</span>
+      <span className="text-muted-foreground">{formatDate(getValue() as string)}</span>
     ),
   },
   {
@@ -177,30 +181,30 @@ export default function TesoreriaPage() {
   const chartData = useMemo(() => {
     if (!forecast) return [];
     const items = Array.isArray(forecast) ? forecast : forecast.data ?? [];
-    return items.map((f: any) => ({
-      date: new Date(f.date).toLocaleDateString("es-MX", {
+    return items.map((f: Record<string, unknown>) => ({
+      date: new Date(f.date as string).toLocaleDateString("es-MX", {
         day: "2-digit",
         month: "short",
       }),
-      optimista: f.optimistic ?? f.expected_inflows ?? 0,
-      base: f.projected_balance ?? f.base ?? 0,
-      pesimista: f.pessimistic ?? f.expected_outflows ?? 0,
+      optimista: (f.optimistic as number) ?? (f.expected_inflows as number) ?? 0,
+      base: (f.projected_balance as number) ?? (f.base as number) ?? 0,
+      pesimista: (f.pessimistic as number) ?? (f.expected_outflows as number) ?? 0,
     }));
   }, [forecast]);
 
   const movementsList: Movement[] = useMemo(() => {
     if (!movements) return [];
-    return Array.isArray(movements) ? movements : (movements as any).data ?? [];
+    return Array.isArray(movements) ? movements : (movements as Record<string, unknown>).data as Movement[] ?? [];
   }, [movements]);
 
   const accounts: BankAccount[] = useMemo(() => {
     if (!snapshot) return [];
-    return (snapshot as any).accounts ?? [];
+    return (snapshot as Record<string, unknown>).accounts as BankAccount[] ?? [];
   }, [snapshot]);
 
   const totalMovements = Array.isArray(movements)
     ? movements.length
-    : (movements as any)?.total ?? 0;
+    : (movements as Record<string, unknown>)?.total as number ?? 0;
 
   return (
     <PermissionGate

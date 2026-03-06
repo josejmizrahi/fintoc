@@ -1,7 +1,7 @@
 "use client";
 
 import { Loader2, Settings } from "lucide-react";
-import { useForm, Controller } from "react-hook-form";
+import { useForm, Controller, type Control } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation } from "@tanstack/react-query";
@@ -51,7 +51,7 @@ function ToggleRow({
 }: {
   label: string;
   description: string;
-  control: any;
+  control: Control<PreferencesForm>;
   name: keyof PreferencesForm;
 }) {
   return (
@@ -94,7 +94,7 @@ export function PreferencesTab() {
 
   const saveMutation = useMutation({
     mutationFn: (data: PreferencesForm) =>
-      api.onboarding.save("general", data as any),
+      api.onboarding.save("general", data as unknown as Record<string, string>),
     onSuccess: () => toast.success("Preferencias guardadas"),
     onError: (err: Error) =>
       toast.error(err.message || "Error al guardar preferencias"),

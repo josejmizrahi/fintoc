@@ -11,19 +11,14 @@ import {
   Download,
   RefreshCw,
   Loader2,
-  CheckCircle2,
-  XCircle,
-  AlertTriangle,
   Shield,
   ShieldAlert,
-  Clock,
   Eye,
   FileDown,
   Play,
   Square,
   Calendar,
   Building2,
-  Search,
 } from "lucide-react";
 
 import { api } from "@/lib/api";
@@ -46,8 +41,6 @@ import {
   CardTitle,
   CardDescription,
 } from "@/components/ui/card";
-import { Progress } from "@/components/ui/progress";
-import { Separator } from "@/components/ui/separator";
 import {
   Dialog,
   DialogContent,
@@ -201,7 +194,7 @@ const satKeys = {
 
 export default function SatPage() {
   const [activeTab, setActiveTab] = useState("facturas");
-  const queryClient = useQueryClient();
+  const _queryClient = useQueryClient();
 
   // ── Connection status ──
   const statusQuery = useQuery({
@@ -358,7 +351,7 @@ function InvoicesTab({ taxpayerId }: { taxpayerId: string }) {
 
   const extractMutation = useMutation({
     mutationFn: (data: { extractor?: string; options?: unknown }) =>
-      api.sat.syntage.extract(taxpayerId, data.extractor, data.options as any),
+      api.sat.syntage.extract(taxpayerId, data.extractor, data.options as Record<string, unknown>),
     onSuccess: () => {
       toast.success("Extraction creada. Syntage descargara las facturas del SAT.");
       queryClient.invalidateQueries({ queryKey: satKeys.extractions() });
@@ -490,7 +483,7 @@ function InvoicesTab({ taxpayerId }: { taxpayerId: string }) {
       const data = await api.sat.syntage.invoiceCfdi(invoiceId);
       if (data.downloadUrl) window.open(data.downloadUrl, "_blank");
       else toast.info("CFDI descargado");
-    } catch (e) {
+    } catch {
       toast.error("Error al descargar CFDI");
     }
   }
@@ -660,7 +653,7 @@ function ExtractionsTab({ taxpayerId }: { taxpayerId: string }) {
 
   const createMutation = useMutation({
     mutationFn: (data: { extractor: string; options?: unknown }) =>
-      api.sat.syntage.extract(taxpayerId, data.extractor, data.options as any),
+      api.sat.syntage.extract(taxpayerId, data.extractor, data.options as Record<string, unknown>),
     onSuccess: () => {
       toast.success("Extraction creada exitosamente");
       queryClient.invalidateQueries({ queryKey: satKeys.extractions() });
@@ -1090,7 +1083,7 @@ function TaxReturnsTab({ taxpayerId }: { taxpayerId: string }) {
 function NewExtractionDialog({
   open,
   onClose,
-  taxpayerId,
+  taxpayerId: _taxpayerId,
   defaultExtractor,
   onSubmit,
   isLoading,

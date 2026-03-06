@@ -31,7 +31,7 @@ export function useCustomer(id: string) {
 export function useCreateCustomer() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (data: any) => api.customers.create(data),
+    mutationFn: (data: Record<string, unknown>) => api.customers.create(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: customerKeys.all });
       toast.success('Cliente creado exitosamente');
@@ -45,7 +45,7 @@ export function useCreateCustomer() {
 export function useUpdateCustomer() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, data }: { id: string; data: any }) => api.customers.update(id, data),
+    mutationFn: ({ id, data }: { id: string; data: Record<string, unknown> }) => api.customers.update(id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: customerKeys.all });
       toast.success('Cliente actualizado exitosamente');

@@ -186,12 +186,18 @@ function useReportQuery(key: ReportType | null, period: Period) {
 /* Chart tooltip                                                       */
 /* ------------------------------------------------------------------ */
 
-function ChartTooltipContent({ active, payload, label }: any) {
+interface ChartTooltipContentProps {
+  active?: boolean;
+  payload?: Array<{ name: string; value: number; color: string }>;
+  label?: string;
+}
+
+function ChartTooltipContent({ active, payload, label }: ChartTooltipContentProps) {
   if (!active || !payload?.length) return null;
   return (
     <div className="rounded-lg border bg-background p-3 shadow-md">
       <p className="mb-1 text-sm font-medium">{label}</p>
-      {payload.map((entry: any) => (
+      {payload.map((entry) => (
         <p key={entry.name} className="text-xs" style={{ color: entry.color }}>
           {entry.name}: {formatMoney(entry.value)}
         </p>
@@ -234,6 +240,7 @@ function ReportDetailDialog({
       if (!report) return;
       setExporting(format);
       try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         let result: any;
         switch (report.key) {
           case "cash-flow":
@@ -270,9 +277,9 @@ function ReportDetailDialog({
         toast.success(
           `Exportacion ${format.toUpperCase()} generada exitosamente`,
         );
-      } catch (err: any) {
+      } catch (err: unknown) {
         toast.error(
-          err?.message || `Error al exportar en formato ${format.toUpperCase()}`,
+          (err instanceof Error ? err.message : null) || `Error al exportar en formato ${format.toUpperCase()}`,
         );
       } finally {
         setExporting(null);
@@ -429,20 +436,20 @@ function ReportDetailDialog({
                 </TableHeader>
                 <TableBody>
                   {(data.details || data.entries).map(
-                    (row: any, idx: number) => (
+                    (row: Record<string, unknown>, idx: number) => (
                       <TableRow key={idx}>
                         <TableCell className="font-medium">
-                          {row.date || "-"}
+                          {(row.date as string) || "-"}
                         </TableCell>
                         <TableCell className="text-right font-mono text-green-600">
-                          {formatMoney(row.inflows ?? 0)}
+                          {formatMoney((row.inflows as number) ?? 0)}
                         </TableCell>
                         <TableCell className="text-right font-mono text-red-600">
-                          {formatMoney(row.outflows ?? 0)}
+                          {formatMoney((row.outflows as number) ?? 0)}
                         </TableCell>
                         <TableCell className="text-right font-mono">
                           {formatMoney(
-                            (row.inflows ?? 0) - (row.outflows ?? 0),
+                            ((row.inflows as number) ?? 0) - ((row.outflows as number) ?? 0),
                           )}
                         </TableCell>
                       </TableRow>
@@ -493,16 +500,16 @@ function ReportDetailDialog({
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {(data.buckets || data).map((b: any, i: number) => (
+                    {(data.buckets || data).map((b: Record<string, unknown>, i: number) => (
                       <TableRow key={i}>
                         <TableCell className="font-medium">
-                          {b.range || b.bucket || b.label || "-"}
+                          {(b.range as string) || (b.bucket as string) || (b.label as string) || "-"}
                         </TableCell>
                         <TableCell className="text-right font-mono">
-                          {formatMoney(b.amount ?? b.total ?? 0)}
+                          {formatMoney((b.amount as number) ?? (b.total as number) ?? 0)}
                         </TableCell>
                         <TableCell className="text-right">
-                          {b.count ?? b.invoices ?? "-"}
+                          {(b.count as number) ?? (b.invoices as number) ?? "-"}
                         </TableCell>
                       </TableRow>
                     ))}
@@ -580,8 +587,8 @@ function ReportDetailDialog({
                     cy="50%"
                     outerRadius={100}
                     dataKey="value"
-                    label={(props: any) =>
-                      `${props.name} (${((props.percent ?? 0) * 100).toFixed(0)}%)`
+                    label={(props: { name?: string; percent?: number }) =>
+                      `${props.name ?? ''} (${((props.percent ?? 0) * 100).toFixed(0)}%)`
                     }
                   >
                     {PIE_COLORS.map((color, i) => (
@@ -604,11 +611,11 @@ function ReportDetailDialog({
               <div className="h-[350px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart
-                    data={data.map((item: any) => ({
-                      name: item.category || item.name || "-",
+                    data={data.map((item: Record<string, unknown>) => ({
+                      name: (item.category as string) || (item.name as string) || "-",
                       Presupuestado:
-                        item.amount_budgeted ?? item.budgeted ?? 0,
-                      Real: item.amount_spent ?? item.actual ?? 0,
+                        (item.amount_budgeted as number) ?? (item.budgeted as number) ?? 0,
+                      Real: (item.amount_spent as number) ?? (item.actual as number) ?? 0,
                     }))}
                   >
                     <CartesianGrid
@@ -645,15 +652,15 @@ function ReportDetailDialog({
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {data.map((item: any, idx: number) => {
+                  {data.map((item: Record<string, unknown>, idx: number) => {
                     const budgeted =
-                      item.amount_budgeted ?? item.budgeted ?? 0;
-                    const spent = item.amount_spent ?? item.actual ?? 0;
+                      (item.amount_budgeted as number) ?? (item.budgeted as number) ?? 0;
+                    const spent = (item.amount_spent as number) ?? (item.actual as number) ?? 0;
                     const variance = budgeted - spent;
                     return (
                       <TableRow key={idx}>
                         <TableCell className="font-medium">
-                          {item.name || item.category || "-"}
+                          {(item.name as string) || (item.category as string) || "-"}
                         </TableCell>
                         <TableCell className="text-right font-mono">
                           {formatMoney(budgeted)}
@@ -701,22 +708,22 @@ function ReportDetailDialog({
                     </TableCell>
                   </TableRow>
                 )}
-                {data.map((v: any, idx: number) => (
+                {data.map((v: Record<string, unknown>, idx: number) => (
                   <TableRow key={idx}>
                     <TableCell className="font-medium">
-                      {v.name || v.vendor_name || "-"}
+                      {(v.name as string) || (v.vendor_name as string) || "-"}
                     </TableCell>
                     <TableCell className="font-mono text-sm">
-                      {v.rfc || v.vat || "-"}
+                      {(v.rfc as string) || (v.vat as string) || "-"}
                     </TableCell>
                     <TableCell className="text-right font-mono">
-                      {formatMoney(v.total_paid ?? v.paid ?? 0)}
+                      {formatMoney((v.total_paid as number) ?? (v.paid as number) ?? 0)}
                     </TableCell>
                     <TableCell className="text-right font-mono">
-                      {formatMoney(v.total_pending ?? v.pending ?? 0)}
+                      {formatMoney((v.total_pending as number) ?? (v.pending as number) ?? 0)}
                     </TableCell>
                     <TableCell className="text-right">
-                      {v.invoice_count ?? v.bills ?? "-"}
+                      {(v.invoice_count as number) ?? (v.bills as number) ?? "-"}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -749,22 +756,22 @@ function ReportDetailDialog({
                     </TableCell>
                   </TableRow>
                 )}
-                {data.map((c: any, idx: number) => (
+                {data.map((c: Record<string, unknown>, idx: number) => (
                   <TableRow key={idx}>
                     <TableCell className="font-medium">
-                      {c.name || c.customer_name || "-"}
+                      {(c.name as string) || (c.customer_name as string) || "-"}
                     </TableCell>
                     <TableCell className="font-mono text-sm">
-                      {c.rfc || c.vat || "-"}
+                      {(c.rfc as string) || (c.vat as string) || "-"}
                     </TableCell>
                     <TableCell className="text-right font-mono">
-                      {formatMoney(c.total_collected ?? c.collected ?? 0)}
+                      {formatMoney((c.total_collected as number) ?? (c.collected as number) ?? 0)}
                     </TableCell>
                     <TableCell className="text-right font-mono">
-                      {formatMoney(c.total_pending ?? c.pending ?? 0)}
+                      {formatMoney((c.total_pending as number) ?? (c.pending as number) ?? 0)}
                     </TableCell>
                     <TableCell className="text-right">
-                      {c.invoice_count ?? c.invoices ?? "-"}
+                      {(c.invoice_count as number) ?? (c.invoices as number) ?? "-"}
                     </TableCell>
                   </TableRow>
                 ))}

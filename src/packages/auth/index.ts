@@ -5,7 +5,6 @@
  * No JWT claims needed — always fresh, no stale tokens.
  */
 import { getAdminClient } from '@/lib/supabase/admin';
-import { createClient } from '@/lib/supabase/server';
 import { ApiError } from '@/lib/utils/errors';
 
 export interface AuthContext {

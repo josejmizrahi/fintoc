@@ -65,25 +65,50 @@ interface ReconciliationPeriod {
   period_end: string;
 }
 
+interface ReconciliationRecord {
+  id?: string;
+  uuid?: string;
+  rfc_emisor?: string;
+  rfc_receptor?: string;
+  fecha?: string;
+  monto?: number;
+  monto_sat?: number;
+  monto_odoo?: number;
+  odoo_ref?: string;
+  partner?: string;
+  invoice_ref?: string;
+  bank_ref?: string;
+  app_ref?: string;
+  descripcion?: string;
+  type?: string;
+  reconciliation_type?: string;
+  period?: string;
+  matched?: number;
+  unmatched?: number;
+  discrepancies?: number;
+  created_at?: string;
+  status?: string;
+}
+
 interface SatOdooResult {
-  matched: any[];
-  in_sat_not_odoo: any[];
-  in_odoo_not_sat: any[];
-  amount_differences: any[];
+  matched: ReconciliationRecord[];
+  in_sat_not_odoo: ReconciliationRecord[];
+  in_odoo_not_sat: ReconciliationRecord[];
+  amount_differences: ReconciliationRecord[];
   last_run?: string;
 }
 
 interface SatAppResult {
-  matched: any[];
-  in_sat_only: any[];
-  in_app_only: any[];
+  matched: ReconciliationRecord[];
+  in_sat_only: ReconciliationRecord[];
+  in_app_only: ReconciliationRecord[];
   last_run?: string;
 }
 
 interface BancoAppResult {
-  matched: any[];
-  in_banco_only: any[];
-  in_app_only: any[];
+  matched: ReconciliationRecord[];
+  in_banco_only: ReconciliationRecord[];
+  in_app_only: ReconciliationRecord[];
   last_run?: string;
 }
 
@@ -332,7 +357,7 @@ export default function ConciliacionPage() {
 
     const cleanup = satOdooProgress.start();
     satOdooMutation.mutate(period, {
-      onSuccess: (data: any) => {
+      onSuccess: (data: SatOdooResult) => {
         setSatOdooResult(data);
         satOdooProgress.stop();
       },
@@ -381,7 +406,7 @@ export default function ConciliacionPage() {
 
     const cleanup = satAppProgress.start();
     satAppMutation.mutate(period, {
-      onSuccess: (data: any) => {
+      onSuccess: (data: SatAppResult) => {
         setSatAppResult(data);
         satAppProgress.stop();
       },
@@ -430,7 +455,7 @@ export default function ConciliacionPage() {
 
     const cleanup = bancoAppProgress.start();
     bancoAppMutation.mutate(period, {
-      onSuccess: (data: any) => {
+      onSuccess: (data: BancoAppResult) => {
         setBancoAppResult(data);
         bancoAppProgress.stop();
       },
@@ -457,7 +482,7 @@ export default function ConciliacionPage() {
   /* ---------- Column Definitions ---------- */
 
   // SAT-Odoo: Matched
-  const matchedColumns: ColumnDef<any, any>[] = useMemo(
+  const matchedColumns: ColumnDef<ReconciliationRecord, unknown>[] = useMemo(
     () => [
       { accessorKey: "uuid", header: "UUID", cell: ({ row }) => (
         <span className="font-mono text-xs">{row.original.uuid}</span>
@@ -477,7 +502,7 @@ export default function ConciliacionPage() {
   );
 
   // SAT-Odoo: In SAT not Odoo
-  const inSatNotOdooColumns: ColumnDef<any, any>[] = useMemo(
+  const inSatNotOdooColumns: ColumnDef<ReconciliationRecord, unknown>[] = useMemo(
     () => [
       { accessorKey: "uuid", header: "UUID", cell: ({ row }) => (
         <span className="font-mono text-xs">{row.original.uuid}</span>
@@ -515,7 +540,7 @@ export default function ConciliacionPage() {
   );
 
   // SAT-Odoo: In Odoo not SAT
-  const inOdooNotSatColumns: ColumnDef<any, any>[] = useMemo(
+  const inOdooNotSatColumns: ColumnDef<ReconciliationRecord, unknown>[] = useMemo(
     () => [
       { accessorKey: "odoo_ref", header: "Ref. Odoo" },
       { accessorKey: "partner", header: "Socio" },
@@ -589,7 +614,7 @@ export default function ConciliacionPage() {
   );
 
   // SAT-Odoo: Amount differences
-  const amountDiffColumns: ColumnDef<any, any>[] = useMemo(
+  const amountDiffColumns: ColumnDef<ReconciliationRecord, unknown>[] = useMemo(
     () => [
       { accessorKey: "uuid", header: "UUID", cell: ({ row }) => (
         <span className="font-mono text-xs">{row.original.uuid}</span>
@@ -633,7 +658,7 @@ export default function ConciliacionPage() {
   );
 
   // SAT-App: matched
-  const satAppMatchedColumns: ColumnDef<any, any>[] = useMemo(
+  const satAppMatchedColumns: ColumnDef<ReconciliationRecord, unknown>[] = useMemo(
     () => [
       { accessorKey: "uuid", header: "UUID", cell: ({ row }) => (
         <span className="font-mono text-xs">{row.original.uuid}</span>
@@ -653,7 +678,7 @@ export default function ConciliacionPage() {
   );
 
   // SAT-App: SAT only
-  const satAppSatOnlyColumns: ColumnDef<any, any>[] = useMemo(
+  const satAppSatOnlyColumns: ColumnDef<ReconciliationRecord, unknown>[] = useMemo(
     () => [
       { accessorKey: "uuid", header: "UUID", cell: ({ row }) => (
         <span className="font-mono text-xs">{row.original.uuid}</span>
@@ -691,7 +716,7 @@ export default function ConciliacionPage() {
   );
 
   // SAT-App: App only
-  const satAppAppOnlyColumns: ColumnDef<any, any>[] = useMemo(
+  const satAppAppOnlyColumns: ColumnDef<ReconciliationRecord, unknown>[] = useMemo(
     () => [
       { accessorKey: "invoice_ref", header: "Ref. Factura" },
       { accessorKey: "partner", header: "Cliente" },
@@ -747,7 +772,7 @@ export default function ConciliacionPage() {
   );
 
   // Banco-App: matched
-  const bancoMatchedColumns: ColumnDef<any, any>[] = useMemo(
+  const bancoMatchedColumns: ColumnDef<ReconciliationRecord, unknown>[] = useMemo(
     () => [
       { accessorKey: "bank_ref", header: "Ref. Banco" },
       { accessorKey: "app_ref", header: "Ref. App" },
@@ -765,7 +790,7 @@ export default function ConciliacionPage() {
   );
 
   // Banco-App: banco only
-  const bancoBancoOnlyColumns: ColumnDef<any, any>[] = useMemo(
+  const bancoBancoOnlyColumns: ColumnDef<ReconciliationRecord, unknown>[] = useMemo(
     () => [
       { accessorKey: "bank_ref", header: "Ref. Banco" },
       { accessorKey: "descripcion", header: "Descripcion" },
@@ -780,7 +805,7 @@ export default function ConciliacionPage() {
           <Select
             value={manualMatchId === row.original.id ? manualMatchTarget : ""}
             onValueChange={(val) => {
-              setManualMatchId(row.original.id);
+              setManualMatchId(row.original.id ?? null);
               setManualMatchTarget(val);
             }}
           >
@@ -788,8 +813,8 @@ export default function ConciliacionPage() {
               <SelectValue placeholder="Seleccionar pago..." />
             </SelectTrigger>
             <SelectContent>
-              {(bancoAppResult?.in_app_only ?? []).map((appItem: any) => (
-                <SelectItem key={appItem.id ?? appItem.app_ref} value={appItem.id ?? appItem.app_ref}>
+              {(bancoAppResult?.in_app_only ?? []).map((appItem: ReconciliationRecord) => (
+                <SelectItem key={appItem.id ?? appItem.app_ref ?? ''} value={appItem.id ?? appItem.app_ref ?? ''}>
                   {appItem.app_ref} - {formatMoney(appItem.monto ?? 0)}
                 </SelectItem>
               ))}
@@ -823,7 +848,7 @@ export default function ConciliacionPage() {
   );
 
   // Banco-App: app only
-  const bancoAppOnlyColumns: ColumnDef<any, any>[] = useMemo(
+  const bancoAppOnlyColumns: ColumnDef<ReconciliationRecord, unknown>[] = useMemo(
     () => [
       { accessorKey: "app_ref", header: "Ref. App" },
       { accessorKey: "partner", header: "Cliente/Proveedor" },
@@ -860,7 +885,7 @@ export default function ConciliacionPage() {
   );
 
   // History columns
-  const historyColumns: ColumnDef<any, any>[] = useMemo(
+  const historyColumns: ColumnDef<ReconciliationRecord, unknown>[] = useMemo(
     () => [
       { accessorKey: "id", header: "ID", cell: ({ row }) => (
         <span className="font-medium">#{row.original.id}</span>

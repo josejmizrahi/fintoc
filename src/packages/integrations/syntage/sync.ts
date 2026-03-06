@@ -62,7 +62,7 @@ export class SyntageSyncProvider extends BaseSyncProvider<SyntageSyncConfig> {
    * For SAT, "fetch" means creating extractions (async jobs).
    * The actual data arrives via webhooks later.
    */
-  async fetch(config: SyntageSyncConfig, opts: SyncProviderConfig): Promise<SyncData> {
+  async fetch(config: SyntageSyncConfig, _opts: SyncProviderConfig): Promise<SyncData> {
     const extractions: Array<ExtractionResult & { _extractor: Extractor }> = [];
     this.extractionResults = [];
 

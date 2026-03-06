@@ -1,4 +1,4 @@
-import type { Payment, Invoice, Vendor, Customer, Expense, Budget, Notification, BankMovement } from '@/types';
+import type { Payment, Invoice, Vendor, Customer, Expense, Budget, Notification } from '@/types';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || '';
 
@@ -189,36 +189,42 @@ export const api = {
 
   auth: {
     register: (data: { email: string; password: string; full_name?: string; company_name: string; rfc: string }) =>
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       authRequest<any>('/api/auth/register', data),
     login: (data: { email: string; password: string }) =>
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       authRequest<any>('/api/auth/login', data),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     me: () => get<any>('/api/auth/me'),
     resetPassword: (data: { email: string }) =>
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       authRequest<any>('/api/auth/reset-password', data),
     switchCompany: async (data: { company_id: string | number }) => {
       const refreshToken = typeof window !== 'undefined' ? localStorage.getItem('refresh_token') : null;
       const headers: Record<string, string> = {};
       if (refreshToken) headers['x-refresh-token'] = refreshToken;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const res = await request<any>('/api/auth/switch-company', {
         method: 'POST',
         body: JSON.stringify(data),
         headers,
       });
       // Store new tokens if returned (JWT now has updated active_company_id)
-      if (res?.data?.access_token && typeof window !== 'undefined') {
-        localStorage.setItem('token', res.data.access_token);
-        if (res.data.refresh_token) {
-          localStorage.setItem('refresh_token', res.data.refresh_token);
+      const resData = res?.data as Record<string, unknown> | undefined;
+      if (resData?.access_token && typeof window !== 'undefined') {
+        localStorage.setItem('token', resData.access_token as string);
+        if (resData.refresh_token) {
+          localStorage.setItem('refresh_token', resData.refresh_token as string);
         }
       }
-      return res?.data || res;
+      return resData || res;
     },
   },
 
   payments: {
     list: (params?: Record<string, unknown>) => get<PaginatedResponse<Payment>>('/api/payments', params),
     get: (id: string) => get<{ data: Payment }>(`/api/payments/${id}`),
-    create: (data: any) => post<{ data: Payment }>('/api/payments', data),
+    create: (data: Record<string, unknown>) => post<{ data: Payment }>('/api/payments', data),
     execute: (data: { payment_id: string }) => post<{ data: Payment }>('/api/payments/execute', data),
     executeBatch: (data: { payment_ids: string[] }) => post<any>('/api/payments/execute-batch', data),
     cancel: (id: string) => post<{ data: Payment }>(`/api/payments/${id}/cancel`),
@@ -239,19 +245,19 @@ export const api = {
   },
 
   vendors: {
-    list: (params?: Record<string, unknown>) => get<any>('/api/vendors', params),
+    list: (params?: Record<string, unknown>) => get<PaginatedResponse<Vendor>>('/api/vendors', params),
     get: (id: string) => get<{ data: Vendor }>(`/api/vendors/${id}`),
-    create: (data: any) => post<{ data: Vendor }>('/api/vendors', data),
-    update: (id: string, data: any) => put<{ data: Vendor }>(`/api/vendors/${id}`, data),
+    create: (data: Record<string, unknown>) => post<{ data: Vendor }>('/api/vendors', data),
+    update: (id: string, data: Record<string, unknown>) => put<{ data: Vendor }>(`/api/vendors/${id}`, data),
     verifyClabe: (id: string) => post<any>(`/api/vendors/${id}/verify-clabe`),
     bills: (id: string) => get<Invoice[]>(`/api/vendors/${id}/bills`),
   },
 
   customers: {
-    list: (params?: Record<string, unknown>) => get<any>('/api/customers', params),
+    list: (params?: Record<string, unknown>) => get<PaginatedResponse<Customer>>('/api/customers', params),
     get: (id: string) => get<{ data: Customer }>(`/api/customers/${id}`),
-    create: (data: any) => post<{ data: Customer }>('/api/customers', data),
-    update: (id: string, data: any) => put<{ data: Customer }>(`/api/customers/${id}`, data),
+    create: (data: Record<string, unknown>) => post<{ data: Customer }>('/api/customers', data),
+    update: (id: string, data: Record<string, unknown>) => put<{ data: Customer }>(`/api/customers/${id}`, data),
     createClabe: (id: string) => post<any>(`/api/customers/${id}/create-clabe`),
     invoices: (id: string) => get<Invoice[]>(`/api/customers/${id}/invoices`),
     search: (q: string) => get<Customer[]>('/api/customers/search', { q }),
@@ -261,15 +267,15 @@ export const api = {
     pending: (params?: Record<string, unknown>) => get<any>('/api/collections/pending', params),
     overdue: (params?: Record<string, unknown>) => get<any>('/api/collections/overdue', params),
     aging: () => get<any>('/api/collections/aging'),
-    paymentLink: (data: any) => post<any>('/api/collections/payment-links', data),
-    sendReminder: (data: any) => post<any>('/api/collections/send-reminder', data),
+    paymentLink: (data: Record<string, unknown>) => post<any>('/api/collections/payment-links', data),
+    sendReminder: (data: Record<string, unknown>) => post<any>('/api/collections/send-reminder', data),
     summary: () => get<any>('/api/collections/summary'),
     overdueSummary: () => get<any>('/api/collections/overdue-summary'),
   },
 
   expenses: {
     list: (params?: Record<string, unknown>) => get<PaginatedResponse<Expense>>('/api/expenses', params),
-    create: (data: any) => post<{ data: Expense }>('/api/expenses', data),
+    create: (data: Record<string, unknown>) => post<{ data: Expense }>('/api/expenses', data),
     approve: (id: string) => post<{ data: Expense }>(`/api/expenses/${id}/approve`),
     reject: (id: string, reason: string) => post<{ data: Expense }>(`/api/expenses/${id}/reject`, { reason }),
     summary: () => get<any>('/api/expenses/summary'),
@@ -287,29 +293,29 @@ export const api = {
   budgets: {
     list: () => get<{ data: Budget[] }>('/api/budgets'),
     get: (id: string) => get<{ data: Budget }>(`/api/budgets/${id}`),
-    create: (data: any) => post<{ data: Budget }>('/api/budgets', data),
+    create: (data: Record<string, unknown>) => post<{ data: Budget }>('/api/budgets', data),
     vsActual: () => get<any>('/api/budgets/vs-actual'),
   },
 
   approvals: {
     rules: () => get<{ data: any[] }>('/api/approvals/rules'),
-    createRule: (data: any) => post<any>('/api/approvals/rules', data),
+    createRule: (data: Record<string, unknown>) => post<any>('/api/approvals/rules', data),
     pending: (params?: Record<string, unknown>) => get<any[]>('/api/approvals/pending', params),
     approve: (id: string) => post<any>(`/api/approvals/${id}/approve`),
     reject: (id: string, reason: string) => post<any>(`/api/approvals/${id}/reject`, { reason }),
   },
 
   sat: {
-    validate: (data: any) => post<any>('/api/sat/validate', data),
+    validate: (data: Record<string, unknown>) => post<any>('/api/sat/validate', data),
     validateBulk: () => post<any>('/api/sat/validate-bulk'),
-    validateRfc: (data: any) => post<any>('/api/sat/validate-rfc', data),
-    checkEfos: (data: any) => post<any>('/api/sat/check-efos', data),
-    uploadXml: (data: any) => post<any>('/api/sat/upload-xml', data),
+    validateRfc: (data: Record<string, unknown>) => post<any>('/api/sat/validate-rfc', data),
+    checkEfos: (data: Record<string, unknown>) => post<any>('/api/sat/check-efos', data),
+    uploadXml: (data: Record<string, unknown>) => post<any>('/api/sat/upload-xml', data),
     documents: (params?: Record<string, unknown>) => get<any[]>('/api/sat/documents', params),
-    cancel: (data: any) => post<any>('/api/sat/cancel', data),
-    descargaSolicitud: (data: any) => post<any>('/api/sat/descarga/solicitud', data),
-    descargaVerificar: (data: any) => post<any>('/api/sat/descarga/verificar', data),
-    upload: (data: any) => post<any>('/api/sat/upload', data),
+    cancel: (data: Record<string, unknown>) => post<any>('/api/sat/cancel', data),
+    descargaSolicitud: (data: Record<string, unknown>) => post<any>('/api/sat/descarga/solicitud', data),
+    descargaVerificar: (data: Record<string, unknown>) => post<any>('/api/sat/descarga/verificar', data),
+    upload: (data: Record<string, unknown>) => post<any>('/api/sat/upload', data),
 
     // ── Syntage (sat.ws) ──
     syntage: {
@@ -363,11 +369,11 @@ export const api = {
   },
 
   reconciliation: {
-    satOdoo: (data: any) => post<any>('/api/reconciliation/sat-odoo', data),
-    satApp: (data: any) => post<any>('/api/reconciliation/sat-app', data),
-    bancoApp: (data: any) => post<any>('/api/reconciliation/banco-app', data),
+    satOdoo: (data: Record<string, unknown>) => post<any>('/api/reconciliation/sat-odoo', data),
+    satApp: (data: Record<string, unknown>) => post<any>('/api/reconciliation/sat-app', data),
+    bancoApp: (data: Record<string, unknown>) => post<any>('/api/reconciliation/banco-app', data),
     history: () => get<any[]>('/api/reconciliation/history'),
-    importToOdoo: (data: any) => post<any>('/api/reconciliation/import-to-odoo', data),
+    importToOdoo: (data: Record<string, unknown>) => post<any>('/api/reconciliation/import-to-odoo', data),
   },
 
   reports: {
@@ -415,14 +421,14 @@ export const api = {
   companies: {
     list: () => get<any[]>('/api/companies'),
     get: (id: string) => get<any>(`/api/companies/${id}`),
-    create: (data: any) => post<any>('/api/companies', data),
+    create: (data: Record<string, unknown>) => post<any>('/api/companies', data),
   },
 
   users: {
     list: () => get<any[]>('/api/users'),
-    invite: (data: any) => post<any>('/api/users/invite', data),
-    updateRole: (id: string, role: string) => put<any>(`/api/users/${id}/role`, { role }),
-    deactivate: (id: string) => put<any>(`/api/users/${id}/deactivate`),
+    invite: (data: Record<string, unknown>) => post<any>('/api/users/invite', data),
+    updateRole: (id: string, role: string) => put<Record<string, unknown>>(`/api/users/${id}/role`, { role }),
+    deactivate: (id: string) => put<Record<string, unknown>>(`/api/users/${id}/deactivate`),
   },
 
   fintoc: {

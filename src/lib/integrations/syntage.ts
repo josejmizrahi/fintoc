@@ -21,7 +21,7 @@ interface RateLimitState {
   resetAt: number; // epoch seconds
 }
 
-let rateLimitState: RateLimitState = { limit: 0, remaining: Infinity, resetAt: 0 };
+const rateLimitState: RateLimitState = { limit: 0, remaining: Infinity, resetAt: 0 };
 
 export function getRateLimitState(): Readonly<RateLimitState> {
   return { ...rateLimitState };
@@ -307,9 +307,10 @@ function buildQueryString(params?: Record<string, any>): string {
  * Fetch all pages using offset-based pagination.
  * Returns all items accumulated across pages.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+ 
 export async function fetchAllPages<T>(
   path: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   params?: Record<string, any>,
   maxPages = 50
 ): Promise<T[]> {
@@ -338,9 +339,10 @@ export async function fetchAllPages<T>(
  * Fetch all items using cursor-based pagination (recommended for large datasets).
  * Supported on: invoices, line-items, payments.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+ 
 export async function fetchAllCursor<T>(
   path: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   params?: Record<string, any>,
   maxPages = 100
 ): Promise<T[]> {

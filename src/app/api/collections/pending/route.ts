@@ -12,7 +12,7 @@ export const GET = createHandler(async (req) => {
     const today = new Date().toISOString().split('T')[0];
     const admin = getAdminClient();
 
-    const { data, count, error } = await admin
+    const { data, count, error: _error } = await admin
       .from('invoices')
       .select('*, customers:customer_id(id, name, rfc)', { count: 'exact' })
       .eq('company_id', ctx.company_id)

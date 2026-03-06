@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { hasDB, query, update, insert } from "@/lib/db";
+import { hasDB, query } from "@/lib/db";
 import { getCompanyId } from "@/lib/auth-helpers";
 import { createSyntageClient } from "@/lib/integrations/syntage";
 import { getAdminClient } from "@/lib/supabase/admin";
@@ -397,7 +397,7 @@ export async function POST(req: NextRequest) {
         if (!allowed) return NextResponse.json({ detail: "La entidad no corresponde a esta empresa" }, { status: 403 });
         const extraction = await client.createExtraction(
           taxpayerId,
-          (extractor as any) || "invoice",
+          (extractor as string) || "invoice",
           options,
         );
         return NextResponse.json({ success: true, extraction });
@@ -517,7 +517,7 @@ async function saveConfig(companyId: number, params: Record<string, unknown>) {
       ...status,
       syntage_taxpayer_id: (updatePayload.syntage_taxpayer_id as string) || undefined,
     });
-  } catch (e) {
+  } catch {
     return NextResponse.json({
       success: true,
       message: "Configuracion guardada, pero no se pudo verificar la conexion",

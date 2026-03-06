@@ -6,8 +6,12 @@ import { getAdminClient } from '@/lib/supabase/admin';
 export const GET = createHandler(async (req) => {
   return withAuth(async (_req, ctx) => {
     const url = new URL(_req.url);
-    const q = url.searchParams.get('q');
-    if (!q || q.length < 2) throw new ApiError('VALIDATION_ERROR', 'Busqueda debe tener al menos 2 caracteres', 400);
+    const rawQ = url.searchParams.get('q');
+    if (!rawQ || rawQ.length < 2) throw new ApiError('VALIDATION_ERROR', 'Busqueda debe tener al menos 2 caracteres', 400);
+
+    // Strip characters that could manipulate PostgREST .or() filter expressions
+    const q = rawQ.replace(/[,().\\]/g, '').trim().slice(0, 100);
+    if (q.length < 2) throw new ApiError('VALIDATION_ERROR', 'Busqueda debe tener al menos 2 caracteres', 400);
 
     const admin = getAdminClient();
     const search = `%${q}%`;

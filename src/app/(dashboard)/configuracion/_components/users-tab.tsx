@@ -294,7 +294,7 @@ export function UsersTab() {
   const handleDeactivate = (id: string) => setDeactivateId(id);
 
   /* Desktop columns */
-  const columns: ColumnDef<UserRecord, any>[] = useMemo(
+  const columns: ColumnDef<UserRecord, unknown>[] = useMemo(
     () => [
       {
         accessorKey: "name",

@@ -1,12 +1,11 @@
 import { getAdminClient } from '@/lib/supabase/admin';
 import { decrypt } from '@/lib/utils/crypto';
 import * as fintoc from '@/lib/integrations/fintoc';
+import { verifyCronSecret } from '@/lib/middleware/cron-auth';
 
 export async function GET(req: Request): Promise<Response> {
-  const secret = req.headers.get('authorization')?.replace('Bearer ', '');
-  if (secret !== process.env.CRON_SECRET) {
-    return Response.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const authError = verifyCronSecret(req);
+  if (authError) return authError;
 
   const admin = getAdminClient();
   const now = new Date().toISOString();

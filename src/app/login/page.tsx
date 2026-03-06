@@ -446,7 +446,7 @@ function BrandingPanel() {
   );
 }
 
-function Feature({ icon: Icon, text }: { icon: any; text: string }) {
+function Feature({ icon: Icon, text }: { icon: React.ComponentType<{ className?: string }>; text: string }) {
   return (
     <div className="flex items-center gap-3">
       <div className="flex size-8 items-center justify-center rounded-lg bg-primary-foreground/20">

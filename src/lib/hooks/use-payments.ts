@@ -31,7 +31,7 @@ export function usePayment(id: string) {
 export function useCreatePayment() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (data: any) => api.payments.create(data),
+    mutationFn: (data: Record<string, unknown>) => api.payments.create(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: paymentKeys.all });
       toast.success('Pago creado exitosamente');
