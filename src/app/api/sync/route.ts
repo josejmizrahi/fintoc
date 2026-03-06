@@ -85,7 +85,7 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({ logs: logs || [] });
 }
 
-// ── POST /api/sync — trigger a sync for a provider ──
+// ── POST /api/sync — trigger a sync for a provider (or all) ──
 
 export async function POST(req: NextRequest) {
   const companyId = await getCompanyId(req);
@@ -95,8 +95,13 @@ export async function POST(req: NextRequest) {
   const body = await req.json();
   const { provider } = body as { provider?: string };
 
-  if (!provider || !["odoo", "fintoc", "sat"].includes(provider)) {
+  if (!provider || !["odoo", "fintoc", "sat", "all"].includes(provider)) {
     return NextResponse.json({ detail: "Proveedor invalido" }, { status: 400 });
+  }
+
+  // Sync all connected providers in parallel
+  if (provider === "all") {
+    return syncAllProviders(companyId);
   }
 
   const { data: integration } = await query("integrations", {
@@ -118,6 +123,55 @@ export async function POST(req: NextRequest) {
   if (provider === "sat") return syncSat(companyId, config);
 
   return NextResponse.json({ detail: "Proveedor invalido" }, { status: 400 });
+}
+
+async function syncAllProviders(companyId: number) {
+  const { data: integrations } = await query("integrations", {
+    match: { company_id: companyId },
+  });
+
+  const results: Record<string, { success: boolean; message: string }> = {};
+  const promises: Promise<void>[] = [];
+
+  for (const integration of (integrations || [])) {
+    if (!integration.is_connected || !integration.config) continue;
+    const p = integration.provider as string;
+    const config = integration.config as Record<string, string>;
+
+    const run = async () => {
+      try {
+        if (p === "odoo") {
+          const res = await syncOdoo(companyId, config);
+          const body = await res.json();
+          results[p] = { success: body.success !== false, message: body.message || "OK" };
+        } else if (p === "fintoc") {
+          const res = await syncFintoc(companyId, config);
+          const body = await res.json();
+          results[p] = { success: body.success !== false, message: body.message || "OK" };
+        } else if (p === "sat") {
+          const res = await syncSat(companyId, config);
+          const body = await res.json();
+          results[p] = { success: body.success !== false, message: body.message || "OK" };
+        }
+      } catch (err) {
+        results[p] = { success: false, message: err instanceof Error ? err.message : "Error desconocido" };
+      }
+    };
+    promises.push(run());
+  }
+
+  await Promise.allSettled(promises);
+
+  const allSuccess = Object.values(results).every((r) => r.success);
+  const synced = Object.keys(results);
+
+  return NextResponse.json({
+    success: allSuccess,
+    message: synced.length > 0
+      ? `Sincronizacion ${allSuccess ? "completada" : "parcial"}: ${synced.join(", ")}`
+      : "No hay integraciones conectadas",
+    results,
+  });
 }
 
 // ════════════════════════════════════════════════════════════════

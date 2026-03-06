@@ -22,7 +22,7 @@ export async function GET(req: Request): Promise<Response> {
     const { data: integrations } = await admin.from('integrations')
       .select('company_id, syntage_taxpayer_id')
       .eq('provider', 'syntage')
-      .eq('status', 'valid')
+      .eq('is_connected', true)
       .not('syntage_taxpayer_id', 'is', null);
 
     for (const integration of (integrations || [])) {

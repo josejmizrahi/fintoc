@@ -79,6 +79,7 @@ export async function POST(req: NextRequest) {
           config: null,
           config_encrypted: null,
           is_connected: false,
+          status: 'disconnected',
           last_sync_status: "disconnected",
           last_sync_message: "Desconectado manualmente",
           updated_at: new Date().toISOString(),
@@ -116,6 +117,7 @@ export async function POST(req: NextRequest) {
 
     const saveData: Record<string, unknown> = {
       config: mergedConfig,
+      status: 'valid',
       updated_at: new Date().toISOString(),
     };
     if (configEncrypted) {
