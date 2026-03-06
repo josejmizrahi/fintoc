@@ -117,6 +117,7 @@ export async function POST(req: NextRequest) {
 
     const saveData: Record<string, unknown> = {
       config: mergedConfig,
+      is_connected: true,
       status: 'valid',
       updated_at: new Date().toISOString(),
     };
