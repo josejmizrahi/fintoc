@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
@@ -147,14 +147,30 @@ function OdooEditDialog({
   open,
   onOpenChange,
   onSaved,
+  savedConfig,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   onSaved: () => void;
+  savedConfig?: Record<string, string> | null;
 }) {
   const form = useForm({
     defaultValues: { url: "", database: "", user: "", apiKey: "" },
   });
+
+  // Pre-fill with saved config when dialog opens
+  useEffect(() => {
+    if (open && savedConfig) {
+      form.reset({
+        url: savedConfig.url || "",
+        database: savedConfig.database || "",
+        user: savedConfig.user || "",
+        apiKey: savedConfig.password || "",
+      });
+    } else if (open && !savedConfig) {
+      form.reset({ url: "", database: "", user: "", apiKey: "" });
+    }
+  }, [open, savedConfig]);
 
   const saveMutation = useMutation({
     mutationFn: (data: Record<string, string>) =>
@@ -268,12 +284,22 @@ function FintocEditDialog({
   open,
   onOpenChange,
   onSaved,
+  savedConfig,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   onSaved: () => void;
+  savedConfig?: Record<string, string> | null;
 }) {
   const form = useForm({ defaultValues: { secretKey: "" } });
+
+  useEffect(() => {
+    if (open && savedConfig) {
+      form.reset({ secretKey: savedConfig.secretKey || "" });
+    } else if (open && !savedConfig) {
+      form.reset({ secretKey: "" });
+    }
+  }, [open, savedConfig]);
 
   const saveMutation = useMutation({
     mutationFn: (data: Record<string, string>) =>
@@ -349,14 +375,27 @@ function SatEditDialog({
   open,
   onOpenChange,
   onSaved,
+  savedConfig,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   onSaved: () => void;
+  savedConfig?: Record<string, string> | null;
 }) {
   const form = useForm({
     defaultValues: { syntageApiKey: "", rfcEmisor: "" },
   });
+
+  useEffect(() => {
+    if (open && savedConfig) {
+      form.reset({
+        syntageApiKey: savedConfig.syntageApiKey || "",
+        rfcEmisor: savedConfig.rfcEmisor || "",
+      });
+    } else if (open && !savedConfig) {
+      form.reset({ syntageApiKey: "", rfcEmisor: "" });
+    }
+  }, [open, savedConfig]);
 
   const saveMutation = useMutation({
     mutationFn: async (data: Record<string, string>) => {
@@ -497,6 +536,7 @@ const EDIT_DIALOGS: Record<
     open: boolean;
     onOpenChange: (v: boolean) => void;
     onSaved: () => void;
+    savedConfig?: Record<string, string> | null;
   }>
 > = {
   odoo: OdooEditDialog,
@@ -621,6 +661,7 @@ export function IntegrationsTab() {
       {/* Edit Dialogs */}
       {PROVIDERS.map(({ key }) => {
         const EditDialog = EDIT_DIALOGS[key];
+        const info = integrations[key];
         return (
           <EditDialog
             key={key}
@@ -629,6 +670,7 @@ export function IntegrationsTab() {
               if (!open) setEditingProvider(null);
             }}
             onSaved={invalidateIntegrations}
+            savedConfig={info?.config as Record<string, string> | null}
           />
         );
       })}

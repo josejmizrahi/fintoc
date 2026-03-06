@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { hasDB, query, insert, update } from "@/lib/db";
 import { getCompanyId, maskConfig, resolveConfig } from "@/lib/auth-helpers";
+import { encrypt } from "@/lib/utils/crypto";
 import { odooJsonRpc, odooAuthenticate } from "@/lib/odoo";
 import { fintocGet } from "@/lib/fintoc";
 import { testSatReachability } from "@/lib/sat";
@@ -71,11 +72,60 @@ export async function POST(req: NextRequest) {
   const { data: existing } = await query("integrations", { match: { company_id: companyId, provider }, single: true });
 
   if (action === "save" && config) {
+    // Handle disconnect
+    if (config._disconnect === "true") {
+      if (existing) {
+        await update("integrations", {
+          config: null,
+          config_encrypted: null,
+          is_connected: false,
+          last_sync_status: "disconnected",
+          last_sync_message: "Desconectado manualmente",
+          updated_at: new Date().toISOString(),
+        }, { company_id: companyId, provider });
+      }
+      return NextResponse.json({ success: true });
+    }
+
     const mergedConfig = resolveConfig(config, existing?.config as Record<string, string>);
+
+    // Encrypt sensitive config for the sync engine
+    let configEncrypted: Buffer | null = null;
+    try {
+      if (provider === "odoo") {
+        configEncrypted = encrypt({
+          url: mergedConfig.url || "",
+          database: mergedConfig.database || "",
+          user: mergedConfig.user || "",
+          password: mergedConfig.password || "",
+        });
+      } else if (provider === "fintoc") {
+        configEncrypted = encrypt({
+          secret_key: mergedConfig.secretKey || "",
+        });
+      } else if (provider === "sat") {
+        configEncrypted = encrypt({
+          syntageApiKey: mergedConfig.syntageApiKey || "",
+          rfcEmisor: mergedConfig.rfcEmisor || "",
+        });
+      }
+    } catch (err) {
+      console.error("[onboarding] Encryption failed:", err);
+      // Still save plaintext config so UI works, but log the error
+    }
+
+    const saveData: Record<string, unknown> = {
+      config: mergedConfig,
+      updated_at: new Date().toISOString(),
+    };
+    if (configEncrypted) {
+      saveData.config_encrypted = configEncrypted;
+    }
+
     if (existing) {
-      await update("integrations", { config: mergedConfig, updated_at: new Date().toISOString() }, { company_id: companyId, provider });
+      await update("integrations", saveData, { company_id: companyId, provider });
     } else {
-      await insert("integrations", { company_id: companyId, provider, config: mergedConfig });
+      await insert("integrations", { company_id: companyId, provider, ...saveData });
     }
     return NextResponse.json({ success: true });
   }
