@@ -31,7 +31,7 @@ export class FintocSyncProvider extends BaseSyncProvider<FintocSyncConfig> {
 
     const { data: integration } = await admin
       .from('integrations')
-      .select('config_encrypted')
+      .select('config_encrypted, config')
       .eq('company_id', companyId)
       .eq('provider', 'fintoc')
       .single();
@@ -40,8 +40,13 @@ export class FintocSyncProvider extends BaseSyncProvider<FintocSyncConfig> {
       try {
         secretKey = (decrypt(integration.config_encrypted) as Record<string, string>).secret_key;
       } catch {
-        /* fallback to env */
+        // Fall back to plaintext config
+        const cfg = integration.config as Record<string, string> | null;
+        if (cfg?.secretKey) secretKey = cfg.secretKey;
       }
+    } else if (integration?.config) {
+      const cfg = integration.config as Record<string, string>;
+      if (cfg.secretKey) secretKey = cfg.secretKey;
     }
 
     if (!secretKey) {

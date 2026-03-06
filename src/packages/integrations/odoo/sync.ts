@@ -27,16 +27,30 @@ export class OdooSyncProvider extends BaseSyncProvider<OdooConfig> {
     const admin = getAdminClient();
     const { data: integration } = await admin
       .from('integrations')
-      .select('config_encrypted')
+      .select('config_encrypted, config')
       .eq('company_id', companyId)
       .eq('provider', 'odoo')
       .single();
 
-    if (!integration?.config_encrypted) {
+    if (!integration) {
       throw new ApiError('INTEGRATION_NOT_CONFIGURED', 'Odoo no configurado', 422);
     }
 
-    return decrypt(integration.config_encrypted) as unknown as OdooConfig;
+    // Prefer encrypted config, fall back to plaintext
+    if (integration.config_encrypted) {
+      try {
+        return decrypt(integration.config_encrypted) as unknown as OdooConfig;
+      } catch (err) {
+        console.error('[odoo-sync] Failed to decrypt config, falling back to plaintext:', err);
+      }
+    }
+
+    const cfg = integration.config as Record<string, string> | null;
+    if (!cfg?.url) {
+      throw new ApiError('INTEGRATION_NOT_CONFIGURED', 'Odoo no configurado', 422);
+    }
+
+    return cfg as unknown as OdooConfig;
   }
 
   async fetch(config: OdooConfig, opts: SyncProviderConfig): Promise<SyncData> {
