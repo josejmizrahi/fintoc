@@ -149,7 +149,7 @@ async function fintocRequest<T = unknown>(
   try {
     const url = path.startsWith('http') ? path : `${FINTOC_BASE}${path}`;
     const headers: Record<string, string> = {
-      'Authorization': `Bearer ${key}`,
+      'Authorization': key,
       'Content-Type': 'application/json',
     };
 
@@ -333,26 +333,30 @@ export async function createAccountNumber(
 // ---------------------------------------------------------------------------
 // Accounts & Movements
 // ---------------------------------------------------------------------------
-export async function getAccounts(secretKey?: string): Promise<FintocAccount[]> {
-  const { data } = await fintocRequest<FintocAccount[]>('GET', '/accounts', { secretKey });
+export async function getAccounts(secretKey?: string, linkToken?: string): Promise<FintocAccount[]> {
+  const qs = linkToken ? `?link_token=${encodeURIComponent(linkToken)}` : '';
+  const { data } = await fintocRequest<FintocAccount[]>('GET', `/accounts${qs}`, { secretKey });
   return data;
 }
 
-export async function getAccount(accountId: string, secretKey?: string): Promise<FintocAccount> {
-  const { data } = await fintocRequest<FintocAccount>('GET', `/accounts/${accountId}`, { secretKey });
+export async function getAccount(accountId: string, secretKey?: string, linkToken?: string): Promise<FintocAccount> {
+  const qs = linkToken ? `?link_token=${encodeURIComponent(linkToken)}` : '';
+  const { data } = await fintocRequest<FintocAccount>('GET', `/accounts/${accountId}${qs}`, { secretKey });
   return data;
 }
 
 export async function getMovements(
   accountId: string,
   params?: FintocPaginationParams,
-  secretKey?: string
+  secretKey?: string,
+  linkToken?: string,
 ): Promise<FintocMovement[]> {
   const sp = new URLSearchParams();
   if (params?.since) sp.set('since', params.since);
   if (params?.until) sp.set('until', params.until);
   if (params?.per_page) sp.set('per_page', String(Math.min(params?.per_page || DEFAULT_PER_PAGE, MAX_PER_PAGE)));
   if (params?.link_token) sp.set('link_token', params.link_token);
+  if (linkToken && !params?.link_token) sp.set('link_token', linkToken);
   const qs = sp.toString();
 
   const { data } = await fintocRequest<FintocMovement[]>(
@@ -370,7 +374,8 @@ export async function getAllMovements(
   accountId: string,
   params?: { since?: string; until?: string },
   secretKey?: string,
-  maxPages = 20
+  maxPages = 20,
+  linkToken?: string,
 ): Promise<FintocMovement[]> {
   const allMovements: FintocMovement[] = [];
   let lastDate: string | undefined;
@@ -380,7 +385,8 @@ export async function getAllMovements(
     const movements = await getMovements(
       accountId,
       { since: params?.since, until: lastDate || params?.until, per_page: perPage },
-      secretKey
+      secretKey,
+      linkToken,
     );
 
     if (!movements || movements.length === 0) break;

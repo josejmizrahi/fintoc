@@ -6,7 +6,7 @@ import type { Extractor } from '@/lib/integrations/syntage';
 
 export const POST = createHandler(async (req) => {
   return withAuth(withRbac('sync.execute', async (request, ctx) => {
-    const companyId = String(ctx.company_id);
+    const companyId = ctx.company_id;
     const taxpayerId = await getSyntageTaxpayerForCompany(companyId);
 
     let extractors: Extractor[] | undefined;

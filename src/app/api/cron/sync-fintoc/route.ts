@@ -21,7 +21,7 @@ export async function GET(req: Request): Promise<Response> {
 
   try {
     const { data: integrations } = await admin.from('integrations')
-      .select('company_id, config_encrypted')
+      .select('company_id, config_encrypted, config')
       .eq('provider', 'fintoc')
       .eq('is_connected', true);
 
@@ -36,6 +36,9 @@ export async function GET(req: Request): Promise<Response> {
           }
         }
 
+        const config = (integration.config || {}) as Record<string, string>;
+        const linkToken = config.linkToken || '';
+
         if (!secretKey) {
           results.push({
             company_id: integration.company_id,
@@ -46,7 +49,17 @@ export async function GET(req: Request): Promise<Response> {
           continue;
         }
 
-        const result = await syncFintoc(integration.company_id, secretKey, { syncDays: 7 });
+        if (!linkToken) {
+          results.push({
+            company_id: integration.company_id,
+            status: 'skipped',
+            skipped: true,
+            error: 'No Fintoc link_token configured',
+          });
+          continue;
+        }
+
+        const result = await syncFintoc(integration.company_id, secretKey, linkToken, { syncDays: 7 });
         results.push({
           company_id: integration.company_id,
           status: result.status,

@@ -5,7 +5,7 @@ import { syncOdoo, getOdooConfigForCompany } from '@/lib/integrations/sync-engin
 
 export const POST = createHandler(async (req) => {
   return withAuth(withRbac('sync.execute', async (_req, ctx) => {
-    const companyId = String(ctx.company_id);
+    const companyId = ctx.company_id;
     const config = await getOdooConfigForCompany(companyId);
     const result = await syncOdoo(companyId, config);
 

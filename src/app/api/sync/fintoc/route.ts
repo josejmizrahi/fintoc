@@ -5,9 +5,9 @@ import { syncFintoc, getFintocKeyForCompany } from '@/lib/integrations/sync-engi
 
 export const POST = createHandler(async (req) => {
   return withAuth(withRbac('sync.execute', async (_req, ctx) => {
-    const companyId = String(ctx.company_id);
-    const secretKey = await getFintocKeyForCompany(companyId);
-    const result = await syncFintoc(companyId, secretKey);
+    const companyId = ctx.company_id;
+    const { secretKey, linkToken } = await getFintocKeyForCompany(companyId);
+    const result = await syncFintoc(companyId, secretKey, linkToken);
 
     return Response.json({
       data: {

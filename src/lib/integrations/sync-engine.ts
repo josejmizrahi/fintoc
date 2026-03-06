@@ -12,7 +12,7 @@ import type { FintocAccount, FintocMovement } from './fintoc';
 // Types
 // ---------------------------------------------------------------------------
 
-export type SyncProvider = 'odoo' | 'fintoc' | 'syntage';
+export type SyncProvider = 'odoo' | 'fintoc' | 'sat';
 export type SyncStatus = 'running' | 'completed' | 'partial' | 'failed';
 
 export interface SyncResult {
@@ -59,7 +59,7 @@ const RETRY_OPTS = {
  */
 async function acquireSyncLock(
   admin: ReturnType<typeof getAdminClient>,
-  companyId: string,
+  companyId: number,
   provider: SyncProvider,
 ): Promise<string> {
   const { data: running } = await admin.from('sync_history')
@@ -109,7 +109,7 @@ async function acquireSyncLock(
 async function finalizeSyncEntry(
   admin: ReturnType<typeof getAdminClient>,
   syncId: string,
-  companyId: string,
+  companyId: number,
   provider: SyncProvider,
   status: SyncStatus,
   recordsSynced: number,
@@ -183,7 +183,7 @@ function computeStatus(errors: SyncError[], recordsSynced: number): SyncStatus {
 // Odoo Sync
 // ---------------------------------------------------------------------------
 
-export async function syncOdoo(companyId: string, config: OdooConfig): Promise<SyncResult> {
+export async function syncOdoo(companyId: number, config: OdooConfig): Promise<SyncResult> {
   const startedAt = new Date().toISOString();
   const admin = getAdminClient();
   const errors: SyncError[] = [];
@@ -216,7 +216,7 @@ export async function syncOdoo(companyId: string, config: OdooConfig): Promise<S
           rfc: (odoo.normalizeOdooValue(v.vat) || '').toUpperCase(),
           email: odoo.normalizeOdooValue(v.email),
           phone: odoo.normalizeOdooValue(v.phone),
-          odoo_id: String(v.id),
+          odoo_id: v.id,
           synced_at: new Date().toISOString(),
         }));
 
@@ -239,7 +239,7 @@ export async function syncOdoo(companyId: string, config: OdooConfig): Promise<S
           rfc: (odoo.normalizeOdooValue(c.vat) || '').toUpperCase(),
           email: odoo.normalizeOdooValue(c.email),
           phone: odoo.normalizeOdooValue(c.phone),
-          odoo_id: String(c.id),
+          odoo_id: c.id,
         }));
 
       if (customerRows.length > 0) {
@@ -267,7 +267,7 @@ export async function syncOdoo(companyId: string, config: OdooConfig): Promise<S
         payment_state: inv.payment_state,
         payment_method: odoo.normalizeOdooValue(inv.l10n_mx_edi_payment_policy),
         partner_name: odoo.extractM2oName(inv.partner_id),
-        odoo_move_id: String(inv.id),
+        odoo_move_id: inv.id,
         source: 'odoo',
         sat_status: 'no_validado',
       }));
@@ -296,8 +296,9 @@ export async function syncOdoo(companyId: string, config: OdooConfig): Promise<S
 // ---------------------------------------------------------------------------
 
 export async function syncFintoc(
-  companyId: string,
+  companyId: number,
   secretKey: string,
+  linkToken: string,
   options?: { syncDays?: number },
 ): Promise<SyncResult> {
   const startedAt = new Date().toISOString();
@@ -311,7 +312,7 @@ export async function syncFintoc(
   const syncId = await acquireSyncLock(admin, companyId, 'fintoc');
 
   try {
-    const accounts = await withRetry(() => fintoc.getAccounts(secretKey), RETRY_OPTS);
+    const accounts = await withRetry(() => fintoc.getAccounts(secretKey, linkToken), RETRY_OPTS);
 
     for (const account of (accounts || [])) {
       // Upsert account
@@ -342,7 +343,7 @@ export async function syncFintoc(
         const since = new Date();
         since.setDate(since.getDate() - syncDays);
         const movements = await withRetry(
-          () => fintoc.getAllMovements(account.id, { since: since.toISOString().split('T')[0] }, secretKey),
+          () => fintoc.getAllMovements(account.id, { since: since.toISOString().split('T')[0] }, secretKey, 20, linkToken),
           RETRY_OPTS,
         );
 
@@ -392,7 +393,7 @@ export interface SatSyncResult extends SyncResult {
 }
 
 export async function syncSat(
-  companyId: string,
+  companyId: number,
   taxpayerId: string,
   options?: { extractors?: syntage.Extractor[]; dateFrom?: string; dateTo?: string },
 ): Promise<SatSyncResult> {
@@ -410,7 +411,7 @@ export async function syncSat(
     'tax_compliance_checks' as syntage.Extractor,
   ];
 
-  const syncId = await acquireSyncLock(admin, companyId, 'syntage');
+  const syncId = await acquireSyncLock(admin, companyId, 'sat');
 
   try {
     for (const extractor of extractors) {
@@ -441,10 +442,10 @@ export async function syncSat(
     }
 
     const status = computeStatus(errors, recordsSynced);
-    await finalizeSyncEntry(admin, syncId, companyId, 'syntage', status, recordsSynced, errors);
-    return { provider: 'syntage', status, recordsSynced, recordsFailed, errors, startedAt, completedAt: new Date().toISOString(), details, extractions: extractionResults };
+    await finalizeSyncEntry(admin, syncId, companyId, 'sat', status, recordsSynced, errors);
+    return { provider: 'sat', status, recordsSynced, recordsFailed, errors, startedAt, completedAt: new Date().toISOString(), details, extractions: extractionResults };
   } catch (err) {
-    await finalizeSyncEntry(admin, syncId, companyId, 'syntage', 'failed', recordsSynced, [
+    await finalizeSyncEntry(admin, syncId, companyId, 'sat', 'failed', recordsSynced, [
       { entity: 'sync', message: err instanceof Error ? err.message : 'Unknown error', retryable: true },
     ]);
     throw err;
@@ -455,7 +456,7 @@ export async function syncSat(
 // Config helpers
 // ---------------------------------------------------------------------------
 
-export async function getOdooConfigForCompany(companyId: string): Promise<OdooConfig> {
+export async function getOdooConfigForCompany(companyId: number): Promise<OdooConfig> {
   const admin = getAdminClient();
   const { data: integration } = await admin.from('integrations')
     .select('config_encrypted')
@@ -470,12 +471,13 @@ export async function getOdooConfigForCompany(companyId: string): Promise<OdooCo
   return decrypt(integration.config_encrypted) as unknown as OdooConfig;
 }
 
-export async function getFintocKeyForCompany(companyId: string): Promise<string> {
+export async function getFintocKeyForCompany(companyId: number): Promise<{ secretKey: string; linkToken: string }> {
   const admin = getAdminClient();
   let secretKey = process.env.FINTOC_SECRET_KEY;
+  let linkToken = '';
 
   const { data: integration } = await admin.from('integrations')
-    .select('config_encrypted')
+    .select('config_encrypted, config')
     .eq('company_id', companyId)
     .eq('provider', 'fintoc')
     .single();
@@ -486,19 +488,26 @@ export async function getFintocKeyForCompany(companyId: string): Promise<string>
     } catch { /* fallback to env */ }
   }
 
+  // Get linkToken from plaintext config (it's not sensitive)
+  const config = (integration?.config || {}) as Record<string, string>;
+  linkToken = config.linkToken || '';
+
   if (!secretKey) {
     throw new ApiError('INTEGRATION_NOT_CONFIGURED', 'Fintoc no configurado', 422);
   }
+  if (!linkToken) {
+    throw new ApiError('INTEGRATION_NOT_CONFIGURED', 'Fintoc link_token no configurado. Conecta tu cuenta bancaria primero.', 422);
+  }
 
-  return secretKey;
+  return { secretKey, linkToken };
 }
 
-export async function getSyntageTaxpayerForCompany(companyId: string): Promise<string> {
+export async function getSyntageTaxpayerForCompany(companyId: number): Promise<string> {
   const admin = getAdminClient();
   const { data: integration } = await admin.from('integrations')
     .select('syntage_taxpayer_id')
     .eq('company_id', companyId)
-    .eq('provider', 'syntage')
+    .eq('provider', 'sat')
     .single();
 
   if (!integration?.syntage_taxpayer_id) {

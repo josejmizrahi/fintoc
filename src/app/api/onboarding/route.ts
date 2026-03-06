@@ -5,6 +5,7 @@ import { encrypt } from "@/lib/utils/crypto";
 import { odooJsonRpc, odooAuthenticate } from "@/lib/odoo";
 import { fintocGet } from "@/lib/fintoc";
 import { testSatReachability } from "@/lib/sat";
+import { createSyntageClient } from "@/lib/syntage";
 
 // ── GET /api/onboarding — integration status + masked configs ──
 
@@ -210,7 +211,7 @@ async function testFintoc(companyId: number, config: Record<string, string>) {
 // ── SAT: Test ──
 
 async function testSat(companyId: number, config: Record<string, string>) {
-  const { rfcEmisor } = config;
+  const { rfcEmisor, syntageApiKey } = config;
   if (!rfcEmisor) return NextResponse.json({ success: false, message: "Falta el RFC del emisor" });
 
   const rfcRegex = /^[A-Z&Ñ]{3,4}\d{6}[A-Z0-9]{3}$/;
@@ -220,9 +221,56 @@ async function testSat(companyId: number, config: Record<string, string>) {
   const cfg = (existing?.config as Record<string, string>) || {};
   const hasCert = !!cfg.certBase64;
   const hasKey = !!cfg.keyBase64;
-
-  const reachable = await testSatReachability(rfcEmisor);
   const certInfo = hasCert && hasKey ? " | Certificados: cargados" : hasCert ? " | Solo .cer cargado" : hasKey ? " | Solo .key cargado" : " | Sin certificados";
+
+  // If Syntage API key is configured, test via Syntage API
+  if (syntageApiKey) {
+    try {
+      const syntage = createSyntageClient(config);
+      const result = await syntage.testConnection();
+      if (!result.ok) {
+        await update("integrations", {
+          is_connected: false, last_sync_status: "error",
+          last_sync_message: `Error Syntage: ${result.error}`,
+          updated_at: new Date().toISOString(),
+        }, { company_id: companyId, provider: "sat" }).catch(() => {});
+        return NextResponse.json({ success: false, message: `Error conectando a Syntage: ${result.error}` });
+      }
+
+      // Find taxpayer matching RFC
+      const taxpayers = await syntage.listTaxpayers();
+      const taxpayer = taxpayers["hydra:member"].find(t => t.rfc === rfcEmisor);
+      const taxpayerMsg = taxpayer
+        ? `Contribuyente encontrado: ${taxpayer.rfc}`
+        : `RFC ${rfcEmisor} no encontrado en Syntage (${result.taxpayers} contribuyente(s) registrado(s))`;
+
+      const msg = `Syntage OK — ${result.taxpayers} contribuyente(s), ${result.credentials} credencial(es)${taxpayer ? "" : " — " + taxpayerMsg}${certInfo}`;
+
+      await update("integrations", {
+        is_connected: true, last_sync_status: taxpayer ? "connected" : "warning",
+        last_sync_message: msg,
+        updated_at: new Date().toISOString(),
+      }, { company_id: companyId, provider: "sat" }).catch(() => {});
+
+      return NextResponse.json({
+        success: true,
+        message: `Conexion a Syntage exitosa — ${taxpayerMsg}${certInfo}`,
+        taxpayer_found: !!taxpayer,
+        certificates: { cer: hasCert, key: hasKey },
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Error desconocido";
+      await update("integrations", {
+        is_connected: false, last_sync_status: "error",
+        last_sync_message: `Error Syntage: ${msg}`,
+        updated_at: new Date().toISOString(),
+      }, { company_id: companyId, provider: "sat" }).catch(() => {});
+      return NextResponse.json({ success: false, message: `Error conectando a Syntage: ${msg}` });
+    }
+  }
+
+  // Fallback: basic SAT reachability test (no Syntage key)
+  const reachable = await testSatReachability(rfcEmisor);
 
   await update("integrations", {
     is_connected: true, last_sync_status: reachable ? "configured" : "warning",
