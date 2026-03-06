@@ -19,7 +19,7 @@ export const POST = createHandler(async (req) => {
       .from('integrations')
       .select('syntage_taxpayer_id')
       .eq('company_id', ctx.company_id)
-      .eq('provider', 'syntage')
+      .eq('provider', 'sat')
       .single();
 
     if (!integration?.syntage_taxpayer_id) {

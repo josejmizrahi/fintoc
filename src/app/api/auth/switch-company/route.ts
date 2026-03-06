@@ -36,18 +36,28 @@ export const POST = createHandler(async (req) => {
     }
 
     // Deactivate current active company
-    await admin
+    const { error: deactivateError } = await admin
       .from('user_companies')
       .update({ is_active: false })
       .eq('user_id', ctx.user_id)
       .eq('is_active', true);
 
+    if (deactivateError) {
+      throw new ApiError('INTERNAL_ERROR', 'Error al desactivar empresa actual', 500);
+    }
+
     // Activate new company
-    await admin
+    const { error: activateError } = await admin
       .from('user_companies')
       .update({ is_active: true })
       .eq('user_id', ctx.user_id)
       .eq('company_id', company_id);
+
+    if (activateError) {
+      await admin.from('user_companies').update({ is_active: true })
+        .eq('user_id', ctx.user_id).eq('company_id', ctx.company_id);
+      throw new ApiError('INTERNAL_ERROR', 'Error al activar nueva empresa', 500);
+    }
 
     // Get company details
     const { data: company } = await admin

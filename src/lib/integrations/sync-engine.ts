@@ -525,7 +525,7 @@ export async function getSyntageTaxpayerForCompany(companyId: string): Promise<s
   const { data: integration } = await admin.from('integrations')
     .select('syntage_taxpayer_id')
     .eq('company_id', companyId)
-    .eq('provider', 'syntage')
+    .eq('provider', 'sat')
     .single();
 
   if (!integration?.syntage_taxpayer_id) {

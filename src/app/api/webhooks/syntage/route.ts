@@ -162,7 +162,7 @@ async function handleInvoiceEvent(
   const { data: integration } = await admin.from('integrations')
     .select('company_id')
     .eq('syntage_taxpayer_id', taxpayerId)
-    .eq('provider', 'syntage')
+    .eq('provider', 'sat')
     .single();
 
   if (!integration) return;
@@ -271,7 +271,7 @@ async function handleTaxStatusUpdated(
   const { data: integration } = await admin.from('integrations')
     .select('company_id')
     .eq('syntage_taxpayer_id', taxpayerId)
-    .eq('provider', 'syntage')
+    .eq('provider', 'sat')
     .single();
 
   if (!integration) return;
@@ -295,7 +295,7 @@ async function handleTaxComplianceCreated(
   const { data: integration } = await admin.from('integrations')
     .select('company_id')
     .eq('syntage_taxpayer_id', taxpayerId)
-    .eq('provider', 'syntage')
+    .eq('provider', 'sat')
     .single();
 
   if (!integration) return;

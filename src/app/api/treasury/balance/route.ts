@@ -27,7 +27,7 @@ export const GET = createHandler(async (req) => {
     for (const account of accounts) {
       try {
         const fresh = (await getAccount(account.fintoc_account_id, secretKey || undefined)) as { balance?: { available?: number } };
-        const balance = fresh.balance?.available ? fresh.balance.available / 100 : account.balance;
+        const balance = fresh.balance?.available != null ? fresh.balance.available / 100 : account.balance;
         await admin.from('bank_accounts').update({ balance, last_synced: new Date().toISOString() }).eq('id', account.id);
         account.balance = balance;
       } catch { /* keep cached balance */ }

@@ -19,12 +19,12 @@ export const POST = createHandler(async (req) => {
     const { period_start, period_end } = result.data;
     const admin = getAdminClient();
 
-    // Get Syntage integration
+    // Get Syntage integration (stored under provider='sat' in integrations table)
     const { data: syntageInt } = await admin
       .from('integrations')
       .select('syntage_taxpayer_id')
       .eq('company_id', ctx.company_id)
-      .eq('provider', 'syntage')
+      .eq('provider', 'sat')
       .single();
 
     if (!syntageInt?.syntage_taxpayer_id) {

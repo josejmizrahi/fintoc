@@ -21,7 +21,7 @@ export async function GET(req: Request): Promise<Response> {
   try {
     const { data: integrations } = await admin.from('integrations')
       .select('company_id, syntage_taxpayer_id')
-      .eq('provider', 'syntage')
+      .eq('provider', 'sat')
       .eq('is_connected', true)
       .not('syntage_taxpayer_id', 'is', null);
 

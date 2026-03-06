@@ -69,6 +69,14 @@ export function parsePaginationParams(url: URL): {
   const rawLimit = parseInt(url.searchParams.get('limit') || '25', 10);
   const limit = Math.min(100, Math.max(1, rawLimit));
   const sort = url.searchParams.get('sort') || 'created_at:desc';
-  const search = url.searchParams.get('search') || '';
+  const rawSearch = url.searchParams.get('search') || '';
+  const search = sanitizeSearchParam(rawSearch);
   return { page, limit, sort, search };
+}
+
+/**
+ * Strips characters that could manipulate PostgREST .or() filter expressions.
+ */
+function sanitizeSearchParam(value: string): string {
+  return value.replace(/[,().\\]/g, '').trim().slice(0, 100);
 }

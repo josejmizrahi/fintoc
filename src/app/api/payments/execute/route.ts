@@ -34,7 +34,7 @@ export const POST = createHandler(async (req) => {
       return Response.json({ data: payment });
     }
 
-    if (!['draft', 'pending'].includes(payment.status)) {
+    if (!['draft', 'pending', 'scheduled', 'approved'].includes(payment.status)) {
       throw new ApiError('PAYMENT_NOT_EXECUTABLE', `Pago en status '${payment.status}' no es ejecutable`, 422);
     }
 
