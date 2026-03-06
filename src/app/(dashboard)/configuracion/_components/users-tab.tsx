@@ -7,9 +7,10 @@ import { useForm, Controller } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
-import { Loader2, Users, UserPlus, MoreHorizontal } from "lucide-react";
+import { Loader2, Users, UserPlus, MoreHorizontal, Shield } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import {
   Card,
   CardContent,
@@ -68,6 +69,12 @@ const inviteSchema = z.object({
 type InviteForm = z.infer<typeof inviteSchema>;
 
 const QUERY_KEY = ["config", "users"] as const;
+
+const ROLE_LABELS: Record<string, string> = {
+  admin: "Admin",
+  accountant: "Contador",
+  viewer: "Visor",
+};
 
 /* ---------- InviteDialog ---------- */
 
@@ -159,16 +166,21 @@ function InviteDialog({
             />
           </div>
 
-          <DialogFooter className="pt-2">
+          <DialogFooter className="pt-2 flex-col sm:flex-row gap-2">
             <Button
               type="button"
               variant="outline"
               onClick={() => onOpenChange(false)}
               disabled={inviteMutation.isPending}
+              className="w-full sm:w-auto"
             >
               Cancelar
             </Button>
-            <Button type="submit" disabled={inviteMutation.isPending}>
+            <Button
+              type="submit"
+              disabled={inviteMutation.isPending}
+              className="w-full sm:w-auto"
+            >
               {inviteMutation.isPending && (
                 <Loader2 className="mr-2 size-4 animate-spin" />
               )}
@@ -178,6 +190,62 @@ function InviteDialog({
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/* ---------- Mobile User Card ---------- */
+
+function UserCard({
+  user,
+  onChangeRole,
+  onDeactivate,
+}: {
+  user: UserRecord;
+  onChangeRole: (id: string, role: string) => void;
+  onDeactivate: (id: string) => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-lg border p-3">
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <p className="text-sm font-medium truncate">{user.name}</p>
+          <StatusBadge status={user.status} />
+        </div>
+        <p className="text-xs text-muted-foreground truncate">{user.email}</p>
+        <div className="mt-1.5">
+          <Badge variant="outline" className="text-[10px]">
+            <Shield className="size-3 mr-1" />
+            {ROLE_LABELS[user.role] || user.role}
+          </Badge>
+        </div>
+      </div>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="icon" className="shrink-0 size-8">
+            <MoreHorizontal className="size-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem onClick={() => onChangeRole(user.id, "admin")}>
+            Hacer Admin
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            onClick={() => onChangeRole(user.id, "accountant")}
+          >
+            Hacer Contador
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => onChangeRole(user.id, "viewer")}>
+            Hacer Visor
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            className="text-destructive"
+            onClick={() => onDeactivate(user.id)}
+          >
+            Desactivar
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
   );
 }
 
@@ -221,6 +289,11 @@ export function UsersTab() {
       toast.error(err.message || "Error al desactivar usuario"),
   });
 
+  const handleChangeRole = (id: string, role: string) =>
+    changeRoleMutation.mutate({ id, role });
+  const handleDeactivate = (id: string) => setDeactivateId(id);
+
+  /* Desktop columns */
   const columns: ColumnDef<UserRecord, any>[] = useMemo(
     () => [
       {
@@ -245,9 +318,7 @@ export function UsersTab() {
           return (
             <Select
               value={user.role}
-              onValueChange={(v) =>
-                changeRoleMutation.mutate({ id: user.id, role: v })
-              }
+              onValueChange={(v) => handleChangeRole(user.id, v)}
             >
               <SelectTrigger className="w-[140px] h-8">
                 <SelectValue />
@@ -280,7 +351,7 @@ export function UsersTab() {
               <DropdownMenuContent align="end">
                 <DropdownMenuItem
                   className="text-destructive"
-                  onClick={() => setDeactivateId(row.original.id)}
+                  onClick={() => handleDeactivate(row.original.id)}
                 >
                   Desactivar
                 </DropdownMenuItem>
@@ -293,38 +364,73 @@ export function UsersTab() {
     [changeRoleMutation]
   );
 
+  const emptyState = (
+    <EmptyState
+      icon={Users}
+      title="Sin usuarios"
+      description="Invita a tu equipo para empezar."
+      action={{
+        label: "Invitar usuario",
+        onClick: () => setInviteDialogOpen(true),
+      }}
+    />
+  );
+
   return (
     <>
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
-          <div>
-            <CardTitle>Usuarios y Roles</CardTitle>
-            <CardDescription>
-              Gestiona los usuarios de tu empresa y sus permisos.
-            </CardDescription>
+        <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <div className="flex size-8 items-center justify-center rounded-lg bg-primary/10">
+              <Users className="size-4 text-primary" />
+            </div>
+            <div>
+              <CardTitle>Usuarios y Roles</CardTitle>
+              <CardDescription>
+                Gestiona los usuarios de tu empresa y sus permisos.
+              </CardDescription>
+            </div>
           </div>
-          <Button onClick={() => setInviteDialogOpen(true)}>
+          <Button
+            onClick={() => setInviteDialogOpen(true)}
+            className="w-full sm:w-auto"
+          >
             <UserPlus className="mr-2 size-4" />
             Invitar
           </Button>
         </CardHeader>
         <CardContent>
-          <DataTable
-            columns={columns}
-            data={users}
-            isLoading={isLoading}
-            emptyState={
-              <EmptyState
-                icon={Users}
-                title="Sin usuarios"
-                description="Invita a tu equipo para empezar."
-                action={{
-                  label: "Invitar usuario",
-                  onClick: () => setInviteDialogOpen(true),
-                }}
-              />
-            }
-          />
+          {/* Mobile: card list */}
+          <div className="block md:hidden">
+            {isLoading ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="size-5 animate-spin text-muted-foreground" />
+              </div>
+            ) : users.length === 0 ? (
+              emptyState
+            ) : (
+              <div className="grid gap-2">
+                {users.map((user) => (
+                  <UserCard
+                    key={user.id}
+                    user={user}
+                    onChangeRole={handleChangeRole}
+                    onDeactivate={handleDeactivate}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Desktop: table */}
+          <div className="hidden md:block">
+            <DataTable
+              columns={columns}
+              data={users}
+              isLoading={isLoading}
+              emptyState={emptyState}
+            />
+          </div>
         </CardContent>
       </Card>
 

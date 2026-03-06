@@ -10,6 +10,7 @@ import {
   CheckCircle2,
   RefreshCw,
   Unplug,
+  ExternalLink,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -31,6 +32,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Separator } from "@/components/ui/separator";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 
 import { api } from "@/lib/api";
@@ -42,6 +44,7 @@ const QUERY_KEY = ["config", "integrations"] as const;
 
 function IntegrationCard({
   name,
+  description,
   isConnected,
   lastSync,
   onEdit,
@@ -52,6 +55,7 @@ function IntegrationCard({
   isSyncing,
 }: {
   name: string;
+  description: string;
   isConnected: boolean;
   lastSync?: string;
   onEdit: () => void;
@@ -64,24 +68,33 @@ function IntegrationCard({
   return (
     <Card>
       <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-base">{name}</CardTitle>
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <CardTitle className="text-base">{name}</CardTitle>
+            <CardDescription className="mt-0.5 text-xs">
+              {description}
+            </CardDescription>
+          </div>
           {isConnected ? (
-            <Badge className="bg-green-600 text-white">Conectado</Badge>
+            <Badge className="bg-green-600 text-white shrink-0">
+              Conectado
+            </Badge>
           ) : (
-            <Badge variant="secondary">Desconectado</Badge>
+            <Badge variant="secondary" className="shrink-0">
+              Desconectado
+            </Badge>
           )}
         </div>
         {lastSync && (
-          <CardDescription>
+          <p className="text-xs text-muted-foreground mt-1">
             Ultima sincronizacion: {lastSync}
-          </CardDescription>
+          </p>
         )}
       </CardHeader>
       <CardContent>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button variant="outline" size="sm" onClick={onEdit}>
-            <Settings className="size-3.5 mr-1" />
+            <Settings className="size-3.5 mr-1.5" />
             {isConnected ? "Editar" : "Configurar"}
           </Button>
           <Button
@@ -91,9 +104,9 @@ function IntegrationCard({
             disabled={isTesting || isSyncing}
           >
             {isTesting ? (
-              <Loader2 className="size-3.5 animate-spin mr-1" />
+              <Loader2 className="size-3.5 animate-spin mr-1.5" />
             ) : (
-              <CheckCircle2 className="size-3.5 mr-1" />
+              <CheckCircle2 className="size-3.5 mr-1.5" />
             )}
             Probar
           </Button>
@@ -104,9 +117,9 @@ function IntegrationCard({
             disabled={isTesting || isSyncing || !isConnected}
           >
             {isSyncing ? (
-              <Loader2 className="size-3.5 animate-spin mr-1" />
+              <Loader2 className="size-3.5 animate-spin mr-1.5" />
             ) : (
-              <RefreshCw className="size-3.5 mr-1" />
+              <RefreshCw className="size-3.5 mr-1.5" />
             )}
             Sincronizar
           </Button>
@@ -118,8 +131,8 @@ function IntegrationCard({
               disabled={isTesting || isSyncing}
               className="text-destructive hover:text-destructive"
             >
-              <Unplug className="size-3.5 mr-1" />
-              Desconectar
+              <Unplug className="size-3.5 mr-1.5" />
+              <span className="hidden sm:inline">Desconectar</span>
             </Button>
           )}
         </div>
@@ -166,7 +179,7 @@ function OdooEditDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Configurar Odoo</DialogTitle>
           <DialogDescription>
@@ -174,7 +187,7 @@ function OdooEditDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-4 py-2">
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid gap-4 grid-cols-1 sm:grid-cols-2">
             <div className="space-y-2">
               <Label>URL *</Label>
               <Input
@@ -206,11 +219,12 @@ function OdooEditDialog({
             </div>
           </div>
         </div>
-        <DialogFooter className="gap-2">
+        <DialogFooter className="flex-col sm:flex-row gap-2">
           <Button
             type="button"
             variant="outline"
             disabled={testMutation.isPending}
+            className="w-full sm:w-auto"
             onClick={() => {
               const v = form.getValues();
               testMutation.mutate({
@@ -228,6 +242,7 @@ function OdooEditDialog({
           </Button>
           <Button
             disabled={saveMutation.isPending}
+            className="w-full sm:w-auto"
             onClick={() => {
               const v = form.getValues();
               saveMutation.mutate({
@@ -283,7 +298,7 @@ function FintocEditDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Configurar Fintoc</DialogTitle>
           <DialogDescription>
@@ -301,11 +316,12 @@ function FintocEditDialog({
             />
           </div>
         </div>
-        <DialogFooter className="gap-2">
+        <DialogFooter className="flex-col sm:flex-row gap-2">
           <Button
             type="button"
             variant="outline"
             disabled={testMutation.isPending}
+            className="w-full sm:w-auto"
             onClick={() => testMutation.mutate(form.getValues())}
           >
             {testMutation.isPending && (
@@ -315,6 +331,7 @@ function FintocEditDialog({
           </Button>
           <Button
             disabled={saveMutation.isPending}
+            className="w-full sm:w-auto"
             onClick={() => saveMutation.mutate(form.getValues())}
           >
             {saveMutation.isPending && (
@@ -370,7 +387,7 @@ function SatEditDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Configurar SAT via Syntage</DialogTitle>
           <DialogDescription>
@@ -392,9 +409,10 @@ function SatEditDialog({
                 href="https://app.syntage.com"
                 target="_blank"
                 rel="noopener"
-                className="underline"
+                className="underline inline-flex items-center gap-0.5"
               >
                 app.syntage.com
+                <ExternalLink className="size-3" />
               </a>
             </p>
           </div>
@@ -411,11 +429,12 @@ function SatEditDialog({
             />
           </div>
         </div>
-        <DialogFooter className="gap-2">
+        <DialogFooter className="flex-col sm:flex-row gap-2">
           <Button
             type="button"
             variant="outline"
             disabled={testMutation.isPending}
+            className="w-full sm:w-auto"
             onClick={() => {
               const v = form.getValues();
               if (v.syntageApiKey) {
@@ -435,6 +454,7 @@ function SatEditDialog({
           </Button>
           <Button
             disabled={saveMutation.isPending}
+            className="w-full sm:w-auto"
             onClick={() => saveMutation.mutate(form.getValues())}
           >
             {saveMutation.isPending && (
@@ -451,9 +471,22 @@ function SatEditDialog({
 /* ---------- Provider Config ---------- */
 
 const PROVIDERS = [
-  { key: "odoo", name: "Odoo ERP" },
-  { key: "fintoc", name: "Fintoc / Banco" },
-  { key: "sat", name: "SAT / Syntage" },
+  {
+    key: "odoo",
+    name: "Odoo ERP",
+    description: "Sincroniza facturas, proveedores y clientes desde Odoo.",
+  },
+  {
+    key: "fintoc",
+    name: "Fintoc / Banco",
+    description: "Pagos SPEI, movimientos bancarios y saldos en tiempo real.",
+  },
+  {
+    key: "sat",
+    name: "SAT / Syntage",
+    description:
+      "Descarga CFDIs, valida estatus y consulta lista EFOS del SAT.",
+  },
 ] as const;
 
 type ProviderKey = (typeof PROVIDERS)[number]["key"];
@@ -547,12 +580,13 @@ export function IntegrationsTab() {
   return (
     <>
       <div className="grid gap-4">
-        {PROVIDERS.map(({ key, name }) => {
+        {PROVIDERS.map(({ key, name, description }) => {
           const info = integrations[key];
           return (
             <IntegrationCard
               key={key}
               name={name}
+              description={description}
               isConnected={info?.is_connected === true}
               lastSync={
                 info?.last_sync_at

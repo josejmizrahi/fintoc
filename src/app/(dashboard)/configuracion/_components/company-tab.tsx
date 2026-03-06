@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2 } from "lucide-react";
+import { Loader2, Building2 } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -52,17 +52,24 @@ export function CompanyTab() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Datos de la Empresa</CardTitle>
-        <CardDescription>
-          Informacion general de tu empresa.
-        </CardDescription>
+        <div className="flex items-center gap-2">
+          <div className="flex size-8 items-center justify-center rounded-lg bg-primary/10">
+            <Building2 className="size-4 text-primary" />
+          </div>
+          <div>
+            <CardTitle>Datos de la Empresa</CardTitle>
+            <CardDescription>
+              Informacion general de tu empresa.
+            </CardDescription>
+          </div>
+        </div>
       </CardHeader>
       <CardContent>
         <form
           onSubmit={form.handleSubmit((data) => saveMutation.mutate(data))}
           className="space-y-4"
         >
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid gap-4 grid-cols-1 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="company-name">Nombre *</Label>
               <Input
@@ -90,7 +97,7 @@ export function CompanyTab() {
                 </p>
               )}
             </div>
-            <div className="space-y-2 sm:col-span-2">
+            <div className="space-y-2 col-span-1 sm:col-span-2">
               <Label htmlFor="company-address">Direccion</Label>
               <Input
                 id="company-address"
@@ -113,7 +120,11 @@ export function CompanyTab() {
           </div>
           <Separator />
           <div className="flex justify-end">
-            <Button type="submit" disabled={saveMutation.isPending}>
+            <Button
+              type="submit"
+              disabled={saveMutation.isPending}
+              className="w-full sm:w-auto"
+            >
               {saveMutation.isPending && (
                 <Loader2 className="mr-2 size-4 animate-spin" />
               )}
