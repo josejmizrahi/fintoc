@@ -101,13 +101,20 @@ export function Header() {
     if (isSyncing) return;
     setSync({ isSyncing: true });
     try {
-      const result = await api.sync.trigger('all');
+      const providers = ['odoo', 'fintoc', 'sat'] as const;
+      const results = await Promise.allSettled(
+        providers.map((p) => api.sync.trigger(p)),
+      );
       setSync({ isSyncing: false, lastSync: new Date().toISOString() });
       queryClient.invalidateQueries();
-      if (result.success) {
-        toast.success(result.message || 'Sincronizacion completada');
+      const succeeded = results.filter((r) => r.status === 'fulfilled' && r.value?.success).length;
+      const failed = results.filter((r) => r.status === 'rejected' || (r.status === 'fulfilled' && !r.value?.success)).length;
+      if (failed === 0) {
+        toast.success('Sincronizacion completada');
+      } else if (succeeded > 0) {
+        toast.success(`Sincronizacion parcial — ${succeeded} de ${providers.length} proveedores`);
       } else {
-        toast.error(result.message || 'Sincronizacion parcial');
+        toast.error('Error en sincronizacion');
       }
     } catch (err) {
       setSync({ isSyncing: false });

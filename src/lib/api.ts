@@ -395,11 +395,12 @@ export const api = {
   },
 
   sync: {
-    trigger: (provider: string) => post<any>('/api/sync', { provider }),
+    trigger: (provider: string) => post<any>('/api/v2/sync', { provider }),
+    status: () => get<any>('/api/v2/sync'),
     logs: () => get<any[]>('/api/sync-logs'),
-    odoo: () => post<any>('/api/sync/odoo'),
-    fintoc: () => post<any>('/api/sync/fintoc'),
-    sat: () => post<any>('/api/sync/sat'),
+    odoo: () => post<any>('/api/v2/sync', { provider: 'odoo' }),
+    fintoc: () => post<any>('/api/v2/sync', { provider: 'fintoc' }),
+    sat: () => post<any>('/api/v2/sync', { provider: 'syntage' }),
   },
 
   audit: {
