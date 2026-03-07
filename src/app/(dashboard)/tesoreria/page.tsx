@@ -12,16 +12,16 @@ import {
   XCircle,
 } from "lucide-react";
 import {
-  LineChart,
+  LazyLineChart as LineChart,
+  LazyResponsiveContainer as ResponsiveContainer,
   Line,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
-  ResponsiveContainer,
   ReferenceLine,
   Legend,
-} from "recharts";
+} from "@/components/shared/lazy-charts";
 
 import {
   Card,

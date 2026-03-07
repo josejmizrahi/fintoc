@@ -14,20 +14,20 @@ import {
   Loader2,
 } from "lucide-react";
 import {
-  AreaChart,
+  LazyAreaChart as AreaChart,
+  LazyBarChart as BarChart,
+  LazyPieChart as PieChart,
+  LazyResponsiveContainer as ResponsiveContainer,
   Area,
-  BarChart,
   Bar,
+  Pie,
+  Cell,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
-  ResponsiveContainer,
   Legend,
-  PieChart,
-  Pie,
-  Cell,
-} from "recharts";
+} from "@/components/shared/lazy-charts";
 
 import { Button } from "@/components/ui/button";
 import {

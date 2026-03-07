@@ -22,7 +22,6 @@ import { formatRelative } from '@/lib/utils/format';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -215,11 +214,9 @@ export function Header() {
               variant="ghost"
               className="relative flex items-center gap-2 px-2"
             >
-              <Avatar className="size-7">
-                <AvatarFallback className="text-xs">
-                  {user ? getInitials(user.name) : 'U'}
-                </AvatarFallback>
-              </Avatar>
+              <span className="inline-flex items-center justify-center size-7 rounded-full bg-muted text-xs font-medium">
+                {user ? getInitials(user.name) : 'U'}
+              </span>
               <div className="hidden md:flex flex-col items-start">
                 <span className="text-sm font-medium leading-none">
                   {user?.name ?? 'Usuario'}

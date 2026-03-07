@@ -1,7 +1,5 @@
 'use client';
 
-import { ErrorState } from '@/components/shared/error-state';
-
 export default function ReconciliationError({
   error,
   reset,
@@ -9,5 +7,12 @@ export default function ReconciliationError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
-  return <ErrorState message={error.message} onRetry={reset} />;
+  return (
+    <div className="flex flex-col items-center justify-center gap-4 py-16 text-center">
+      <p className="text-destructive text-sm">{error.message}</p>
+      <button onClick={reset} className="text-sm underline">
+        Reintentar
+      </button>
+    </div>
+  );
 }
