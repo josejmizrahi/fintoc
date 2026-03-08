@@ -17,15 +17,15 @@ import {
   BarChart3,
 } from "lucide-react";
 import {
-  BarChart,
+  LazyBarChart as BarChart,
+  LazyResponsiveContainer as ResponsiveContainer,
   Bar,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
-  ResponsiveContainer,
   Legend,
-} from "recharts";
+} from "@/components/shared/lazy-charts";
 
 import { Button } from "@/components/ui/button";
 import {
