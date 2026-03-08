@@ -323,7 +323,7 @@ function NewBudgetDialog({
               step="0.01"
               min="0"
               placeholder="0.00"
-              {...form.register("amount")}
+              {...form.register("amount", { valueAsNumber: true })}
             />
             {form.formState.errors.amount && (
               <p className="text-xs text-destructive">
