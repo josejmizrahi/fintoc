@@ -314,7 +314,7 @@ function NewExpenseDialog({
                 step="0.01"
                 min="0"
                 placeholder="0.00"
-                {...form.register("amount")}
+                {...form.register("amount", { valueAsNumber: true })}
               />
               {form.formState.errors.amount && (
                 <p className="text-xs text-destructive">
@@ -417,7 +417,12 @@ export default function GastosPage() {
     return (d.data as Expense[]) ?? [];
   }, [expensesData]);
 
-  const totalExpenses = expenses.length;
+  const totalExpenses = useMemo(() => {
+    if (!expensesData) return 0;
+    if (Array.isArray(expensesData)) return expensesData.length;
+    const d = expensesData as unknown as Record<string, unknown>;
+    return (d.meta as Record<string, number>)?.total ?? (d.total as number) ?? expenses.length;
+  }, [expensesData, expenses.length]);
 
   const handleApprove = useCallback(
     async (id: string) => {
