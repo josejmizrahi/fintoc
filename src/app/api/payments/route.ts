@@ -37,10 +37,10 @@ export const GET = createHandler(async (req) => {
     if (dateTo) query = query.lte('created_at', dateTo);
 
     const amountMin = url.searchParams.get('amount_min');
-    if (amountMin) query = query.gte('amount', parseFloat(amountMin));
+    if (amountMin && !isNaN(parseFloat(amountMin))) query = query.gte('amount', parseFloat(amountMin));
 
     const amountMax = url.searchParams.get('amount_max');
-    if (amountMax) query = query.lte('amount', parseFloat(amountMax));
+    if (amountMax && !isNaN(parseFloat(amountMax))) query = query.lte('amount', parseFloat(amountMax));
 
     if (search) {
       query = query.or(`concept.ilike.%${search}%,beneficiary_name.ilike.%${search}%,reference.ilike.%${search}%`);
