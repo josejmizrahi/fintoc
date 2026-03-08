@@ -70,6 +70,7 @@ export function SatAppTab() {
       onSuccess: (data: SatAppResult) => {
         setSatAppResult(data);
         satAppProgress.stop();
+        cleanup?.();
       },
       onError: () => {
         satAppProgress.stop();

@@ -80,11 +80,11 @@ export function getPeriodDates(preset: string): ReconciliationPeriod {
       };
     }
     case "quarter": {
-      const start = new Date(now.getFullYear(), now.getMonth() - 3, now.getDate());
+      const start = new Date(now.getFullYear(), now.getMonth() - 3, 1);
       return { period_start: start.toISOString().split("T")[0], period_end: end };
     }
     case "semester": {
-      const start = new Date(now.getFullYear(), now.getMonth() - 6, now.getDate());
+      const start = new Date(now.getFullYear(), now.getMonth() - 6, 1);
       return { period_start: start.toISOString().split("T")[0], period_end: end };
     }
     default:
