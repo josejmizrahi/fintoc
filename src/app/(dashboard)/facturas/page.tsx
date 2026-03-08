@@ -113,18 +113,18 @@ export default function FacturasPage() {
           <TabsTrigger value="payable" className="gap-1.5">
             <FileText className="size-4" />
             Por Pagar
-            {state.payableData.length > 0 && (
+            {state.payableTotal > 0 && (
               <Badge variant="secondary" className="ml-1 text-xs">
-                {state.payableData.length}
+                {state.payableTotal}
               </Badge>
             )}
           </TabsTrigger>
           <TabsTrigger value="receivable" className="gap-1.5">
             <FileText className="size-4" />
             Por Cobrar
-            {state.receivableData.length > 0 && (
+            {state.receivableTotal > 0 && (
               <Badge variant="secondary" className="ml-1 text-xs">
-                {state.receivableData.length}
+                {state.receivableTotal}
               </Badge>
             )}
           </TabsTrigger>
@@ -142,7 +142,7 @@ export default function FacturasPage() {
             pagination={{
               page: state.filters.page,
               pageSize: state.filters.per_page,
-              total: state.filteredData.length,
+              total: state.currentTotal,
             }}
             onPaginationChange={(p) =>
               state.setFilters({ page: p.page, per_page: p.pageSize })
@@ -162,7 +162,7 @@ export default function FacturasPage() {
             pagination={{
               page: state.filters.page,
               pageSize: state.filters.per_page,
-              total: state.filteredData.length,
+              total: state.currentTotal,
             }}
             onPaginationChange={(p) =>
               state.setFilters({ page: p.page, per_page: p.pageSize })

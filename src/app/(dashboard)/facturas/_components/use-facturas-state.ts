@@ -40,7 +40,11 @@ export function useFacturasState() {
   const payableData: Invoice[] = Array.isArray(payableQuery.data) ? payableQuery.data : (payableQuery.data?.data ?? []);
   const receivableData: Invoice[] = Array.isArray(receivableQuery.data) ? receivableQuery.data : (receivableQuery.data?.data ?? []);
 
+  const payableTotal = payableQuery.data?.meta?.total ?? payableData.length;
+  const receivableTotal = receivableQuery.data?.meta?.total ?? receivableData.length;
+
   const currentData = activeTab === "payable" ? payableData : receivableData;
+  const currentTotal = activeTab === "payable" ? payableTotal : receivableTotal;
   const _currentQuery = activeTab === "payable" ? payableQuery : receivableQuery;
 
   // Filter bar values
@@ -308,6 +312,9 @@ export function useFacturasState() {
     payableData,
     receivableData,
     filteredData,
+    currentTotal,
+    payableTotal,
+    receivableTotal,
     payableQuery,
     receivableQuery,
     unvalidatedCount,
