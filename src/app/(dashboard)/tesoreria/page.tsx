@@ -204,7 +204,9 @@ export default function TesoreriaPage() {
 
   const totalMovements = Array.isArray(movements)
     ? movements.length
-    : (movements as Record<string, unknown>)?.total as number ?? 0;
+    : (movements as Record<string, unknown>)?.meta
+      ? ((movements as Record<string, unknown>).meta as Record<string, number>)?.total ?? movementsList.length
+      : (movements as Record<string, unknown>)?.total as number ?? movementsList.length;
 
   return (
     <PermissionGate

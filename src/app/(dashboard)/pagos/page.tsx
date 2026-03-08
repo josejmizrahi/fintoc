@@ -107,6 +107,28 @@ export default function PagosPage() {
   const cancelPayment = useCancelPayment();
   const retryPayment = useRetryPayment();
 
+  // Handlers
+  const handleRowAction = useCallback(
+    (action: string, payment: Payment) => {
+      switch (action) {
+        case "view":
+          setSelectedPayment(payment);
+          setDetailOpen(true);
+          break;
+        case "execute":
+          setExecuteConfirm(payment);
+          break;
+        case "cancel":
+          setCancelConfirm(payment);
+          break;
+        case "retry":
+          retryPayment.mutate(payment.id);
+          break;
+      }
+    },
+    [retryPayment]
+  );
+
   // Column definitions
   const columns = useMemo(
     () =>
@@ -115,27 +137,8 @@ export default function PagosPage() {
         canExecute,
         canCancel,
       }),
-    [canExecute, canCancel]
+    [handleRowAction, canExecute, canCancel]
   );
-
-  // Handlers
-  function handleRowAction(action: string, payment: Payment) {
-    switch (action) {
-      case "view":
-        setSelectedPayment(payment);
-        setDetailOpen(true);
-        break;
-      case "execute":
-        setExecuteConfirm(payment);
-        break;
-      case "cancel":
-        setCancelConfirm(payment);
-        break;
-      case "retry":
-        retryPayment.mutate(payment.id);
-        break;
-    }
-  }
 
   function handleRowClick(payment: Payment) {
     setSelectedPayment(payment);

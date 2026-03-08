@@ -80,6 +80,7 @@ export function BancoAppTab() {
       onSuccess: (data: BancoAppResult) => {
         setBancoAppResult(data);
         bancoAppProgress.stop();
+        cleanup?.();
       },
       onError: () => {
         bancoAppProgress.stop();

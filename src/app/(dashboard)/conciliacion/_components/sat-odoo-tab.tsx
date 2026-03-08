@@ -73,6 +73,7 @@ export function SatOdooTab() {
       onSuccess: (data: SatOdooResult) => {
         setSatOdooResult(data);
         satOdooProgress.stop();
+        cleanup?.();
       },
       onError: () => {
         satOdooProgress.stop();

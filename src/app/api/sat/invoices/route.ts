@@ -31,9 +31,9 @@ export const GET = createHandler(async (req) => {
     const uuids = url.searchParams.getAll('uuid');
     if (uuids.length > 0) params.uuid = uuids;
     const page = url.searchParams.get('page');
-    if (page) params.page = parseInt(page, 10);
+    if (page && !isNaN(parseInt(page, 10))) params.page = parseInt(page, 10);
     const limit = url.searchParams.get('limit');
-    if (limit) params.itemsPerPage = parseInt(limit, 10);
+    if (limit && !isNaN(parseInt(limit, 10))) params.itemsPerPage = parseInt(limit, 10);
     const status = url.searchParams.get('status');
     if (status) params.status = status as 'active' | 'cancelled';
 
