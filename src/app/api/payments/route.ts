@@ -54,8 +54,14 @@ export const GET = createHandler(async (req) => {
     const { data: payments, count, error } = await query;
     if (error) throw new ApiError('INTERNAL_ERROR', 'Error al obtener pagos', 500);
 
+    // Map beneficiary_name -> partner_name for frontend compatibility
+    const mapped = (payments || []).map((p: Record<string, unknown>) => ({
+      ...p,
+      partner_name: p.partner_name ?? p.beneficiary_name ?? null,
+    }));
+
     return Response.json({
-      data: payments || [],
+      data: mapped,
       meta: { total: count || 0, page, limit },
     });
   }))(req, { params: Promise.resolve({}) });

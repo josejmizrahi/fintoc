@@ -6,7 +6,7 @@ import { getAdminClient } from '@/lib/supabase/admin';
 import { writeAuditLog } from '@/lib/middleware/audit';
 
 export const POST = createHandler(async (req, params) => {
-  return withAuth(withRbac('payments.create', async (_req, ctx) => {
+  return withAuth(withRbac('payments.cancel', async (_req, ctx) => {
     const id = params.id;
     const admin = getAdminClient();
 
