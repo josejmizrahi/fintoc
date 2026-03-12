@@ -347,7 +347,7 @@ describe('GET /api/cron/sync-sat', () => {
     mockSyncSat
       .mockResolvedValueOnce({
         status: 'completed',
-        extractions: [{ extractor: 'invoices', extractionId: 'ext_1', status: 'pending' }],
+        extractions: [{ extractor: 'invoice', extractionId: 'ext_1', status: 'pending' }],
         errors: [],
       })
       .mockResolvedValueOnce({
@@ -622,6 +622,12 @@ describe('GET /api/cron/check-scheduled', () => {
       error: null,
     });
 
+    // bank_accounts lookup for Fintoc account_id
+    pushTableResult('bank_accounts', {
+      data: { fintoc_account_id: 'acc_fintoc_1' },
+      error: null,
+    });
+
     mockCreateTransfer.mockResolvedValueOnce({ id: 'tr_new_123' });
 
     const { GET } = await import('./check-scheduled/route');
@@ -640,7 +646,8 @@ describe('GET /api/cron/check-scheduled', () => {
     ];
     expect(transferParams.amount).toBe(250000); // 2500 * 100
     expect(transferParams.currency).toBe('MXN');
-    expect(transferParams.concept).toBe('Renta');
+    expect(transferParams.comment).toBe('Renta');
+    expect(transferParams.account_id).toBe('acc_fintoc_1');
     expect(secretKey).toBe('sk_test'); // from decrypt mock
   });
 
@@ -664,6 +671,12 @@ describe('GET /api/cron/check-scheduled', () => {
     // No integration config
     pushTableResult('integrations', { data: null, error: null });
 
+    // bank_accounts lookup for Fintoc account_id
+    pushTableResult('bank_accounts', {
+      data: { fintoc_account_id: 'acc_fintoc_2' },
+      error: null,
+    });
+
     mockCreateTransfer.mockResolvedValueOnce({ id: 'tr_env_456' });
 
     const { GET } = await import('./check-scheduled/route');
@@ -672,12 +685,13 @@ describe('GET /api/cron/check-scheduled', () => {
     const body = await res.json();
 
     expect(body.data.processed).toBe(1);
-    // concept falls back to `Pago ${payment.id}`
+    // comment falls back to `Pago ${payment.id}`
     const [transferParams, secretKey] = mockCreateTransfer.mock.calls[0] as [
       Record<string, unknown>,
       string,
     ];
-    expect(transferParams.concept).toBe('Pago pay-3');
+    expect(transferParams.comment).toBe('Pago pay-3');
+    expect(transferParams.account_id).toBe('acc_fintoc_2');
     expect(secretKey).toBe('sk_env_fallback');
   });
 
@@ -699,6 +713,10 @@ describe('GET /api/cron/check-scheduled', () => {
     });
 
     pushTableResult('integrations', { data: null, error: null });
+    pushTableResult('bank_accounts', {
+      data: { fintoc_account_id: 'acc_fintoc_3' },
+      error: null,
+    });
     mockCreateTransfer.mockRejectedValueOnce(new Error('Fintoc API error'));
 
     const { GET } = await import('./check-scheduled/route');

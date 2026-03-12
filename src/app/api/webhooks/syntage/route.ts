@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { getAdminClient } from '@/lib/supabase/admin';
-import { verifySyntageWebhook, parseEfosCode, mapSatStatus, mapInvoiceType } from '@/lib/integrations/syntage';
+import { verifySyntageWebhook, parseEfosStatus, mapSatStatus, mapInvoiceType } from '@/lib/integrations/syntage';
 import type { ExtractionStatus, ExtractionErrorCode } from '@/lib/integrations/syntage';
 
 const syntageWebhookSchema = z.object({
@@ -203,9 +203,11 @@ async function handleInvoiceEvent(
   if (!integration) return;
 
   const companyId = integration.company_id;
-  const satStatus = mapSatStatus((data.status as string) || 'active');
+  const satStatus = mapSatStatus((data.status as string) || 'Vigente');
   const invoiceType = mapInvoiceType((data.type as string) || '');
-  const efos = parseEfosCode(data.efosValidation as number | undefined);
+  const issuer = data.issuer as Record<string, unknown> | undefined;
+  const receiver = data.receiver as Record<string, unknown> | undefined;
+  const efos = parseEfosStatus(data.efos_validation as string | undefined);
 
   const invoiceFields: Record<string, unknown> = {
     sat_status: satStatus,
@@ -213,7 +215,7 @@ async function handleInvoiceEvent(
     validated_at: new Date().toISOString(),
   };
 
-  if (efos.code !== null) {
+  if (efos.status !== null) {
     invoiceFields.efos_status = efos.isBlocked ? 'definitivo' : efos.isRisky ? 'presunto' : null;
   }
 
@@ -239,12 +241,12 @@ async function handleInvoiceEvent(
       amount_tax: (data.tax as number) || 0,
       amount_paid: 0,
       amount_residual: (data.total as number) || 0,
-      invoice_date: (data.issuedAt as string)?.split('T')[0] || new Date().toISOString().split('T')[0],
-      issuer_rfc: (data.issuerRfc as string) || (data.issuer_rfc as string) || null,
-      issuer_name: (data.issuerName as string) || null,
-      receiver_rfc: (data.receiverRfc as string) || (data.receiver_rfc as string) || null,
-      receiver_name: (data.receiverName as string) || null,
-      payment_method: (data.paymentMethod as string) || null,
+      invoice_date: (data.issued_at as string)?.split('T')[0] || new Date().toISOString().split('T')[0],
+      issuer_rfc: (issuer?.rfc as string) || null,
+      issuer_name: (issuer?.name as string) || null,
+      receiver_rfc: (receiver?.rfc as string) || null,
+      receiver_name: (receiver?.name as string) || null,
+      payment_method: (data.payment_method as string) || null,
       currency: (data.currency as string) || 'MXN',
       ...invoiceFields,
     };
@@ -270,7 +272,7 @@ async function handleInvoiceEvent(
 
   // Handle EFOS detection: update vendor and invoice atomically
   if (efos.isBlocked || efos.isRisky) {
-    const issuerRfc = ((data.issuerRfc as string) || (data.issuer_rfc as string) || '').toUpperCase();
+    const issuerRfc = ((issuer?.rfc as string) || '').toUpperCase();
     if (issuerRfc) {
       const efosStatus = efos.isBlocked ? 'definitivo' : 'presunto';
 

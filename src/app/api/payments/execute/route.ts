@@ -19,7 +19,7 @@ export const POST = createHandler(async (req) => {
     const { payment_id } = result.data;
     const admin = getAdminClient();
 
-    // Fetch payment
+    // Fetch payment and company's Fintoc account
     const { data: payment } = await admin
       .from('payments')
       .select('*, vendors:vendor_id(efos_status, name)')
@@ -66,15 +66,29 @@ export const POST = createHandler(async (req) => {
       throw new ApiError('INTEGRATION_NOT_CONFIGURED', 'Fintoc no configurado', 422);
     }
 
+    // Get the company's Fintoc account_id for outbound transfers
+    const { data: bankAccount } = await admin
+      .from('bank_accounts')
+      .select('fintoc_account_id')
+      .eq('company_id', ctx.company_id)
+      .not('fintoc_account_id', 'is', null)
+      .limit(1)
+      .single();
+
+    if (!bankAccount?.fintoc_account_id) {
+      throw new ApiError('INTEGRATION_NOT_CONFIGURED', 'No hay cuenta bancaria vinculada a Fintoc', 422);
+    }
+
     try {
-      // Call Fintoc to create transfer
+      // Call Fintoc v2 to create transfer
       const transfer = (await createTransfer({
         amount: Math.round(payment.amount * 100), // Fintoc expects centavos
         currency: 'MXN',
-        destination_account: {
+        counterparty: {
           number: payment.clabe,
         },
-        concept: payment.concept,
+        comment: payment.concept,
+        account_id: bankAccount.fintoc_account_id,
         reference_id: payment.reference || undefined,
       }, fintocSecretKey)) as { id: string };
 

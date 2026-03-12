@@ -65,7 +65,7 @@ export const POST = createHandler(async (req) => {
 
     // Update invoice
     await admin.from('invoices').update({
-      sat_status: satStatus === 'active' ? 'vigente' : satStatus === 'cancelled' ? 'cancelado' : satStatus,
+      sat_status: satStatus === 'Vigente' ? 'vigente' : satStatus === 'Cancelado' ? 'cancelado' : satStatus,
       efos_status: efosStatus,
       cancellable,
       validated_at: new Date().toISOString(),

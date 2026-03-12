@@ -31,8 +31,8 @@ export const POST = createHandler(async (req) => {
 
     // Fetch SAT invoices
     const satInvoices = await syntage.getInvoices(integration.syntage_taxpayer_id, {
-      dateFrom: period_start,
-      dateTo: period_end,
+      date_from: period_start,
+      date_to: period_end,
     });
 
     // Fetch app invoices

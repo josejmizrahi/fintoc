@@ -119,6 +119,7 @@ export async function POST(req: Request): Promise<Response> {
 
         case 'transfer.outbound.failed':
         case 'transfer.outbound.rejected':
+        case 'transfer.outbound.returned':
           await handleTransferFailed(admin, payload.data);
           break;
 

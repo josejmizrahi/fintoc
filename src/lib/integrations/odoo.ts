@@ -482,16 +482,22 @@ export async function createOdooPayment(
 export async function createAndReconcilePayment(
   config: OdooConfig,
   invoiceMoveId: number,
-  values: OdooPaymentValues
+  values: OdooPaymentValues,
+  paymentLineId?: number
 ): Promise<{ paymentId: number; reconciled: boolean }> {
   const paymentId = await createOdooPayment(config, values);
 
   let reconciled = false;
-  try {
-    await odooCallMethod(config, 'account.move', 'js_assign_outstanding_line', [invoiceMoveId]);
-    reconciled = true;
-  } catch {
-    // Reconciliation is best-effort
+  if (paymentLineId) {
+    try {
+      // js_assign_outstanding_line requires the payment's outstanding receivable/payable line_id
+      await odooRpc(config, 'object', 'account.move', [
+        'js_assign_outstanding_line', [invoiceMoveId], { line_id: paymentLineId },
+      ]);
+      reconciled = true;
+    } catch {
+      // Reconciliation is best-effort
+    }
   }
 
   return { paymentId, reconciled };

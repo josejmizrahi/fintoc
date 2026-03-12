@@ -17,8 +17,8 @@ import type { SyncProvider as ProviderName, SyncResult } from '@/packages/shared
 interface SyntageSyncConfig {
   taxpayerId: string;
   extractors: Extractor[];
-  dateFrom?: string;
-  dateTo?: string;
+  date_from?: string;
+  date_to?: string;
 }
 
 export interface SatSyncResult extends SyncResult {
@@ -54,7 +54,7 @@ export class SyntageSyncProvider extends BaseSyncProvider<SyntageSyncConfig> {
 
     return {
       taxpayerId: integration.syntage_taxpayer_id,
-      extractors: ['invoices', 'tax_status', 'tax_compliance_checks'] as Extractor[],
+      extractors: ['invoice', 'tax_status', 'tax_compliance'] as Extractor[],
     };
   }
 
@@ -69,8 +69,8 @@ export class SyntageSyncProvider extends BaseSyncProvider<SyntageSyncConfig> {
     for (const extractor of config.extractors) {
       try {
         const extraction = await createExtraction(config.taxpayerId, extractor, {
-          dateFrom: config.dateFrom,
-          dateTo: config.dateTo,
+          date_from: config.date_from,
+          date_to: config.date_to,
         });
         extractions.push({ ...extraction, _extractor: extractor });
         this.extractionResults.push({
