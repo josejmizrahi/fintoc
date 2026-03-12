@@ -42,20 +42,6 @@ export function useCreateCustomer() {
   });
 }
 
-export function useUpdateCustomer() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, data }: { id: string; data: Record<string, unknown> }) => api.customers.update(id, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: customerKeys.all });
-      toast.success('Cliente actualizado exitosamente');
-    },
-    onError: (error: Error) => {
-      toast.error(error.message || 'Error al actualizar cliente');
-    },
-  });
-}
-
 export function useCreateCustomerClabe() {
   const queryClient = useQueryClient();
   return useMutation({

@@ -178,6 +178,15 @@ export const expenseCreateSchema = z.object({
   cfdi_uuid: z.string().max(36).optional(),
 });
 
+export const expenseUpdateSchema = z.object({
+  employee_name: z.string().min(1).max(200).optional(),
+  category: z.string().min(1).max(100).optional(),
+  description: z.string().max(200).optional(),
+  amount: z.number().positive().optional(),
+  xml_url: z.string().url().optional(),
+  cfdi_uuid: z.string().max(36).optional(),
+});
+
 export const expenseRejectSchema = z.object({
   reason: z.string().min(1),
 });

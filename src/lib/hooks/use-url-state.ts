@@ -60,14 +60,3 @@ export function useTreasuryFilters() {
   });
 }
 
-export function useAuditFilters() {
-  return useQueryStates({
-    action: parseAsString.withDefault(''),
-    entity_type: parseAsString.withDefault(''),
-    user_id: parseAsString.withDefault(''),
-    page: parseAsInteger.withDefault(1),
-    per_page: parseAsInteger.withDefault(50),
-    date_from: parseAsString.withDefault(''),
-    date_to: parseAsString.withDefault(''),
-  });
-}

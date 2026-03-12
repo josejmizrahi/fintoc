@@ -239,6 +239,7 @@ export const api = {
   expenses: {
     list: (params?: Record<string, unknown>) => get<PaginatedResponse<Expense>>('/api/expenses', params),
     create: (data: Record<string, unknown>) => post<{ data: Expense }>('/api/expenses', data),
+    update: (id: string, data: Record<string, unknown>) => put<{ data: Expense }>(`/api/expenses/${id}`, data),
     approve: (id: string) => post<{ data: Expense }>(`/api/expenses/${id}/approve`),
     reject: (id: string, reason: string) => post<{ data: Expense }>(`/api/expenses/${id}/reject`, { reason }),
     summary: () => get<any>('/api/expenses/summary'),
@@ -249,7 +250,6 @@ export const api = {
     forecast: (days?: number) => get<any>('/api/treasury/forecast', { days }),
     movements: (params?: Record<string, unknown>) => get<any>('/api/treasury/movements', params),
     balance: () => get<any>('/api/treasury/balance'),
-    cashFlow: (days?: number) => get<any>('/api/treasury/cash-flow', { days }),
     accounts: () => get<any>('/api/treasury/accounts'),
   },
 
@@ -270,64 +270,29 @@ export const api = {
 
   sat: {
     validate: (data: Record<string, unknown>) => post<any>('/api/sat/validate', data),
-    validateBulk: () => post<any>('/api/sat/validate-bulk'),
     validateRfc: (data: Record<string, unknown>) => post<any>('/api/sat/validate-rfc', data),
     checkEfos: (data: Record<string, unknown>) => post<any>('/api/sat/check-efos', data),
-    uploadXml: (data: Record<string, unknown>) => post<any>('/api/sat/upload-xml', data),
-    documents: (params?: Record<string, unknown>) => get<any[]>('/api/sat/documents', params),
     cancel: (data: Record<string, unknown>) => post<any>('/api/sat/cancel', data),
-    descargaSolicitud: (data: Record<string, unknown>) => post<any>('/api/sat/descarga/solicitud', data),
-    descargaVerificar: (data: Record<string, unknown>) => post<any>('/api/sat/descarga/verificar', data),
     upload: (data: Record<string, unknown>) => post<any>('/api/sat/upload', data),
 
     // ── Syntage (sat.ws) ──
     syntage: {
-      // GET actions
       status: () => get<any>('/api/sat/syntage', { action: 'status' }),
-      credentials: () => get<any>('/api/sat/syntage', { action: 'credentials' }),
-      credential: (id: string) => get<any>('/api/sat/syntage', { action: 'credential', id }),
       taxpayers: () => get<any>('/api/sat/syntage', { action: 'taxpayers' }),
       invoices: (taxpayerId: string, params?: Record<string, unknown>) =>
         get<any>('/api/sat/syntage', { action: 'invoices', taxpayerId, ...params }),
-      invoice: (id: string) => get<any>('/api/sat/syntage', { action: 'invoice', id }),
       invoiceCfdi: (id: string) => get<any>('/api/sat/syntage', { action: 'invoice-cfdi', id }),
-      invoiceLines: (invoiceId: string) => get<any>('/api/sat/syntage', { action: 'invoice-lines', invoiceId }),
-      invoicePayments: (invoiceId: string) => get<any>('/api/sat/syntage', { action: 'invoice-payments', invoiceId }),
       taxReturns: (taxpayerId: string) => get<any>('/api/sat/syntage', { action: 'tax-returns', taxpayerId }),
-      taxReturn: (id: string) => get<any>('/api/sat/syntage', { action: 'tax-return', id }),
-      taxReturnData: (id: string) => get<any>('/api/sat/syntage', { action: 'tax-return-data', id }),
       taxCompliance: (taxpayerId: string) => get<any>('/api/sat/syntage', { action: 'tax-compliance', taxpayerId }),
       taxStatus: (taxpayerId: string) => get<any>('/api/sat/syntage', { action: 'tax-status', taxpayerId }),
       taxRetentions: (taxpayerId: string) => get<any>('/api/sat/syntage', { action: 'tax-retentions', taxpayerId }),
-      certificates: (entityId: string) => get<any>('/api/sat/syntage', { action: 'certificates', entityId }),
       extractions: () => get<any>('/api/sat/syntage', { action: 'extractions' }),
-      extraction: (id: string) => get<any>('/api/sat/syntage', { action: 'extraction', id }),
-      insightsBalance: (taxpayerId: string) => get<any>('/api/sat/syntage', { action: 'insights-balance', taxpayerId }),
-      insightsIncome: (taxpayerId: string) => get<any>('/api/sat/syntage', { action: 'insights-income', taxpayerId }),
-      insightsCashflow: (insightId: string) => get<any>('/api/sat/syntage', { action: 'insights-cashflow', insightId }),
-      insightsRatios: (insightId: string) => get<any>('/api/sat/syntage', { action: 'insights-ratios', insightId }),
-      insightsScores: (entityId: string) => get<any>('/api/sat/syntage', { action: 'insights-scores', entityId }),
-      events: () => get<any>('/api/sat/syntage', { action: 'events' }),
-
-      // POST actions
       saveConfig: (data: { syntageApiKey: string; syntageEnvironment?: string; rfcEmisor?: string }) =>
         post<any>('/api/sat/syntage', { action: 'save-config', ...data }),
-      connect: (data: { rfc: string; password: string; certificate?: string; privateKey?: string }) =>
-        post<any>('/api/sat/syntage', { action: 'connect', ...data }),
-      disconnect: (credentialId: string) =>
-        post<any>('/api/sat/syntage', { action: 'disconnect', credentialId }),
-      revalidate: (credentialId: string) =>
-        post<any>('/api/sat/syntage', { action: 'revalidate', credentialId }),
       extract: (taxpayerId: string, extractor?: string, options?: { period?: { from: string; to: string }; issued?: boolean; received?: boolean }) =>
         post<any>('/api/sat/syntage', { action: 'extract', taxpayerId, extractor, options }),
       stopExtraction: (extractionId: string) =>
         post<any>('/api/sat/syntage', { action: 'stop-extraction', extractionId }),
-      export: (taxpayerId: string, format?: 'csv' | 'xlsx') =>
-        post<any>('/api/sat/syntage', { action: 'export', taxpayerId, format }),
-      createWebhook: (url: string, events: string[]) =>
-        post<any>('/api/sat/syntage', { action: 'create-webhook', url, events }),
-      createEntity: (data: { rfc?: string; name?: string }) =>
-        post<any>('/api/sat/syntage', { action: 'create-entity', ...data }),
     },
   },
 
@@ -367,10 +332,7 @@ export const api = {
     trigger: (provider: string) => post<any>('/api/v2/sync', { provider }),
     status: () => get<any>('/api/v2/sync'),
     logs: () => get<any[]>('/api/sync-logs'),
-    odoo: () => post<any>('/api/v2/sync', { provider: 'odoo' }),
     odooPartners: () => post<any>('/api/sync/odoo/partners'),
-    fintoc: () => post<any>('/api/v2/sync', { provider: 'fintoc' }),
-    sat: () => post<any>('/api/v2/sync', { provider: 'syntage' }),
   },
 
   audit: {

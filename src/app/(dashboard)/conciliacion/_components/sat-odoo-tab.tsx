@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
-import { useSatOdooReconciliation } from "@/lib/hooks/use-reconciliation";
+import { useSatOdooReconciliation, useImportToOdoo, useValidateCfdi } from "@/lib/hooks/use-reconciliation";
 import { EmptyState } from "@/components/shared/empty-state";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { KpiCard } from "@/components/shared/kpi-card";
@@ -43,6 +43,8 @@ import { useProcessingProgress } from "./use-processing-progress";
 
 export function SatOdooTab() {
   const satOdooMutation = useSatOdooReconciliation();
+  const importToOdoo = useImportToOdoo();
+  const validateCfdi = useValidateCfdi();
   const [satOdooPreset, setSatOdooPreset] = useState("current_month");
   const [satOdooCustomStart, setSatOdooCustomStart] = useState("");
   const [satOdooCustomEnd, setSatOdooCustomEnd] = useState("");
@@ -139,13 +141,14 @@ export function SatOdooTab() {
         <Button
           size="sm"
           variant="outline"
+          disabled={importToOdoo.isPending}
           onClick={() =>
             setConfirmDialog({
               open: true,
               title: "Importar a Odoo",
               description: `Se importara el CFDI ${row.original.uuid} a Odoo. ¿Deseas continuar?`,
               onConfirm: () => {
-                toast.success(`CFDI ${row.original.uuid} enviado a importar`);
+                importToOdoo.mutate({ cfdi_uuid: row.original.uuid ?? '' });
                 setConfirmDialog((prev) => ({ ...prev, open: false }));
               },
             })
@@ -156,7 +159,7 @@ export function SatOdooTab() {
         </Button>
       )},
     ],
-    []
+    [importToOdoo]
   );
 
   // SAT-Odoo: In Odoo not SAT
@@ -193,13 +196,14 @@ export function SatOdooTab() {
           <Button
             size="sm"
             variant="outline"
+            disabled={validateCfdi.isPending}
             onClick={() =>
               setConfirmDialog({
                 open: true,
                 title: "Verificar en SAT",
                 description: `Se verificara la factura ${row.original.odoo_ref} en el SAT. ¿Deseas continuar?`,
                 onConfirm: () => {
-                  toast.success(`Verificacion de ${row.original.odoo_ref} iniciada`);
+                  validateCfdi.mutate({ uuid: row.original.uuid ?? row.original.odoo_ref ?? '' });
                   setConfirmDialog((prev) => ({ ...prev, open: false }));
                 },
               })
@@ -230,7 +234,7 @@ export function SatOdooTab() {
         </div>
       )},
     ],
-    []
+    [validateCfdi]
   );
 
   // SAT-Odoo: Amount differences
@@ -257,13 +261,14 @@ export function SatOdooTab() {
         <Button
           size="sm"
           variant="outline"
+          disabled={importToOdoo.isPending}
           onClick={() =>
             setConfirmDialog({
               open: true,
               title: "Corregir en Odoo",
               description: `Se ajustara el monto en Odoo para el CFDI ${row.original.uuid} al monto SAT de ${formatMoney(row.original.monto_sat ?? 0)}. ¿Deseas continuar?`,
               onConfirm: () => {
-                toast.success(`Correccion de ${row.original.uuid} enviada a Odoo`);
+                importToOdoo.mutate({ cfdi_uuid: row.original.uuid ?? '' });
                 setConfirmDialog((prev) => ({ ...prev, open: false }));
               },
             })
@@ -274,7 +279,7 @@ export function SatOdooTab() {
         </Button>
       )},
     ],
-    []
+    [importToOdoo]
   );
 
   return (

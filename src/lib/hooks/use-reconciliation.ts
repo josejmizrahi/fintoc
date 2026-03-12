@@ -55,3 +55,29 @@ export function useBancoAppReconciliation() {
     },
   });
 }
+
+export function useImportToOdoo() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { cfdi_uuid: string }) => api.reconciliation.importToOdoo(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: reconciliationKeys.all });
+      toast.success('CFDI importado a Odoo exitosamente');
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || 'Error al importar a Odoo');
+    },
+  });
+}
+
+export function useValidateCfdi() {
+  return useMutation({
+    mutationFn: (data: { uuid: string }) => api.sat.validate(data),
+    onSuccess: () => {
+      toast.success('Verificacion SAT completada');
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || 'Error al verificar en SAT');
+    },
+  });
+}
