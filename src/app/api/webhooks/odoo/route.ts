@@ -41,6 +41,25 @@ export async function POST(req: Request): Promise<Response> {
 
     const payload = parsed.data;
 
+    // Idempotency: skip if we already logged this exact event
+    const eventId = (payload.data?.id as string) || null;
+    if (eventId) {
+      const { data: existing } = await admin.from('webhook_logs')
+        .select('id, payload')
+        .eq('provider', 'odoo')
+        .eq('event_type', payload.type)
+        .eq('processed', true)
+        .limit(10);
+
+      const isDuplicate = (existing || []).some((log: { payload?: { data?: Record<string, unknown> } }) => {
+        return (log.payload?.data?.id as string) === eventId;
+      });
+
+      if (isDuplicate) {
+        return Response.json({ received: true, deduplicated: true });
+      }
+    }
+
     await admin.from('webhook_logs').insert({
       provider: 'odoo',
       event_type: payload.type,

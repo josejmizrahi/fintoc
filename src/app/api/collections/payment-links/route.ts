@@ -5,6 +5,7 @@ import { paymentLinkSchema } from '@/lib/validations/schemas';
 import { ApiError } from '@/lib/utils/errors';
 import { getAdminClient } from '@/lib/supabase/admin';
 import { createPaymentIntent } from '@/lib/integrations/fintoc';
+import { writeAuditLog } from '@/lib/middleware/audit';
 
 export const POST = createHandler(async (req) => {
   return withAuth(withRbac('collections.write', async (_req, ctx) => {
@@ -44,6 +45,15 @@ export const POST = createHandler(async (req) => {
       amount: Math.round(paymentAmount * 100),
       currency: 'MXN',
       recipient_account: { number: bankAccount.clabe },
+    });
+
+    await writeAuditLog({
+      company_id: ctx.company_id,
+      user_id: ctx.user_id,
+      action: 'collection.payment_link_created',
+      entity_type: 'invoice',
+      entity_id: invoice_id,
+      metadata: { payment_intent_id: intent.id, amount: paymentAmount },
     });
 
     return Response.json({

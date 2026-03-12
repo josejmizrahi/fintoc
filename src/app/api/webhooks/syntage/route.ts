@@ -35,6 +35,25 @@ export async function POST(req: Request): Promise<Response> {
 
     const payload: SyntageWebhookPayload = parsed.data;
 
+    // Idempotency: check if we already processed this exact event
+    const eventId = (payload.data?.id as string) || null;
+    if (eventId) {
+      const { data: existing } = await admin.from('webhook_logs')
+        .select('id, payload')
+        .eq('provider', 'syntage')
+        .eq('event_type', payload.type)
+        .eq('processed', true)
+        .limit(10);
+
+      const isDuplicate = (existing || []).some((log: { payload?: { data?: Record<string, unknown> } }) => {
+        return (log.payload?.data?.id as string) === eventId;
+      });
+
+      if (isDuplicate) {
+        return Response.json({ received: true, deduplicated: true });
+      }
+    }
+
     // Log the webhook
     const { data: webhookLog } = await admin.from('webhook_logs').insert({
       provider: 'syntage',

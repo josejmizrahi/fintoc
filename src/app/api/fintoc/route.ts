@@ -1,6 +1,7 @@
 import { createHandler } from '@/lib/middleware/route-handler';
 import { withAuth } from '@/lib/middleware/auth';
 import { ApiError } from '@/lib/utils/errors';
+import { writeAuditLog } from '@/lib/middleware/audit';
 import { hasDB, query, update } from '@/lib/db';
 import {
   createTransfer,
@@ -80,6 +81,15 @@ export const POST = createHandler(async (req) => {
           }, { id: payment_id, company_id: ctx.company_id });
         }
 
+        await writeAuditLog({
+          company_id: ctx.company_id,
+          user_id: ctx.user_id,
+          action: 'fintoc.outbound_transfer',
+          entity_type: 'payment',
+          entity_id: payment_id || transfer.id,
+          metadata: { transfer_id: transfer.id, amount, clabe },
+        });
+
         return Response.json({
           data: {
             message: 'Transferencia SPEI enviada',
@@ -106,6 +116,15 @@ export const POST = createHandler(async (req) => {
             clabe_holder_name: holderName,
           }, { id: vendor_id, company_id: ctx.company_id });
         }
+
+        await writeAuditLog({
+          company_id: ctx.company_id,
+          user_id: ctx.user_id,
+          action: 'fintoc.verify_clabe',
+          entity_type: 'vendor',
+          entity_id: vendor_id || 0,
+          metadata: { clabe, holder_name: holderName, bank: bankName },
+        });
 
         return Response.json({
           data: {
@@ -158,6 +177,15 @@ export const POST = createHandler(async (req) => {
           fintoc_account_number_id: result.id,
           fintoc_clabe: result.number,
         }, { id: customer_id, company_id: ctx.company_id });
+
+        await writeAuditLog({
+          company_id: ctx.company_id,
+          user_id: ctx.user_id,
+          action: 'fintoc.create_account_number',
+          entity_type: 'customer',
+          entity_id: customer_id,
+          metadata: { account_number_id: result.id, clabe: result.number },
+        });
 
         return Response.json({
           data: {

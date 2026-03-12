@@ -5,6 +5,7 @@ import { verifyClabeSchema } from '@/lib/validations/schemas';
 import { ApiError } from '@/lib/utils/errors';
 import { getAdminClient } from '@/lib/supabase/admin';
 import { verifyCLABE } from '@/lib/integrations/fintoc';
+import { writeAuditLog } from '@/lib/middleware/audit';
 
 export const POST = createHandler(async (req) => {
   return withAuth(withRbac('vendors.write', async (_req, ctx) => {
@@ -26,6 +27,15 @@ export const POST = createHandler(async (req) => {
     if (!vendor.clabe) throw new ApiError('VENDOR_NO_CLABE', 'Proveedor no tiene CLABE', 422);
 
     await verifyCLABE(vendor.clabe);
+
+    await writeAuditLog({
+      company_id: ctx.company_id,
+      user_id: ctx.user_id,
+      action: 'vendor.clabe_verification_initiated',
+      entity_type: 'vendor',
+      entity_id: result.data.vendor_id,
+      metadata: { clabe: vendor.clabe },
+    });
 
     return Response.json({
       data: { message: 'Verificacion de CLABE iniciada. Resultado en 1-2 dias.' },

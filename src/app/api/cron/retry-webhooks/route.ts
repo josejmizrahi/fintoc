@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { getAdminClient } from '@/lib/supabase/admin';
 import { verifyCronSecret } from '@/lib/middleware/cron-auth';
 
@@ -45,10 +46,16 @@ export async function GET(req: Request): Promise<Response> {
           ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000');
 
         const webhookUrl = `${baseUrl}/api/webhooks/${log.provider}`;
+        // Generate HMAC retry token using the webhook secret
+        const retrySecret = process.env.WEBHOOK_RETRY_SECRET || process.env.FINTOC_SECRET_KEY || '';
+        const retryPayload = `${log.id}:${log.provider}`;
+        const retrySignature = crypto.createHmac('sha256', retrySecret).update(retryPayload).digest('hex');
+
         const headers: Record<string, string> = {
           'Content-Type': 'application/json',
           'x-webhook-retry': 'true',
           'x-webhook-log-id': log.id,
+          'x-webhook-retry-signature': retrySignature,
         };
 
         // Add auth headers for Syntage retries
