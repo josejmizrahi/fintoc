@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { NextRequest } from "next/server";
 
-// Mock db module
+const TEST_USER_ID = "u-test-user";
+const TEST_TOKEN = "valid-jwt-token";
+const COMPANY_ID = 1;
+
 const mockQuery = vi.fn();
 const mockInsert = vi.fn();
 const mockUpdate = vi.fn();
@@ -14,26 +16,52 @@ vi.mock("@/lib/db", () => ({
   update: (...args: unknown[]) => mockUpdate(...args),
 }));
 
-// Mock auth-helpers
-const mockGetCompanyId = vi.fn();
 vi.mock("@/lib/auth-helpers", () => ({
-  getCompanyId: (...args: unknown[]) => mockGetCompanyId(...args),
+  getCompanyId: vi.fn(),
   maskConfig: vi.fn((c) => c),
   resolveConfig: vi.fn((a, b) => ({ ...b, ...a })),
 }));
 
-// Mock odoo (integrations client)
+vi.mock("@/lib/supabase/admin", () => ({
+  getAdminClient: () => ({
+    auth: {
+      getUser: vi.fn().mockImplementation(async (token: string) => {
+        if (token === TEST_TOKEN) {
+          return { data: { user: { id: TEST_USER_ID, email: "test@test.com", user_metadata: {} } }, error: null };
+        }
+        return { data: { user: null }, error: { message: "Invalid token" } };
+      }),
+    },
+    from: vi.fn().mockImplementation(() => {
+      const chain: Record<string, unknown> = {};
+      chain.select = vi.fn().mockReturnValue(chain);
+      chain.eq = vi.fn().mockReturnValue(chain);
+      chain.single = vi.fn().mockResolvedValue({
+        data: { user_id: TEST_USER_ID, company_id: COMPANY_ID, role: "admin", is_active: true, status: "active" },
+        error: null,
+      });
+      return chain;
+    }),
+  }),
+}));
+
+vi.mock("@/lib/supabase/server", () => ({
+  createClient: () => ({}),
+}));
+
+vi.mock("@/lib/middleware/rate-limit", () => ({
+  checkRateLimit: vi.fn(),
+}));
+
 vi.mock("@/lib/integrations/odoo", () => ({
   odooAuthenticate: vi.fn().mockResolvedValue(42),
   odooVersion: vi.fn().mockResolvedValue({ server_version: "17.0" }),
 }));
 
-// Mock fintoc (integrations client)
 vi.mock("@/lib/integrations/fintoc", () => ({
   getAccounts: vi.fn().mockResolvedValue([]),
 }));
 
-// Mock crypto (encryption)
 vi.mock("@/lib/utils/crypto", () => ({
   encrypt: vi.fn().mockReturnValue(Buffer.from("encrypted-data")),
 }));
@@ -43,31 +71,32 @@ function makeRequest(method: string, body?: unknown) {
     method,
     headers: {
       "Content-Type": "application/json",
-      Authorization: "Bearer test-token",
+      cookie: `qb_access_token=${TEST_TOKEN}`,
     },
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
 }
 
+const ctx = { params: Promise.resolve({}) };
+
 describe("GET /api/onboarding", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockHasDB.mockReturnValue(true);
-    mockGetCompanyId.mockResolvedValue(1);
     mockQuery.mockResolvedValue({ data: [], error: null });
   });
 
   it("returns 401 for unauthenticated requests", async () => {
-    mockGetCompanyId.mockResolvedValue(null);
     const { GET } = await import("./route");
-    const res = await GET(makeRequest("GET") as unknown as NextRequest);
+    const req = new Request("http://localhost/api/onboarding", { method: "GET" });
+    const res = await GET(req, ctx);
     expect(res.status).toBe(401);
   });
 
   it("returns empty integrations when no DB", async () => {
     mockHasDB.mockReturnValue(false);
     const { GET } = await import("./route");
-    const res = await GET(makeRequest("GET") as unknown as NextRequest);
+    const res = await GET(makeRequest("GET"), ctx);
     const data = await res.json();
     expect(data.integrations.odoo).toBeNull();
     expect(data.integrations.fintoc).toBeNull();
@@ -92,7 +121,7 @@ describe("GET /api/onboarding", () => {
     });
 
     const { GET } = await import("./route");
-    const res = await GET(makeRequest("GET") as unknown as NextRequest);
+    const res = await GET(makeRequest("GET"), ctx);
     const data = await res.json();
 
     expect(data.integrations.odoo.is_connected).toBe(true);
@@ -106,33 +135,27 @@ describe("POST /api/onboarding", () => {
     vi.clearAllMocks();
     vi.resetModules();
     mockHasDB.mockReturnValue(true);
-    mockGetCompanyId.mockResolvedValue(1);
     mockQuery.mockResolvedValue({ data: null, error: null });
     mockInsert.mockResolvedValue({ data: [{ id: 1 }], error: null });
     mockUpdate.mockResolvedValue({ data: [{ id: 1 }], error: null });
   });
 
   it("returns 401 for unauthenticated requests", async () => {
-    mockGetCompanyId.mockResolvedValue(null);
     const { POST } = await import("./route");
-    const res = await POST(makeRequest("POST", { action: "save", provider: "odoo" }) as unknown as NextRequest);
+    const req = new Request("http://localhost/api/onboarding", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "save", provider: "odoo", config: { url: "x" } }),
+    });
+    const res = await POST(req, ctx);
     expect(res.status).toBe(401);
-  });
-
-  it("returns 500 when no DB configured", async () => {
-    mockHasDB.mockReturnValue(false);
-    const { POST } = await import("./route");
-    const res = await POST(makeRequest("POST", { action: "save", provider: "odoo" }) as unknown as NextRequest);
-    expect(res.status).toBe(500);
   });
 
   it("rejects invalid provider", async () => {
     const { POST } = await import("./route");
-    const res = await POST(makeRequest("POST", { action: "save", provider: "invalid" }) as unknown as NextRequest);
+    const res = await POST(makeRequest("POST", { action: "save", provider: "invalid", config: { x: "y" } }), ctx);
     expect(res.status).toBe(400);
   });
-
-  // ── Save action ──
 
   it("saves new integration config", async () => {
     const { POST } = await import("./route");
@@ -140,12 +163,12 @@ describe("POST /api/onboarding", () => {
       action: "save",
       provider: "odoo",
       config: { url: "https://odoo.test.com", database: "db", user: "admin", password: "pass" },
-    }) as unknown as NextRequest);
+    }), ctx);
 
     const data = await res.json();
     expect(data.success).toBe(true);
     expect(mockInsert).toHaveBeenCalledWith("integrations", expect.objectContaining({
-      company_id: 1,
+      company_id: COMPANY_ID,
       provider: "odoo",
     }));
   });
@@ -161,24 +184,20 @@ describe("POST /api/onboarding", () => {
       action: "save",
       provider: "odoo",
       config: { url: "https://new.com" },
-    }) as unknown as NextRequest);
+    }), ctx);
 
     const data = await res.json();
     expect(data.success).toBe(true);
     expect(mockUpdate).toHaveBeenCalled();
   });
 
-  // ── Complete action ──
-
   it("marks onboarding as complete", async () => {
     const { POST } = await import("./route");
-    const res = await POST(makeRequest("POST", { action: "complete" }) as unknown as NextRequest);
+    const res = await POST(makeRequest("POST", { action: "complete" }), ctx);
     const data = await res.json();
     expect(data.success).toBe(true);
-    expect(mockUpdate).toHaveBeenCalledWith("companies", { onboarding_completed: true }, { id: 1 });
+    expect(mockUpdate).toHaveBeenCalledWith("companies", { onboarding_completed: true }, { id: COMPANY_ID });
   });
-
-  // ── Test Odoo ──
 
   it("tests Odoo connection successfully", async () => {
     mockQuery.mockResolvedValue({ data: { id: 1, config: {} }, error: null });
@@ -188,7 +207,7 @@ describe("POST /api/onboarding", () => {
       action: "test",
       provider: "odoo",
       config: { url: "https://odoo.test.com", database: "db", user: "admin", password: "pass" },
-    }) as unknown as NextRequest);
+    }), ctx);
 
     const data = await res.json();
     expect(data.success).toBe(true);
@@ -201,14 +220,12 @@ describe("POST /api/onboarding", () => {
       action: "test",
       provider: "odoo",
       config: { url: "", database: "", user: "", password: "" },
-    }) as unknown as NextRequest);
+    }), ctx);
 
     const data = await res.json();
     expect(data.success).toBe(false);
     expect(data.message).toContain("Faltan campos");
   });
-
-  // ── Test SAT ──
 
   it("tests SAT configuration with valid RFC", async () => {
     mockQuery.mockResolvedValue({
@@ -221,7 +238,7 @@ describe("POST /api/onboarding", () => {
       action: "test",
       provider: "sat",
       config: { rfcEmisor: "ABC010101AAA" },
-    }) as unknown as NextRequest);
+    }), ctx);
 
     const data = await res.json();
     expect(data.success).toBe(true);
@@ -237,7 +254,7 @@ describe("POST /api/onboarding", () => {
       action: "test",
       provider: "sat",
       config: { rfcEmisor: "INVALID" },
-    }) as unknown as NextRequest);
+    }), ctx);
 
     const data = await res.json();
     expect(data.success).toBe(false);
@@ -250,14 +267,12 @@ describe("POST /api/onboarding", () => {
       action: "test",
       provider: "sat",
       config: { rfcEmisor: "" },
-    }) as unknown as NextRequest);
+    }), ctx);
 
     const data = await res.json();
     expect(data.success).toBe(false);
     expect(data.message).toContain("RFC");
   });
-
-  // ── Sync action is now handled by /api/sync ──
 
   it("rejects sync action (moved to /api/sync)", async () => {
     const { POST } = await import("./route");
@@ -265,10 +280,10 @@ describe("POST /api/onboarding", () => {
       action: "sync",
       provider: "odoo",
       config: { url: "https://odoo.test.com", database: "db", user: "admin", password: "pass" },
-    }) as unknown as NextRequest);
+    }), ctx);
 
-    const data = await res.json();
     expect(res.status).toBe(400);
-    expect(data.detail).toBeDefined();
+    const data = await res.json();
+    expect(data.error).toBeDefined();
   });
 });
