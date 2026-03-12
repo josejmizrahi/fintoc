@@ -27,11 +27,11 @@ vi.mock('@/lib/integrations/syntage', () => ({
   createExtraction: vi.fn(),
 }));
 
-import { createExtraction } from '@/lib/integrations/syntage';
+import { createExtraction, type Extractor } from '@/lib/integrations/syntage';
 
 const mockCreateExtraction = vi.mocked(createExtraction);
 
-const mockOpts: SyncProviderConfig = { companyId: 'company-abc', fullSync: false };
+const mockOpts: SyncProviderConfig = { companyId: 'company-abc' };
 
 describe('SyntageSyncProvider', () => {
   let provider: SyntageSyncProvider;
@@ -118,7 +118,7 @@ describe('SyntageSyncProvider', () => {
 
       const config = {
         taxpayerId: 'TAX123',
-        extractors: ['invoices', 'tax_status', 'tax_compliance_checks'] as const,
+        extractors: ['invoices', 'tax_status', 'tax_compliance_checks'] as Extractor[],
       };
 
       await provider.fetch(config, mockOpts);
@@ -140,7 +140,7 @@ describe('SyntageSyncProvider', () => {
 
       const config = {
         taxpayerId: 'TAX123',
-        extractors: ['invoices', 'tax_status', 'tax_compliance_checks'] as const,
+        extractors: ['invoices', 'tax_status', 'tax_compliance_checks'] as Extractor[],
       };
 
       const data = await provider.fetch(config, mockOpts);
@@ -163,7 +163,7 @@ describe('SyntageSyncProvider', () => {
 
       const config = {
         taxpayerId: 'TAX123',
-        extractors: ['invoices'] as const,
+        extractors: ['invoices'] as Extractor[],
       };
 
       await provider.fetch(config, mockOpts);
