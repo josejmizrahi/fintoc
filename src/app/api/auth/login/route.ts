@@ -4,6 +4,7 @@ import { loginSchema } from '@/lib/validations/schemas';
 import { ApiError } from '@/lib/utils/errors';
 import { getAdminClient } from '@/lib/supabase/admin';
 import { checkRateLimit } from '@/lib/middleware/rate-limit';
+import { setAuthCookies, withCookies } from '@/lib/auth-cookies';
 
 export const POST = createHandler(async (req) => {
   checkRateLimit(req, 'auth');
@@ -74,7 +75,7 @@ export const POST = createHandler(async (req) => {
   const companyObj = company as any;
   const role = activeCompany.role || 'admin';
 
-  return Response.json({
+  const responseBody = {
     user: {
       id: userId,
       email: authData.user.email,
@@ -89,7 +90,13 @@ export const POST = createHandler(async (req) => {
       role: m.role,
       is_active: m.is_active,
     })),
-    access_token: authData.session.access_token,
-    refresh_token: authData.session.refresh_token,
-  });
+  };
+
+  // Set tokens in httpOnly cookies instead of response body
+  const cookies = setAuthCookies(
+    authData.session.access_token,
+    authData.session.refresh_token,
+  );
+
+  return withCookies(Response.json(responseBody), cookies);
 }, { rateLimit: 'auth', public: true });

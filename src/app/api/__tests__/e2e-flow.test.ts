@@ -300,7 +300,7 @@ describe('E2E Flow: Register → Login → Me → Dashboard → Onboarding → C
   });
 
   describe('1. Registration', () => {
-    it('creates user, company, and membership, returns access_token', async () => {
+    it('creates user, company, and membership, sets auth cookies', async () => {
       vi.resetModules();
       const { POST } = await import('../auth/register/route');
 
@@ -322,8 +322,9 @@ describe('E2E Flow: Register → Login → Me → Dashboard → Onboarding → C
       expect(data.company.rfc).toBe('XAXX010101000');
       expect(data.role).toBe('admin');
       expect(data.onboarding_completed).toBe(false);
-      // access_token comes from signInWithPassword mock
-      expect(data.access_token).toBeTruthy();
+      // Tokens are now in httpOnly cookies
+      const cookies = res.headers.getSetCookie();
+      expect(cookies.some((c: string) => c.startsWith('qb_access_token='))).toBe(true);
     });
 
     it('rejects duplicate RFC', async () => {
@@ -405,8 +406,10 @@ describe('E2E Flow: Register → Login → Me → Dashboard → Onboarding → C
 
       expect(res.status).toBe(200);
       expect(data.user.id).toBe(TEST_USER_ID);
-      expect(data.access_token).toBe(TEST_TOKEN);
-      expect(data.refresh_token).toBe(TEST_REFRESH_TOKEN);
+      // Tokens are now in httpOnly cookies, not in response body
+      const cookies = res.headers.getSetCookie();
+      expect(cookies.some((c: string) => c.startsWith('qb_access_token='))).toBe(true);
+      expect(cookies.some((c: string) => c.startsWith('qb_refresh_token='))).toBe(true);
       expect(data.company).toBeDefined();
       expect(data.companies).toBeDefined();
       expect(data.companies.length).toBeGreaterThanOrEqual(1);
@@ -629,8 +632,10 @@ describe('E2E Flow: Register → Login → Me → Dashboard → Onboarding → C
       const data = await res.json();
 
       expect(res.status).toBe(200);
-      expect(data.access_token).toBeDefined();
-      expect(data.refresh_token).toBeDefined();
+      // Tokens are now in httpOnly cookies, not in response body
+      const cookies = res.headers.getSetCookie();
+      expect(cookies.some((c: string) => c.startsWith('qb_access_token='))).toBe(true);
+      expect(cookies.some((c: string) => c.startsWith('qb_refresh_token='))).toBe(true);
     });
 
     it('rejects without refresh token', async () => {

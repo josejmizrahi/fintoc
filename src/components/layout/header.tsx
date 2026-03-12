@@ -90,7 +90,9 @@ export function Header() {
   const { data: unreadCount } = useUnreadCount();
   const pageName = getPageName(pathname);
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    // Clear httpOnly cookies on server, then clear client UI state
+    try { await api.auth.logout(); } catch { /* best-effort */ }
     logout();
     queryClient.clear();
     router.push('/login');

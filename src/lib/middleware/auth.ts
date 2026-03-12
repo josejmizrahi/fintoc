@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { getAdminClient } from '@/lib/supabase/admin';
 import { ApiError } from '@/lib/utils/errors';
+import { extractAccessToken } from '@/lib/auth-cookies';
 
 export interface AuthContext {
   user_id: string;
@@ -12,30 +13,9 @@ export interface AuthContext {
 
 type AuthHandler = (req: Request, ctx: AuthContext) => Promise<Response>;
 
-function extractToken(req: Request): string | null {
-  const authHeader = req.headers.get('authorization');
-  if (authHeader?.startsWith('Bearer ')) {
-    return authHeader.slice(7);
-  }
-  // Try cookie
-  const cookies = req.headers.get('cookie');
-  if (cookies) {
-    const match = cookies.match(/sb-[^=]+-auth-token=([^;]+)/);
-    if (match) {
-      try {
-        const parsed = JSON.parse(decodeURIComponent(match[1]));
-        return Array.isArray(parsed) ? parsed[0] : parsed;
-      } catch {
-        return match[1];
-      }
-    }
-  }
-  return null;
-}
-
 export function withAuth(handler: AuthHandler) {
   return async (req: Request, params?: Record<string, unknown>): Promise<Response> => {
-    const token = extractToken(req);
+    const token = extractAccessToken(req);
     if (!token) {
       throw new ApiError('UNAUTHORIZED', 'Token de autenticacion requerido', 401);
     }

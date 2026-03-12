@@ -1,16 +1,21 @@
 import { createClient } from '@supabase/supabase-js';
 import { createHandler } from '@/lib/middleware/route-handler';
 import { ApiError } from '@/lib/utils/errors';
+import { extractRefreshToken, setAuthCookies, withCookies } from '@/lib/auth-cookies';
 
 export const POST = createHandler(async (req) => {
-  let body: { refresh_token?: string };
-  try {
-    body = await req.json();
-  } catch {
-    throw new ApiError('VALIDATION_ERROR', 'Request body debe ser JSON valido', 400);
+  // Read refresh token from httpOnly cookie (primary) or body (backward compat)
+  let refreshToken = extractRefreshToken(req);
+
+  if (!refreshToken) {
+    try {
+      const body = await req.json();
+      refreshToken = body.refresh_token ?? null;
+    } catch {
+      // no body
+    }
   }
 
-  const refreshToken = body.refresh_token;
   if (!refreshToken) {
     throw new ApiError('VALIDATION_ERROR', 'refresh_token es requerido', 400);
   }
@@ -27,9 +32,14 @@ export const POST = createHandler(async (req) => {
     throw new ApiError('TOKEN_EXPIRED', 'No se pudo renovar la sesion. Inicia sesion de nuevo.', 401);
   }
 
-  return Response.json({
-    access_token: data.session.access_token,
-    refresh_token: data.session.refresh_token,
-    expires_at: data.session.expires_at,
-  });
+  // Set new tokens in httpOnly cookies
+  const cookies = setAuthCookies(
+    data.session.access_token,
+    data.session.refresh_token,
+  );
+
+  return withCookies(
+    Response.json({ expires_at: data.session.expires_at }),
+    cookies,
+  );
 }, { public: true });
