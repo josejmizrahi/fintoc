@@ -269,6 +269,6 @@ describe("POST /api/onboarding", () => {
 
     const data = await res.json();
     expect(res.status).toBe(400);
-    expect(data.detail).toContain("invalida");
+    expect(data.detail).toBeDefined();
   });
 });

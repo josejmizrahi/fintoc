@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCompanyId } from "@/lib/auth-helpers";
 import { hasDB, query, update } from "@/lib/db";
+import { fintocExchangeSchema } from "@/lib/validations/schemas";
 
 /**
  * POST /api/fintoc/exchange
@@ -22,15 +23,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ detail: "DB no configurada" }, { status: 500 });
   }
 
-  const body = await req.json();
-  const exchangeToken = body.exchange_token;
+  let body: unknown;
+  try { body = await req.json(); } catch {
+    return NextResponse.json({ success: false, message: "JSON invalido" }, { status: 400 });
+  }
 
-  if (!exchangeToken) {
+  const parsed = fintocExchangeSchema.safeParse(body);
+  if (!parsed.success) {
     return NextResponse.json(
-      { success: false, message: "exchange_token es requerido" },
+      { success: false, message: parsed.error.issues[0]?.message || "exchange_token es requerido" },
       { status: 400 },
     );
   }
+
+  const exchangeToken = parsed.data.exchange_token;
 
   // Load Fintoc integration config to get secretKey
   const { data: integration } = await query("integrations", {

@@ -4,6 +4,7 @@ import { getCompanyId, maskConfig, resolveConfig } from "@/lib/auth-helpers";
 import { encrypt } from "@/lib/utils/crypto";
 import { odooAuthenticate, odooVersion } from "@/lib/integrations/odoo";
 import { getAccounts } from "@/lib/integrations/fintoc";
+import { onboardingActionSchema } from "@/lib/validations/schemas";
 
 // ── GET /api/onboarding — integration status + masked configs ──
 
@@ -52,21 +53,24 @@ export async function POST(req: NextRequest) {
   if (!companyId) return NextResponse.json({ detail: "No autorizado" }, { status: 401 });
   if (!hasDB()) return NextResponse.json({ detail: "DB no configurada" }, { status: 500 });
 
-  const body = await req.json();
-  const { action, provider, config } = body as {
-    action: "save" | "test" | "complete";
-    provider?: string;
-    config?: Record<string, string>;
-  };
+  let body: unknown;
+  try { body = await req.json(); } catch {
+    return NextResponse.json({ detail: "JSON invalido" }, { status: 400 });
+  }
+
+  const parsed = onboardingActionSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json({ detail: parsed.error.issues[0]?.message || "Error de validacion" }, { status: 400 });
+  }
+
+  const { action } = parsed.data;
 
   if (action === "complete") {
     await update("companies", { onboarding_completed: true }, { id: companyId });
     return NextResponse.json({ success: true });
   }
 
-  if (!provider || !["odoo", "fintoc", "sat", "general"].includes(provider)) {
-    return NextResponse.json({ detail: "Proveedor invalido" }, { status: 400 });
-  }
+  const { provider, config } = parsed.data;
 
   const { data: existing } = await query("integrations", { match: { company_id: companyId, provider }, single: true });
 

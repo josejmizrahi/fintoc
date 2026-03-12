@@ -251,3 +251,25 @@ export const markReadSchema = z.object({
 export const searchSchema = z.object({
   q: z.string().min(2),
 });
+
+// --- Fintoc ---
+export const fintocExchangeSchema = z.object({
+  exchange_token: z.string().min(1, 'exchange_token es requerido'),
+});
+
+// --- Onboarding ---
+export const onboardingActionSchema = z.discriminatedUnion('action', [
+  z.object({
+    action: z.literal('complete'),
+  }),
+  z.object({
+    action: z.literal('test'),
+    provider: z.enum(['odoo', 'fintoc', 'sat', 'general']),
+    config: z.record(z.string(), z.string()),
+  }),
+  z.object({
+    action: z.literal('save'),
+    provider: z.enum(['odoo', 'fintoc', 'sat', 'general']),
+    config: z.record(z.string(), z.string()),
+  }),
+]);
