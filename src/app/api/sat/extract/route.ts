@@ -5,6 +5,7 @@ import { satExtractSchema } from '@/lib/validations/schemas';
 import { ApiError } from '@/lib/utils/errors';
 import { getAdminClient } from '@/lib/supabase/admin';
 import * as syntage from '@/lib/integrations/syntage';
+import { writeAuditLog } from '@/lib/middleware/audit';
 
 export const POST = createHandler(async (req) => {
   return withAuth(withRbac('sat.extract', async (_req, ctx) => {
@@ -44,6 +45,15 @@ export const POST = createHandler(async (req) => {
       syntage_extraction_id: extraction.id,
       extractor,
       status: 'pending',
+    });
+
+    writeAuditLog({
+      company_id: ctx.company_id,
+      user_id: ctx.user_id,
+      action: 'sat.extraction_started',
+      entity_type: 'sat',
+      entity_id: extraction.id,
+      metadata: { extractor, date_from, date_to },
     });
 
     return Response.json({ data: extraction }, { status: 201 });

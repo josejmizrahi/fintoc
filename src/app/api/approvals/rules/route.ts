@@ -12,7 +12,7 @@ export const GET = createHandler(async (req) => {
     const { data } = await admin.from('approval_rules').select('*').eq('company_id', ctx.company_id).order('amount_min');
     return Response.json({ data: data || [] });
   }))(req, { params: Promise.resolve({}) });
-});
+}, { rateLimit: 'read' });
 
 export const POST = createHandler(async (req) => {
   return withAuth(withRbac('approvals.manage', async (_req, ctx) => {

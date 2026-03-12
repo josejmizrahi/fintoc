@@ -77,47 +77,6 @@ export async function update(
   }
   return q.select() as any;
 }
-export async function queryPaginated(
-  table: string,
-  options: {
-    match?: Record<string, unknown>;
-    order?: { column: string; ascending?: boolean };
-    page?: number;
-    limit?: number;
-  } = {}
-): Promise<{ data: any; total: number; page: number; limit: number; totalPages: number }> {
-  const sb = getSupabase();
-  if (!sb) return { data: [], total: 0, page: 1, limit: 50, totalPages: 0 };
-
-  const page = Math.max(1, options.page || 1);
-  const limit = Math.min(200, Math.max(1, options.limit || 50));
-  const offset = (page - 1) * limit;
-
-  // Count query
-  let countQ = sb.from(table).select("*", { count: "exact", head: true });
-  if (options.match) {
-    for (const [key, val] of Object.entries(options.match)) {
-      countQ = countQ.eq(key, val);
-    }
-  }
-  const { count } = await countQ;
-  const total = count || 0;
-
-  // Data query
-  let dataQ = sb.from(table).select("*");
-  if (options.match) {
-    for (const [key, val] of Object.entries(options.match)) {
-      dataQ = dataQ.eq(key, val);
-    }
-  }
-  if (options.order) {
-    dataQ = dataQ.order(options.order.column, { ascending: options.order.ascending ?? false });
-  }
-  dataQ = dataQ.range(offset, offset + limit - 1);
-  const { data } = await dataQ;
-
-  return { data: data || [], total, page, limit, totalPages: Math.ceil(total / limit) };
-}
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
 // ── Seed demo data ──

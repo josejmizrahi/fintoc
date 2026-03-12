@@ -42,20 +42,6 @@ export function useCreateVendor() {
   });
 }
 
-export function useUpdateVendor() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, data }: { id: string; data: Record<string, unknown> }) => api.vendors.update(id, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: vendorKeys.all });
-      toast.success('Proveedor actualizado exitosamente');
-    },
-    onError: (error: Error) => {
-      toast.error(error.message || 'Error al actualizar proveedor');
-    },
-  });
-}
-
 export function useVerifyVendorClabe() {
   const queryClient = useQueryClient();
   return useMutation({

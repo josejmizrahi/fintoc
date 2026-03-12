@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { NextRequest } from "next/server";
+
+const TEST_USER_ID = "u-test-user";
+const TEST_TOKEN = "valid-jwt-token";
+const COMPANY_ID = 1;
 
 const mockQuery = vi.fn();
 const mockHasDB = vi.fn();
@@ -9,9 +12,35 @@ vi.mock("@/lib/db", () => ({
   query: (...args: unknown[]) => mockQuery(...args),
 }));
 
-const mockGetCompanyId = vi.fn();
-vi.mock("@/lib/auth-helpers", () => ({
-  getCompanyId: (...args: unknown[]) => mockGetCompanyId(...args),
+vi.mock("@/lib/supabase/admin", () => ({
+  getAdminClient: () => ({
+    auth: {
+      getUser: vi.fn().mockImplementation(async (token: string) => {
+        if (token === TEST_TOKEN) {
+          return { data: { user: { id: TEST_USER_ID, email: "test@test.com", user_metadata: {} } }, error: null };
+        }
+        return { data: { user: null }, error: { message: "Invalid token" } };
+      }),
+    },
+    from: vi.fn().mockImplementation(() => {
+      const chain: Record<string, unknown> = {};
+      chain.select = vi.fn().mockReturnValue(chain);
+      chain.eq = vi.fn().mockReturnValue(chain);
+      chain.single = vi.fn().mockResolvedValue({
+        data: { user_id: TEST_USER_ID, company_id: COMPANY_ID, role: "admin", is_active: true, status: "active" },
+        error: null,
+      });
+      return chain;
+    }),
+  }),
+}));
+
+vi.mock("@/lib/supabase/server", () => ({
+  createClient: () => ({}),
+}));
+
+vi.mock("@/lib/middleware/rate-limit", () => ({
+  checkRateLimit: vi.fn(),
 }));
 
 function makeRequest(searchParams?: Record<string, string>) {
@@ -22,32 +51,33 @@ function makeRequest(searchParams?: Record<string, string>) {
     }
   }
   return new Request(url.toString(), {
-    headers: { Authorization: "Bearer test-token" },
+    headers: { cookie: `qb_access_token=${TEST_TOKEN}` },
   });
 }
+
+const ctx = { params: Promise.resolve({}) };
 
 describe("GET /api/sync-logs", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
     mockHasDB.mockReturnValue(true);
-    mockGetCompanyId.mockResolvedValue(1);
     mockQuery.mockResolvedValue({ data: [], error: null });
   });
 
   it("returns 401 for unauthenticated requests", async () => {
-    mockGetCompanyId.mockResolvedValue(null);
     const { GET } = await import("./route");
-    const res = await GET(makeRequest() as unknown as NextRequest);
+    const req = new Request("http://localhost/api/sync-logs");
+    const res = await GET(req, ctx);
     expect(res.status).toBe(401);
   });
 
-  it("returns empty logs when no DB", async () => {
+  it("returns empty data when no DB", async () => {
     mockHasDB.mockReturnValue(false);
     const { GET } = await import("./route");
-    const res = await GET(makeRequest() as unknown as NextRequest);
+    const res = await GET(makeRequest(), ctx);
     const data = await res.json();
-    expect(data.logs).toEqual([]);
+    expect(data.data).toEqual([]);
   });
 
   it("returns logs for company", async () => {
@@ -58,34 +88,34 @@ describe("GET /api/sync-logs", () => {
     mockQuery.mockResolvedValue({ data: logs, error: null });
 
     const { GET } = await import("./route");
-    const res = await GET(makeRequest() as unknown as NextRequest);
+    const res = await GET(makeRequest(), ctx);
     const data = await res.json();
 
-    expect(data.logs).toHaveLength(2);
-    expect(data.logs[0].provider).toBe("odoo");
+    expect(data.data).toHaveLength(2);
+    expect(data.data[0].provider).toBe("odoo");
   });
 
   it("filters by provider when specified", async () => {
     const { GET } = await import("./route");
-    await GET(makeRequest({ provider: "sat" }) as unknown as NextRequest);
+    await GET(makeRequest({ provider: "sat" }), ctx);
 
     expect(mockQuery).toHaveBeenCalledWith("sync_history", expect.objectContaining({
-      match: { company_id: 1, provider: "sat" },
+      match: { company_id: COMPANY_ID, provider: "sat" },
     }));
   });
 
   it("queries without provider filter when not specified", async () => {
     const { GET } = await import("./route");
-    await GET(makeRequest() as unknown as NextRequest);
+    await GET(makeRequest(), ctx);
 
     expect(mockQuery).toHaveBeenCalledWith("sync_history", expect.objectContaining({
-      match: { company_id: 1 },
+      match: { company_id: COMPANY_ID },
     }));
   });
 
   it("applies limit parameter with max of 100", async () => {
     const { GET } = await import("./route");
-    await GET(makeRequest({ limit: "5" }) as unknown as NextRequest);
+    await GET(makeRequest({ limit: "5" }), ctx);
 
     expect(mockQuery).toHaveBeenCalledWith("sync_history", expect.objectContaining({
       limit: 5,
@@ -94,7 +124,7 @@ describe("GET /api/sync-logs", () => {
 
   it("caps limit at 100", async () => {
     const { GET } = await import("./route");
-    await GET(makeRequest({ limit: "999" }) as unknown as NextRequest);
+    await GET(makeRequest({ limit: "999" }), ctx);
 
     expect(mockQuery).toHaveBeenCalledWith("sync_history", expect.objectContaining({
       limit: 100,
@@ -103,7 +133,7 @@ describe("GET /api/sync-logs", () => {
 
   it("uses default limit of 20", async () => {
     const { GET } = await import("./route");
-    await GET(makeRequest() as unknown as NextRequest);
+    await GET(makeRequest(), ctx);
 
     expect(mockQuery).toHaveBeenCalledWith("sync_history", expect.objectContaining({
       limit: 20,
@@ -112,7 +142,7 @@ describe("GET /api/sync-logs", () => {
 
   it("orders by started_at descending", async () => {
     const { GET } = await import("./route");
-    await GET(makeRequest() as unknown as NextRequest);
+    await GET(makeRequest(), ctx);
 
     expect(mockQuery).toHaveBeenCalledWith("sync_history", expect.objectContaining({
       order: { column: "started_at", ascending: false },

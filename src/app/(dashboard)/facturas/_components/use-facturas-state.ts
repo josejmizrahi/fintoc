@@ -37,8 +37,14 @@ export function useFacturasState() {
   const payableQuery = usePayableInvoices(queryFilters);
   const receivableQuery = useReceivableInvoices(queryFilters);
 
-  const payableData: Invoice[] = Array.isArray(payableQuery.data) ? payableQuery.data : (payableQuery.data?.data ?? []);
-  const receivableData: Invoice[] = Array.isArray(receivableQuery.data) ? receivableQuery.data : (receivableQuery.data?.data ?? []);
+  const payableData: Invoice[] = useMemo(
+    () => Array.isArray(payableQuery.data) ? payableQuery.data : (payableQuery.data?.data ?? []),
+    [payableQuery.data]
+  );
+  const receivableData: Invoice[] = useMemo(
+    () => Array.isArray(receivableQuery.data) ? receivableQuery.data : (receivableQuery.data?.data ?? []),
+    [receivableQuery.data]
+  );
 
   const payableTotal = payableQuery.data?.meta?.total ?? payableData.length;
   const receivableTotal = receivableQuery.data?.meta?.total ?? receivableData.length;

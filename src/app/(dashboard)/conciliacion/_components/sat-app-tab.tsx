@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
-import { useSatAppReconciliation } from "@/lib/hooks/use-reconciliation";
+import { useSatAppReconciliation, useImportToOdoo, useValidateCfdi } from "@/lib/hooks/use-reconciliation";
 import { EmptyState } from "@/components/shared/empty-state";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { KpiCard } from "@/components/shared/kpi-card";
@@ -40,6 +40,8 @@ import { useProcessingProgress } from "./use-processing-progress";
 
 export function SatAppTab() {
   const satAppMutation = useSatAppReconciliation();
+  const importToOdoo = useImportToOdoo();
+  const validateCfdi = useValidateCfdi();
   const [satAppPreset, setSatAppPreset] = useState("current_month");
   const [satAppCustomStart, setSatAppCustomStart] = useState("");
   const [satAppCustomEnd, setSatAppCustomEnd] = useState("");
@@ -132,13 +134,14 @@ export function SatAppTab() {
         <Button
           size="sm"
           variant="outline"
+          disabled={importToOdoo.isPending}
           onClick={() =>
             setConfirmDialog({
               open: true,
               title: "Importar a la App",
               description: `Se importara el CFDI ${row.original.uuid} a la aplicacion. ¿Deseas continuar?`,
               onConfirm: () => {
-                toast.success(`CFDI ${row.original.uuid} enviado a importar`);
+                importToOdoo.mutate({ cfdi_uuid: row.original.uuid ?? '' });
                 setConfirmDialog((prev) => ({ ...prev, open: false }));
               },
             })
@@ -149,7 +152,7 @@ export function SatAppTab() {
         </Button>
       )},
     ],
-    []
+    [importToOdoo]
   );
 
   // SAT-App: App only
@@ -168,13 +171,14 @@ export function SatAppTab() {
           <Button
             size="sm"
             variant="outline"
+            disabled={validateCfdi.isPending}
             onClick={() =>
               setConfirmDialog({
                 open: true,
                 title: "Verificar en SAT",
                 description: `Se verificara la factura ${row.original.invoice_ref} en el SAT. ¿Continuar?`,
                 onConfirm: () => {
-                  toast.success(`Verificacion de ${row.original.invoice_ref} iniciada`);
+                  validateCfdi.mutate({ uuid: row.original.uuid ?? row.original.invoice_ref ?? '' });
                   setConfirmDialog((prev) => ({ ...prev, open: false }));
                 },
               })
@@ -205,7 +209,7 @@ export function SatAppTab() {
         </div>
       )},
     ],
-    []
+    [validateCfdi]
   );
 
   return (

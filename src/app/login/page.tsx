@@ -20,8 +20,6 @@ import {
 } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Label } from '@/components/ui/label';
-import { Separator } from '@/components/ui/separator';
 import {
   Tabs,
   TabsContent,
@@ -54,7 +52,7 @@ export default function LoginPage() {
 function LoginPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const loginWithToken = useAuthStore((s) => s.loginWithToken);
+  const storeLogin = useAuthStore((s) => s.login);
   const setCompanies = useAuthStore((s) => s.setCompanies);
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const [mounted, setMounted] = useState(false);
@@ -111,10 +109,7 @@ function LoginPageInner() {
     setIsSubmitting(true);
     try {
       const res = await api.auth.login(data);
-      if (!res.access_token) {
-        toast.error('Login exitoso pero no se recibio token');
-        return;
-      }
+      // Tokens are now set as httpOnly cookies by the server
       const user = { id: res.user.id, email: res.user.email, name: res.user.full_name || res.user.name || '' };
       const activeCompany = {
         id: res.tenant?.id || res.company?.id,
@@ -122,14 +117,7 @@ function LoginPageInner() {
         rfc: res.tenant?.rfc || res.company?.rfc,
         onboarding_completed: res.onboarding_completed ?? true,
       };
-      loginWithToken(
-        res.access_token,
-        user,
-        activeCompany,
-        res.role || 'admin',
-        res.refresh_token,
-      );
-      // Store all companies (for company switcher)
+      storeLogin(user, activeCompany, res.role || 'admin');
       if (res.companies && res.companies.length > 0) {
         setCompanies(res.companies);
       }
@@ -159,18 +147,15 @@ function LoginPageInner() {
         payload.full_name = data.full_name;
       }
       const res = await api.auth.register(payload);
-      if (!res.access_token) {
-        // Registration succeeded but session creation failed — ask user to log in
+      if (!res.user) {
         toast.success('Cuenta creada. Inicia sesion con tus credenciales.');
         return;
       }
       const user = { id: res.user.id, email: res.user.email, name: res.user.full_name || res.user.name || '' };
-      loginWithToken(
-        res.access_token,
+      storeLogin(
         user,
         { id: res.tenant?.id || res.company?.id, name: res.tenant?.name || res.company?.name, rfc: data.rfc },
         'admin',
-        res.refresh_token,
       );
       toast.success('Cuenta creada. Configura tus integraciones.');
       router.push('/onboarding');

@@ -36,4 +36,4 @@ export const GET = createHandler(async (req) => {
     const totalBalance = accounts.reduce((s, a) => s + (a.balance || 0), 0);
     return Response.json({ data: { accounts, total_balance: totalBalance } });
   }))(req, { params: Promise.resolve({}) });
-});
+}, { rateLimit: 'read' });

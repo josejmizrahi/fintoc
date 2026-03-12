@@ -1,10 +1,14 @@
+import crypto from 'crypto';
+import { z } from 'zod';
 import { getAdminClient } from '@/lib/supabase/admin';
 import { verifyFintocWebhook, centavosToPesos } from '@/lib/integrations/fintoc';
 
-interface FintocWebhookPayload {
-  type: string;
-  data: Record<string, unknown>;
-}
+const fintocWebhookSchema = z.object({
+  type: z.string().min(1),
+  data: z.record(z.string(), z.unknown()),
+});
+
+type FintocWebhookPayload = z.infer<typeof fintocWebhookSchema>;
 
 export async function POST(req: Request): Promise<Response> {
   try {
@@ -19,11 +23,39 @@ export async function POST(req: Request): Promise<Response> {
       return Response.json({ error: 'Invalid signature' }, { status: 401 });
     }
 
-    const payload = JSON.parse(rawBody) as FintocWebhookPayload;
+    const parsed = fintocWebhookSchema.safeParse(JSON.parse(rawBody));
     const admin = getAdminClient();
 
-    // For retries, verify the log ID actually exists and belongs to fintoc
+    if (!parsed.success) {
+      await admin.from('webhook_logs').insert({
+        provider: 'fintoc',
+        event_type: 'unknown',
+        payload: rawBody,
+        processed: false,
+        error: `Validation failed: ${parsed.error.message}`,
+      });
+      return Response.json({ received: true });
+    }
+
+    const payload = parsed.data;
+
+    // For retries, verify both the log ID AND the retry HMAC signature
     if (isRetry && retryLogId) {
+      const retrySignature = req.headers.get('x-webhook-retry-signature') || '';
+      const retrySecret = process.env.WEBHOOK_RETRY_SECRET || process.env.FINTOC_SECRET_KEY || '';
+
+      // Verify HMAC signature of the retry request
+      const expectedPayload = `${retryLogId}:fintoc`;
+      const expectedSig = crypto.createHmac('sha256', retrySecret).update(expectedPayload).digest('hex');
+
+      const sigBuffer = Buffer.from(retrySignature, 'hex');
+      const expectedBuffer = Buffer.from(expectedSig, 'hex');
+
+      if (sigBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(sigBuffer, expectedBuffer)) {
+        return Response.json({ error: 'Invalid retry signature' }, { status: 401 });
+      }
+
+      // Also verify the log entry exists in DB
       const { data: logEntry } = await admin.from('webhook_logs')
         .select('id')
         .eq('id', retryLogId)

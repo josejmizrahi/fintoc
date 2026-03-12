@@ -24,4 +24,4 @@ export const GET = createHandler(async (req) => {
       data: { total, count: data?.length || 0, top: data || [] },
     });
   }))(req, { params: Promise.resolve({}) });
-});
+}, { rateLimit: 'read' });

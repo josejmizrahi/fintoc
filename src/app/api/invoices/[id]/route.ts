@@ -29,7 +29,7 @@ export const GET = createHandler(async (req, params) => {
       data: { ...invoice, payments: paymentLinks || [] },
     });
   }))(req, { params: Promise.resolve(params) });
-});
+}, { rateLimit: 'read' });
 
 // PUT /api/invoices/:id
 export const PUT = createHandler(async (req, params) => {

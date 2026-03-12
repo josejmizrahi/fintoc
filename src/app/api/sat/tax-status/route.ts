@@ -22,4 +22,4 @@ export const GET = createHandler(async (req) => {
     const taxStatus = await syntage.getTaxStatus(integration.syntage_taxpayer_id);
     return Response.json({ data: taxStatus });
   }))(req, { params: Promise.resolve({}) });
-});
+}, { rateLimit: 'read' });

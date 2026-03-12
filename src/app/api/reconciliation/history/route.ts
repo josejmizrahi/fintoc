@@ -7,4 +7,4 @@ export const GET = createHandler(async (req) => {
   return withAuth(withRbac('reconciliation.execute', async () => {
     return Response.json({ data: [] });
   }))(req, { params: Promise.resolve({}) });
-});
+}, { rateLimit: 'read' });

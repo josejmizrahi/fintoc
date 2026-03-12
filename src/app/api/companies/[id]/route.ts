@@ -14,7 +14,7 @@ export const GET = createHandler(async (req, params) => {
     if (!data) throw new ApiError('NOT_FOUND', 'Empresa no encontrada', 404);
     return Response.json({ data });
   })(req, { params: Promise.resolve(params) });
-});
+}, { rateLimit: 'read' });
 
 export const PUT = createHandler(async (req, params) => {
   return withAuth(withRbac('config.write', async (_req, ctx) => {

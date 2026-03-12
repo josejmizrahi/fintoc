@@ -38,7 +38,7 @@ export const GET = createHandler(async (req) => {
       meta: { total: count || 0, page, limit },
     });
   }))(req, { params: Promise.resolve({}) });
-});
+}, { rateLimit: 'read' });
 
 export const POST = createHandler(async (req) => {
   return withAuth(withRbac('vendors.write', async (_req, ctx) => {

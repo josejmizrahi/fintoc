@@ -17,7 +17,7 @@ export function useReconciliationHistory() {
 export function useSatOdooReconciliation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (data: { period_start: string; period_end: string }) => api.reconciliation.satOdoo(data as any),
+    mutationFn: (data: { period_start: string; period_end: string }) => api.reconciliation.satOdoo(data as Record<string, unknown>),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: reconciliationKeys.all });
       toast.success('Conciliacion SAT-Odoo completada');
@@ -31,7 +31,7 @@ export function useSatOdooReconciliation() {
 export function useSatAppReconciliation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (data: { period_start: string; period_end: string }) => api.reconciliation.satApp(data as any),
+    mutationFn: (data: { period_start: string; period_end: string }) => api.reconciliation.satApp(data as Record<string, unknown>),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: reconciliationKeys.all });
       toast.success('Conciliacion SAT-App completada');
@@ -45,13 +45,39 @@ export function useSatAppReconciliation() {
 export function useBancoAppReconciliation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (data: { period_start: string; period_end: string }) => api.reconciliation.bancoApp(data as any),
+    mutationFn: (data: { period_start: string; period_end: string }) => api.reconciliation.bancoApp(data as Record<string, unknown>),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: reconciliationKeys.all });
       toast.success('Conciliacion Banco-App completada');
     },
     onError: (error: Error) => {
       toast.error(error.message || 'Error en conciliacion Banco-App');
+    },
+  });
+}
+
+export function useImportToOdoo() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { cfdi_uuid: string }) => api.reconciliation.importToOdoo(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: reconciliationKeys.all });
+      toast.success('CFDI importado a Odoo exitosamente');
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || 'Error al importar a Odoo');
+    },
+  });
+}
+
+export function useValidateCfdi() {
+  return useMutation({
+    mutationFn: (data: { uuid: string }) => api.sat.validate(data),
+    onSuccess: () => {
+      toast.success('Verificacion SAT completada');
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || 'Error al verificar en SAT');
     },
   });
 }

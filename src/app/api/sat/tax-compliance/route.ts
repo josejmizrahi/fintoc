@@ -22,4 +22,4 @@ export const GET = createHandler(async (req) => {
     const compliance = await syntage.getTaxCompliance(integration.syntage_taxpayer_id);
     return Response.json({ data: compliance });
   }))(req, { params: Promise.resolve({}) });
-});
+}, { rateLimit: 'read' });

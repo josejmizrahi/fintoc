@@ -25,7 +25,7 @@ export const GET = createHandler(async (req) => {
     const { data, count } = await query;
     return Response.json({ data: data || [], meta: { total: count || 0, page, limit } });
   }))(req, { params: Promise.resolve({}) });
-});
+}, { rateLimit: 'read' });
 
 export const POST = createHandler(async (req) => {
   return withAuth(withRbac('customers.write', async (_req, ctx) => {

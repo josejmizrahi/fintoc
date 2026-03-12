@@ -1,11 +1,14 @@
+import { z } from 'zod';
 import { getAdminClient } from '@/lib/supabase/admin';
 import { verifySyntageWebhook, parseEfosCode, mapSatStatus, mapInvoiceType } from '@/lib/integrations/syntage';
 import type { ExtractionStatus, ExtractionErrorCode } from '@/lib/integrations/syntage';
 
-interface SyntageWebhookPayload {
-  type: string;
-  data: Record<string, unknown>;
-}
+const syntageWebhookSchema = z.object({
+  type: z.string().min(1),
+  data: z.record(z.string(), z.unknown()),
+});
+
+type SyntageWebhookPayload = z.infer<typeof syntageWebhookSchema>;
 
 export async function POST(req: Request): Promise<Response> {
   try {
@@ -16,8 +19,40 @@ export async function POST(req: Request): Promise<Response> {
       return Response.json({ error: 'Invalid signature' }, { status: 401 });
     }
 
-    const payload = await req.json() as SyntageWebhookPayload;
+    const parsed = syntageWebhookSchema.safeParse(await req.json());
     const admin = getAdminClient();
+
+    if (!parsed.success) {
+      await admin.from('webhook_logs').insert({
+        provider: 'syntage',
+        event_type: 'unknown',
+        payload: null,
+        processed: false,
+        error: `Validation failed: ${parsed.error.message}`,
+      });
+      return Response.json({ received: true });
+    }
+
+    const payload: SyntageWebhookPayload = parsed.data;
+
+    // Idempotency: check if we already processed this exact event
+    const eventId = (payload.data?.id as string) || null;
+    if (eventId) {
+      const { data: existing } = await admin.from('webhook_logs')
+        .select('id, payload')
+        .eq('provider', 'syntage')
+        .eq('event_type', payload.type)
+        .eq('processed', true)
+        .limit(10);
+
+      const isDuplicate = (existing || []).some((log: { payload?: { data?: Record<string, unknown> } }) => {
+        return (log.payload?.data?.id as string) === eventId;
+      });
+
+      if (isDuplicate) {
+        return Response.json({ received: true, deduplicated: true });
+      }
+    }
 
     // Log the webhook
     const { data: webhookLog } = await admin.from('webhook_logs').insert({

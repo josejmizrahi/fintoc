@@ -9,4 +9,4 @@ export const GET = createHandler(async (req) => {
     const { data } = await admin.from('bank_accounts').select('*').eq('company_id', ctx.company_id);
     return Response.json({ data: data || [] });
   }))(req, { params: Promise.resolve({}) });
-});
+}, { rateLimit: 'read' });

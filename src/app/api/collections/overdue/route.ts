@@ -36,4 +36,4 @@ export const GET = createHandler(async (req) => {
       meta: { total: count || 0, page, limit },
     });
   }))(req, { params: Promise.resolve({}) });
-});
+}, { rateLimit: 'read' });

@@ -41,4 +41,4 @@ export const GET = createHandler(async (req) => {
 
     return Response.json({ data: invoices });
   }))(req, { params: Promise.resolve({}) });
-});
+}, { rateLimit: 'read' });

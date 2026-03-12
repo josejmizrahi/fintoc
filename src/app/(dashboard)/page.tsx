@@ -42,6 +42,9 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 
+// Snapshot of "now" for overdue-days calculation (avoid impure call during render)
+const PAGE_LOAD_TIME = Date.now();
+
 export default function DashboardPage() {
   const [period, setPeriod] = useState<'7d' | '30d' | '90d' | '12m'>('30d');
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
@@ -258,7 +261,7 @@ export default function DashboardPage() {
                       </div>
                       {inv.date_due && (
                         <Badge variant="destructive" className="text-[10px]">
-                          {Math.max(0, Math.ceil((Date.now() - new Date(inv.date_due).getTime()) / 86400000))} dias
+                          {Math.max(0, Math.ceil((PAGE_LOAD_TIME - new Date(inv.date_due).getTime()) / 86400000))} dias
                         </Badge>
                       )}
                     </div>

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- API client uses `any` for untyped endpoint responses */
 import type { Payment, Invoice, Vendor, Customer, Expense, Budget, Notification } from '@/types';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || '';
@@ -23,57 +24,35 @@ export class ApiError extends Error {
   }
 }
 
-function getAuthHeaders(): Record<string, string> {
-  if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('token');
-  const company = JSON.parse(localStorage.getItem('activeCompany') || '{}');
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  };
-  if (company?.id) headers['X-Tenant-Id'] = company.id;
-  if (token) headers['Authorization'] = `Bearer ${token}`;
-  return headers;
+function getHeaders(): Record<string, string> {
+  return { 'Content-Type': 'application/json' };
 }
 
 // Prevent multiple concurrent 401 handlers from all triggering redirects
 let isRedirectingTo401 = false;
 
-// Deduplicate concurrent refresh attempts: Supabase rotates refresh tokens,
-// so only one refresh can succeed. All concurrent callers share the same promise.
-let refreshPromise: Promise<string | null> | null = null;
+// Deduplicate concurrent refresh attempts
+let refreshPromise: Promise<boolean> | null = null;
 
 /**
- * Try to refresh the Supabase session using the stored refresh token.
- * Returns the new access token on success, or null on failure.
- * Concurrent calls are deduplicated — only one network request is made.
+ * Try to refresh the session via httpOnly cookie.
+ * The refresh token is sent automatically as a cookie — no JS access needed.
+ * Returns true on success, false on failure.
  */
-async function tryRefreshToken(): Promise<string | null> {
-  if (typeof window === 'undefined') return null;
+async function tryRefreshToken(): Promise<boolean> {
+  if (typeof window === 'undefined') return false;
   if (refreshPromise) return refreshPromise;
 
   refreshPromise = (async () => {
-    const refreshToken = localStorage.getItem('refresh_token');
-    if (!refreshToken) return null;
-
     try {
       const res = await fetch(`${API_BASE}/api/auth/refresh`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refresh_token: refreshToken }),
+        credentials: 'same-origin',
       });
-      if (!res.ok) return null;
-      const data = await res.json();
-      if (data.access_token) {
-        localStorage.setItem('token', data.access_token);
-        if (data.refresh_token) {
-          localStorage.setItem('refresh_token', data.refresh_token);
-        }
-        return data.access_token;
-      }
+      return res.ok;
     } catch {
-      // Refresh failed — will proceed with logout
+      return false;
     }
-    return null;
   })();
 
   try {
@@ -86,34 +65,33 @@ async function tryRefreshToken(): Promise<string | null> {
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   let res = await fetch(`${API_BASE}${url}`, {
     ...options,
-    headers: { ...getAuthHeaders(), ...options?.headers },
+    credentials: 'same-origin',
+    headers: { ...getHeaders(), ...options?.headers },
   });
 
   // On 401, attempt a single token refresh before giving up
   if (res.status === 401 && !url.includes('/api/auth/refresh')) {
-    const newToken = await tryRefreshToken();
-    if (newToken) {
-      const refreshedHeaders: Record<string, string> = {
-        ...getAuthHeaders(),
-        ...(options?.headers as Record<string, string> | undefined),
-        'Authorization': `Bearer ${newToken}`,
-      };
-      res = await fetch(`${API_BASE}${url}`, { ...options, headers: refreshedHeaders });
+    const refreshed = await tryRefreshToken();
+    if (refreshed) {
+      res = await fetch(`${API_BASE}${url}`, {
+        ...options,
+        credentials: 'same-origin',
+        headers: { ...getHeaders(), ...options?.headers },
+      });
     }
   }
 
   if (res.status === 401) {
     const detail = await res.json().catch(() => ({}));
-    const debugMsg = `401 en ${url}: ${detail?.detail || detail?.error?.message || JSON.stringify(detail)}`;
+    const debugMsg = `401 en ${url}: ${detail?.error?.message || detail?.detail || JSON.stringify(detail)}`;
     console.warn('[API 401]', debugMsg);
     if (typeof window !== 'undefined' && !isRedirectingTo401) {
       isRedirectingTo401 = true;
-      // Store debug info so login page can show it
       sessionStorage.setItem('auth_debug', debugMsg);
-      // Use Zustand's logout to clear both localStorage AND store state atomically
+      // Clear server-side cookies + client-side UI state
+      fetch(`${API_BASE}/api/auth/logout`, { method: 'POST', credentials: 'same-origin' }).catch(() => {});
       const { useAuthStore } = await import('@/lib/store');
       useAuthStore.getState().logout();
-      // Delay redirect so we don't interrupt other requests
       setTimeout(() => {
         if (window.location.pathname !== '/login') {
           window.location.href = '/login';
@@ -130,8 +108,8 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    const message = body.detail || body.error?.message || (typeof body.error === 'string' ? body.error : `Error ${res.status}`);
-    throw new ApiError(res.status, message, body.error?.code || body.code);
+    const message = body.error?.message || body.detail || (typeof body.error === 'string' ? body.error : `Error ${res.status}`);
+    throw new ApiError(res.status, message, body.error?.code);
   }
 
   return res.json();
@@ -140,13 +118,13 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
 async function authRequest<T>(path: string, body: object): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     method: 'POST',
+    credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
   if (!res.ok) {
     const data = await res.json().catch(() => ({ detail: res.statusText }));
-    let message = data.detail || data.error?.message || data.message || (typeof data.error === 'string' ? data.error : `Error ${res.status}`);
-    // Append field-level validation details when available
+    let message = data.error?.message || data.detail || data.message || (typeof data.error === 'string' ? data.error : `Error ${res.status}`);
     const fields = data.error?.details?.fields;
     if (Array.isArray(fields) && fields.length > 0) {
       message += ': ' + fields.map((f: { path?: string; message?: string }) => `${f.path}: ${f.message}`).join(', ');
@@ -189,36 +167,21 @@ export const api = {
 
   auth: {
     register: (data: { email: string; password: string; full_name?: string; company_name: string; rfc: string }) =>
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       authRequest<any>('/api/auth/register', data),
     login: (data: { email: string; password: string }) =>
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       authRequest<any>('/api/auth/login', data),
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     me: () => get<any>('/api/auth/me'),
     resetPassword: (data: { email: string }) =>
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       authRequest<any>('/api/auth/reset-password', data),
     switchCompany: async (data: { company_id: string | number }) => {
-      const refreshToken = typeof window !== 'undefined' ? localStorage.getItem('refresh_token') : null;
-      const headers: Record<string, string> = {};
-      if (refreshToken) headers['x-refresh-token'] = refreshToken;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // Tokens are handled via httpOnly cookies automatically
       const res = await request<any>('/api/auth/switch-company', {
         method: 'POST',
         body: JSON.stringify(data),
-        headers,
       });
-      // Store new tokens if returned (JWT now has updated active_company_id)
-      const resData = res?.data as Record<string, unknown> | undefined;
-      if (resData?.access_token && typeof window !== 'undefined') {
-        localStorage.setItem('token', resData.access_token as string);
-        if (resData.refresh_token) {
-          localStorage.setItem('refresh_token', resData.refresh_token as string);
-        }
-      }
-      return resData || res;
+      return res?.data || res;
     },
+    logout: () => authRequest<{ ok: boolean }>('/api/auth/logout', {}),
   },
 
   payments: {
@@ -276,6 +239,7 @@ export const api = {
   expenses: {
     list: (params?: Record<string, unknown>) => get<PaginatedResponse<Expense>>('/api/expenses', params),
     create: (data: Record<string, unknown>) => post<{ data: Expense }>('/api/expenses', data),
+    update: (id: string, data: Record<string, unknown>) => put<{ data: Expense }>(`/api/expenses/${id}`, data),
     approve: (id: string) => post<{ data: Expense }>(`/api/expenses/${id}/approve`),
     reject: (id: string, reason: string) => post<{ data: Expense }>(`/api/expenses/${id}/reject`, { reason }),
     summary: () => get<any>('/api/expenses/summary'),
@@ -286,7 +250,6 @@ export const api = {
     forecast: (days?: number) => get<any>('/api/treasury/forecast', { days }),
     movements: (params?: Record<string, unknown>) => get<any>('/api/treasury/movements', params),
     balance: () => get<any>('/api/treasury/balance'),
-    cashFlow: (days?: number) => get<any>('/api/treasury/cash-flow', { days }),
     accounts: () => get<any>('/api/treasury/accounts'),
   },
 
@@ -307,64 +270,29 @@ export const api = {
 
   sat: {
     validate: (data: Record<string, unknown>) => post<any>('/api/sat/validate', data),
-    validateBulk: () => post<any>('/api/sat/validate-bulk'),
     validateRfc: (data: Record<string, unknown>) => post<any>('/api/sat/validate-rfc', data),
     checkEfos: (data: Record<string, unknown>) => post<any>('/api/sat/check-efos', data),
-    uploadXml: (data: Record<string, unknown>) => post<any>('/api/sat/upload-xml', data),
-    documents: (params?: Record<string, unknown>) => get<any[]>('/api/sat/documents', params),
     cancel: (data: Record<string, unknown>) => post<any>('/api/sat/cancel', data),
-    descargaSolicitud: (data: Record<string, unknown>) => post<any>('/api/sat/descarga/solicitud', data),
-    descargaVerificar: (data: Record<string, unknown>) => post<any>('/api/sat/descarga/verificar', data),
     upload: (data: Record<string, unknown>) => post<any>('/api/sat/upload', data),
 
     // ── Syntage (sat.ws) ──
     syntage: {
-      // GET actions
       status: () => get<any>('/api/sat/syntage', { action: 'status' }),
-      credentials: () => get<any>('/api/sat/syntage', { action: 'credentials' }),
-      credential: (id: string) => get<any>('/api/sat/syntage', { action: 'credential', id }),
       taxpayers: () => get<any>('/api/sat/syntage', { action: 'taxpayers' }),
       invoices: (taxpayerId: string, params?: Record<string, unknown>) =>
         get<any>('/api/sat/syntage', { action: 'invoices', taxpayerId, ...params }),
-      invoice: (id: string) => get<any>('/api/sat/syntage', { action: 'invoice', id }),
       invoiceCfdi: (id: string) => get<any>('/api/sat/syntage', { action: 'invoice-cfdi', id }),
-      invoiceLines: (invoiceId: string) => get<any>('/api/sat/syntage', { action: 'invoice-lines', invoiceId }),
-      invoicePayments: (invoiceId: string) => get<any>('/api/sat/syntage', { action: 'invoice-payments', invoiceId }),
       taxReturns: (taxpayerId: string) => get<any>('/api/sat/syntage', { action: 'tax-returns', taxpayerId }),
-      taxReturn: (id: string) => get<any>('/api/sat/syntage', { action: 'tax-return', id }),
-      taxReturnData: (id: string) => get<any>('/api/sat/syntage', { action: 'tax-return-data', id }),
       taxCompliance: (taxpayerId: string) => get<any>('/api/sat/syntage', { action: 'tax-compliance', taxpayerId }),
       taxStatus: (taxpayerId: string) => get<any>('/api/sat/syntage', { action: 'tax-status', taxpayerId }),
       taxRetentions: (taxpayerId: string) => get<any>('/api/sat/syntage', { action: 'tax-retentions', taxpayerId }),
-      certificates: (entityId: string) => get<any>('/api/sat/syntage', { action: 'certificates', entityId }),
       extractions: () => get<any>('/api/sat/syntage', { action: 'extractions' }),
-      extraction: (id: string) => get<any>('/api/sat/syntage', { action: 'extraction', id }),
-      insightsBalance: (taxpayerId: string) => get<any>('/api/sat/syntage', { action: 'insights-balance', taxpayerId }),
-      insightsIncome: (taxpayerId: string) => get<any>('/api/sat/syntage', { action: 'insights-income', taxpayerId }),
-      insightsCashflow: (insightId: string) => get<any>('/api/sat/syntage', { action: 'insights-cashflow', insightId }),
-      insightsRatios: (insightId: string) => get<any>('/api/sat/syntage', { action: 'insights-ratios', insightId }),
-      insightsScores: (entityId: string) => get<any>('/api/sat/syntage', { action: 'insights-scores', entityId }),
-      events: () => get<any>('/api/sat/syntage', { action: 'events' }),
-
-      // POST actions
       saveConfig: (data: { syntageApiKey: string; syntageEnvironment?: string; rfcEmisor?: string }) =>
         post<any>('/api/sat/syntage', { action: 'save-config', ...data }),
-      connect: (data: { rfc: string; password: string; certificate?: string; privateKey?: string }) =>
-        post<any>('/api/sat/syntage', { action: 'connect', ...data }),
-      disconnect: (credentialId: string) =>
-        post<any>('/api/sat/syntage', { action: 'disconnect', credentialId }),
-      revalidate: (credentialId: string) =>
-        post<any>('/api/sat/syntage', { action: 'revalidate', credentialId }),
       extract: (taxpayerId: string, extractor?: string, options?: { period?: { from: string; to: string }; issued?: boolean; received?: boolean }) =>
         post<any>('/api/sat/syntage', { action: 'extract', taxpayerId, extractor, options }),
       stopExtraction: (extractionId: string) =>
         post<any>('/api/sat/syntage', { action: 'stop-extraction', extractionId }),
-      export: (taxpayerId: string, format?: 'csv' | 'xlsx') =>
-        post<any>('/api/sat/syntage', { action: 'export', taxpayerId, format }),
-      createWebhook: (url: string, events: string[]) =>
-        post<any>('/api/sat/syntage', { action: 'create-webhook', url, events }),
-      createEntity: (data: { rfc?: string; name?: string }) =>
-        post<any>('/api/sat/syntage', { action: 'create-entity', ...data }),
     },
   },
 
@@ -404,10 +332,7 @@ export const api = {
     trigger: (provider: string) => post<any>('/api/v2/sync', { provider }),
     status: () => get<any>('/api/v2/sync'),
     logs: () => get<any[]>('/api/sync-logs'),
-    odoo: () => post<any>('/api/v2/sync', { provider: 'odoo' }),
     odooPartners: () => post<any>('/api/sync/odoo/partners'),
-    fintoc: () => post<any>('/api/v2/sync', { provider: 'fintoc' }),
-    sat: () => post<any>('/api/v2/sync', { provider: 'syntage' }),
   },
 
   audit: {

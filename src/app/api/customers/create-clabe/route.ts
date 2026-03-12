@@ -5,6 +5,7 @@ import { createClabeSchema } from '@/lib/validations/schemas';
 import { ApiError } from '@/lib/utils/errors';
 import { getAdminClient } from '@/lib/supabase/admin';
 import { createAccountNumber } from '@/lib/integrations/fintoc';
+import { writeAuditLog } from '@/lib/middleware/audit';
 
 export const POST = createHandler(async (req) => {
   return withAuth(withRbac('customers.write', async (_req, ctx) => {
@@ -36,6 +37,15 @@ export const POST = createHandler(async (req) => {
       fintoc_clabe: accountNumber.number,
       fintoc_account_id: accountNumber.id,
     }).eq('id', result.data.customer_id);
+
+    writeAuditLog({
+      company_id: ctx.company_id,
+      user_id: ctx.user_id,
+      action: 'customer.clabe_created',
+      entity_type: 'customer',
+      entity_id: result.data.customer_id,
+      metadata: { clabe: accountNumber.number, fintoc_account_id: accountNumber.id },
+    });
 
     return Response.json({
       data: { clabe: accountNumber.number, fintoc_account_id: accountNumber.id },

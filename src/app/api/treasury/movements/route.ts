@@ -84,4 +84,4 @@ export const GET = createHandler(async (req) => {
 
     return Response.json({ data, meta: { total, page, limit } });
   }))(req, { params: Promise.resolve({}) });
-});
+}, { rateLimit: 'read' });

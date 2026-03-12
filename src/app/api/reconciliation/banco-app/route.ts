@@ -6,6 +6,7 @@ import { ApiError } from '@/lib/utils/errors';
 import { getAdminClient } from '@/lib/supabase/admin';
 import { getFintocConfigForCompany } from '@/lib/integrations/sync-engine';
 import { getMovements, centavosToPesos } from '@/lib/integrations/fintoc';
+import { writeAuditLog } from '@/lib/middleware/audit';
 
 export const POST = createHandler(async (req) => {
   return withAuth(withRbac('reconciliation.execute', async (_req, ctx) => {
@@ -101,6 +102,15 @@ export const POST = createHandler(async (req) => {
     for (const pay of payments || []) {
       if (!matchedPaymentIds.has(pay.id)) onlyApp.push(pay);
     }
+
+    writeAuditLog({
+      company_id: ctx.company_id,
+      user_id: ctx.user_id,
+      action: 'reconciliation.banco_app_executed',
+      entity_type: 'reconciliation',
+      entity_id: ctx.company_id,
+      metadata: { period_start, period_end, matched: matched.length, only_bank: onlyBank.length, only_app: onlyApp.length },
+    });
 
     return Response.json({
       data: {

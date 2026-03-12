@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { NextRequest } from "next/server";
 
-// Mock db module
+const TEST_USER_ID = "u-test-user";
+const TEST_TOKEN = "valid-jwt-token";
+const COMPANY_ID = 1;
+
 const mockQuery = vi.fn();
 const mockInsert = vi.fn();
 const mockUpdate = vi.fn();
@@ -14,20 +16,43 @@ vi.mock("@/lib/db", () => ({
   update: (...args: unknown[]) => mockUpdate(...args),
 }));
 
-// Mock auth-helpers
-const mockGetCompanyId = vi.fn();
-
-vi.mock("@/lib/auth-helpers", () => ({
-  getCompanyId: (...args: unknown[]) => mockGetCompanyId(...args),
-  maskConfig: vi.fn((c) => c),
-  resolveConfig: vi.fn((a, b) => ({ ...b, ...a })),
+vi.mock("@/lib/supabase/admin", () => ({
+  getAdminClient: () => ({
+    auth: {
+      getUser: vi.fn().mockImplementation(async (token: string) => {
+        if (token === TEST_TOKEN) {
+          return { data: { user: { id: TEST_USER_ID, email: "test@test.com", user_metadata: {} } }, error: null };
+        }
+        return { data: { user: null }, error: { message: "Invalid token" } };
+      }),
+    },
+    from: vi.fn().mockImplementation(() => {
+      const chain: Record<string, unknown> = {};
+      chain.select = vi.fn().mockReturnValue(chain);
+      chain.eq = vi.fn().mockReturnValue(chain);
+      chain.single = vi.fn().mockResolvedValue({
+        data: { user_id: TEST_USER_ID, company_id: COMPANY_ID, role: "admin", is_active: true, status: "active" },
+        error: null,
+      });
+      return chain;
+    }),
+  }),
 }));
+
+vi.mock("@/lib/supabase/server", () => ({
+  createClient: () => ({}),
+}));
+
+vi.mock("@/lib/middleware/rate-limit", () => ({
+  checkRateLimit: vi.fn(),
+}));
+
+const ctx = { params: Promise.resolve({}) };
 
 describe("POST /api/sat/upload", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockHasDB.mockReturnValue(true);
-    mockGetCompanyId.mockResolvedValue(1);
     mockQuery.mockResolvedValue({ data: null, error: null });
     mockUpdate.mockResolvedValue({ data: [{ id: 1 }], error: null });
     mockInsert.mockResolvedValue({ data: [{ id: 1 }], error: null });
@@ -37,7 +62,7 @@ describe("POST /api/sat/upload", () => {
     return await import("./route");
   }
 
-  function createFormData(files: Record<string, { name: string; content: string; type?: string }>, fields?: Record<string, string>) {
+  function createFormData(files: Record<string, { name: string; content: string }>, fields?: Record<string, string>) {
     const formData = new FormData();
     for (const [key, { name, content }] of Object.entries(files)) {
       const blob = new Blob([content], { type: "application/octet-stream" });
@@ -55,20 +80,20 @@ describe("POST /api/sat/upload", () => {
     return new Request("http://localhost/api/sat/upload", {
       method: "POST",
       body: formData,
-      headers: { Authorization: "Bearer test-token" },
+      headers: { cookie: `qb_access_token=${TEST_TOKEN}` },
     });
   }
 
   it("rejects unauthenticated requests", async () => {
-    mockGetCompanyId.mockResolvedValue(null);
     const { POST } = await importRoute();
     const formData = createFormData({ cer: { name: "cert.cer", content: "data" } });
-    const req = createRequest(formData);
+    const req = new Request("http://localhost/api/sat/upload", {
+      method: "POST",
+      body: formData,
+    });
 
-    const res = await POST(req as unknown as NextRequest);
-    const data = await res.json();
+    const res = await POST(req, ctx);
     expect(res.status).toBe(401);
-    expect(data.detail).toBe("No autorizado");
   });
 
   it("rejects when no files provided", async () => {
@@ -76,10 +101,10 @@ describe("POST /api/sat/upload", () => {
     const formData = new FormData();
     const req = createRequest(formData);
 
-    const res = await POST(req as unknown as NextRequest);
+    const res = await POST(req, ctx);
     const data = await res.json();
     expect(res.status).toBe(400);
-    expect(data.detail).toContain("Se requiere al menos un archivo");
+    expect(data.error.message).toContain("Se requiere al menos un archivo");
   });
 
   it("rejects .cer file with wrong extension", async () => {
@@ -87,10 +112,10 @@ describe("POST /api/sat/upload", () => {
     const formData = createFormData({ cer: { name: "cert.txt", content: "data" } });
     const req = createRequest(formData);
 
-    const res = await POST(req as unknown as NextRequest);
+    const res = await POST(req, ctx);
     const data = await res.json();
     expect(res.status).toBe(400);
-    expect(data.detail).toContain(".cer");
+    expect(data.error.message).toContain(".cer");
   });
 
   it("rejects .key file with wrong extension", async () => {
@@ -98,10 +123,10 @@ describe("POST /api/sat/upload", () => {
     const formData = createFormData({ key: { name: "key.pem", content: "data" } });
     const req = createRequest(formData);
 
-    const res = await POST(req as unknown as NextRequest);
+    const res = await POST(req, ctx);
     const data = await res.json();
     expect(res.status).toBe(400);
-    expect(data.detail).toContain(".key");
+    expect(data.error.message).toContain(".key");
   });
 
   it("successfully uploads .cer file", async () => {
@@ -112,12 +137,12 @@ describe("POST /api/sat/upload", () => {
     );
     const req = createRequest(formData);
 
-    const res = await POST(req as unknown as NextRequest);
+    const res = await POST(req, ctx);
     const data = await res.json();
 
-    expect(data.success).toBe(true);
-    expect(data.files.cer.name).toBe("certificado.cer");
-    expect(data.files.key).toBeNull();
+    expect(res.status).toBe(200);
+    expect(data.data.files.cer.name).toBe("certificado.cer");
+    expect(data.data.files.key).toBeNull();
   });
 
   it("successfully uploads both .cer and .key files", async () => {
@@ -128,14 +153,14 @@ describe("POST /api/sat/upload", () => {
     });
     const req = createRequest(formData);
 
-    const res = await POST(req as unknown as NextRequest);
+    const res = await POST(req, ctx);
     const data = await res.json();
 
-    expect(data.success).toBe(true);
-    expect(data.files.cer.name).toBe("sello.cer");
-    expect(data.files.key.name).toBe("llave.key");
-    expect(data.message).toContain("sello.cer");
-    expect(data.message).toContain("llave.key");
+    expect(res.status).toBe(200);
+    expect(data.data.files.cer.name).toBe("sello.cer");
+    expect(data.data.files.key.name).toBe("llave.key");
+    expect(data.data.message).toContain("sello.cer");
+    expect(data.data.message).toContain("llave.key");
   });
 
   it("updates existing integration record", async () => {
@@ -151,10 +176,8 @@ describe("POST /api/sat/upload", () => {
     );
     const req = createRequest(formData);
 
-    const res = await POST(req as unknown as NextRequest);
-    const data = await res.json();
-
-    expect(data.success).toBe(true);
+    const res = await POST(req, ctx);
+    expect(res.status).toBe(200);
     expect(mockUpdate).toHaveBeenCalled();
   });
 
@@ -166,10 +189,7 @@ describe("POST /api/sat/upload", () => {
     );
     const req = createRequest(formData);
 
-    const res = await POST(req as unknown as NextRequest);
+    const res = await POST(req, ctx);
     expect(res.status).toBe(200);
-
-    const data = await res.json();
-    expect(data.success).toBe(true);
   });
 });

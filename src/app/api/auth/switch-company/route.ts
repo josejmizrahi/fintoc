@@ -4,6 +4,7 @@ import { withAuth } from '@/lib/middleware/auth';
 import { switchCompanySchema } from '@/lib/validations/schemas';
 import { ApiError } from '@/lib/utils/errors';
 import { getAdminClient } from '@/lib/supabase/admin';
+import { extractRefreshToken, setAuthCookies, withCookies } from '@/lib/auth-cookies';
 
 export const POST = createHandler(async (req) => {
   return withAuth(async (_req, ctx) => {
@@ -67,10 +68,11 @@ export const POST = createHandler(async (req) => {
       .single();
 
     // Force a token refresh so the JWT gets the new active_company_id claim
-    let newAccessToken: string | null = null;
-    let newRefreshToken: string | null = null;
+    let cookies: string[] = [];
 
-    const refreshToken = _req.headers.get('x-refresh-token');
+    // Read refresh token from httpOnly cookie (primary) or legacy header
+    const refreshToken = extractRefreshToken(_req) || _req.headers.get('x-refresh-token');
+
     if (refreshToken) {
       const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
       const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -83,17 +85,19 @@ export const POST = createHandler(async (req) => {
       });
 
       if (session?.session) {
-        newAccessToken = session.session.access_token;
-        newRefreshToken = session.session.refresh_token;
+        cookies = setAuthCookies(
+          session.session.access_token,
+          session.session.refresh_token,
+        );
       }
     }
 
-    return Response.json({
+    const response = Response.json({
       data: {
         active_company: { ...company, role: membership.role },
-        access_token: newAccessToken,
-        refresh_token: newRefreshToken,
       },
     });
+
+    return cookies.length > 0 ? withCookies(response, cookies) : response;
   })(req, { params: Promise.resolve({}) });
 }, { rateLimit: 'write' });

@@ -5,6 +5,7 @@ import { satValidateBulkSchema } from '@/lib/validations/schemas';
 import { ApiError } from '@/lib/utils/errors';
 import { getAdminClient } from '@/lib/supabase/admin';
 import * as syntage from '@/lib/integrations/syntage';
+import { writeAuditLog } from '@/lib/middleware/audit';
 
 export const POST = createHandler(async (req) => {
   return withAuth(withRbac('sat.validate', async (_req, ctx) => {
@@ -84,6 +85,15 @@ export const POST = createHandler(async (req) => {
         errors++;
       }
     }
+
+    await writeAuditLog({
+      company_id: ctx.company_id,
+      user_id: ctx.user_id,
+      action: 'sat.bulk_validated',
+      entity_type: 'invoice',
+      entity_id: 0,
+      metadata: { total: invoices.length, validated, errors, changed_count: changed.length },
+    });
 
     return Response.json({
       data: { total: invoices.length, validated, errors, changed },

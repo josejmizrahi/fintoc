@@ -75,4 +75,4 @@ export const GET = createHandler(async (req) => {
       overdue_invoice_list: overdueInvoicesResult.data || [],
     });
   }))(req, { params: Promise.resolve({}) });
-});
+}, { rateLimit: 'read' });

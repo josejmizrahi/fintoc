@@ -2,6 +2,7 @@ import { createHandler } from '@/lib/middleware/route-handler';
 import { getAdminClient } from '@/lib/supabase/admin';
 import { registerSchema } from '@/lib/validations/schemas';
 import { ApiError } from '@/lib/utils/errors';
+import { setAuthCookies, withCookies } from '@/lib/auth-cookies';
 
 export const POST = createHandler(async (req) => {
   let body: unknown;
@@ -90,7 +91,7 @@ export const POST = createHandler(async (req) => {
   const anonClient = createClient(supabaseUrl, supabaseAnonKey);
   const { data: session } = await anonClient.auth.signInWithPassword({ email, password });
 
-  return Response.json({
+  const responseBody = {
     user: {
       id: userId,
       email,
@@ -108,7 +109,15 @@ export const POST = createHandler(async (req) => {
     },
     role: 'admin',
     onboarding_completed: false,
-    access_token: session?.session?.access_token || null,
-    refresh_token: session?.session?.refresh_token || null,
-  }, { status: 201 });
+  };
+
+  const accessToken = session?.session?.access_token;
+  const refreshToken = session?.session?.refresh_token;
+
+  if (accessToken && refreshToken) {
+    const cookies = setAuthCookies(accessToken, refreshToken);
+    return withCookies(Response.json(responseBody, { status: 201 }), cookies);
+  }
+
+  return Response.json(responseBody, { status: 201 });
 }, { rateLimit: 'auth', public: true });

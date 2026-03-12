@@ -17,12 +17,12 @@ interface UserData {
 
 interface AuthState {
   isAuthenticated: boolean;
-  token: string;
   user: UserData | null;
   companies: Company[];
   activeCompany: Company | null;
   role: Role;
-  loginWithToken: (token: string, user: UserData, company: Company, role?: Role, refreshToken?: string) => void;
+  /** Called after successful login/register — stores UI-only data (tokens are in httpOnly cookies) */
+  login: (user: UserData, company: Company, role?: Role) => void;
   setCompanies: (companies: Company[]) => void;
   switchCompany: (company: Company, role?: Role) => void;
   logout: () => void;
@@ -30,9 +30,7 @@ interface AuthState {
 
 export const useAuthStore = create<AuthState>((set) => ({
   isAuthenticated:
-    typeof window !== 'undefined' ? !!localStorage.getItem('token') : false,
-  token:
-    typeof window !== 'undefined' ? localStorage.getItem('token') || '' : '',
+    typeof window !== 'undefined' ? !!localStorage.getItem('user') : false,
   user:
     typeof window !== 'undefined'
       ? JSON.parse(localStorage.getItem('user') || 'null')
@@ -49,22 +47,14 @@ export const useAuthStore = create<AuthState>((set) => ({
     (typeof window !== 'undefined'
       ? (localStorage.getItem('role') as Role)
       : null) || 'viewer',
-  loginWithToken: (token, user, company, role = 'admin', refreshToken?: string) => {
-    if (!token) {
-      console.error('loginWithToken called with null/empty token');
-      return;
-    }
-    localStorage.setItem('token', token);
+  login: (user, company, role = 'admin') => {
+    // Only store non-sensitive UI data — tokens are in httpOnly cookies
     localStorage.setItem('user', JSON.stringify(user));
     localStorage.setItem('activeCompany', JSON.stringify(company));
     localStorage.setItem('companies', JSON.stringify([company]));
     localStorage.setItem('role', role);
-    if (refreshToken) {
-      localStorage.setItem('refresh_token', refreshToken);
-    }
     set({
       isAuthenticated: true,
-      token,
       user,
       activeCompany: company,
       companies: [company],
@@ -81,15 +71,12 @@ export const useAuthStore = create<AuthState>((set) => ({
     set({ activeCompany: company, role });
   },
   logout: () => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('refresh_token');
     localStorage.removeItem('user');
     localStorage.removeItem('activeCompany');
     localStorage.removeItem('companies');
     localStorage.removeItem('role');
     set({
       isAuthenticated: false,
-      token: '',
       user: null,
       activeCompany: null,
       companies: [],

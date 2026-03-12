@@ -14,4 +14,4 @@ export const GET = createHandler(async (req) => {
 
     return Response.json({ data: extractions || [] });
   }))(req, { params: Promise.resolve({}) });
-});
+}, { rateLimit: 'read' });

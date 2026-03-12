@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import { type ColumnDef } from "@tanstack/react-table";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -213,6 +213,7 @@ function CustomerDetailContent({ customerId }: { customerId: string }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- loading state for async fetch
     setLoading(true);
     api.customers
       .invoices(customerId)
@@ -286,6 +287,7 @@ function CustomerAgingContent({ customerId }: { customerId: string }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- loading state for async fetch
     setLoading(true);
     api.customers
       .invoices(customerId)
@@ -353,9 +355,9 @@ export default function ClientesPage() {
   const createClabe = useCreateCustomerClabe();
 
   // Actions
-  function handleAssignClabe(customer: Customer) {
+  const handleAssignClabe = useCallback((customer: Customer) => {
     createClabe.mutate(customer.id);
-  }
+  }, [createClabe]);
 
   function handlePaymentLink(customer: Customer) {
     toast.info("Generando link de pago para " + customer.name);
@@ -505,7 +507,7 @@ export default function ClientesPage() {
         },
       },
     ],
-    [createClabe.isPending]
+    [createClabe.isPending, handleAssignClabe]
   );
 
   const toolbar = (

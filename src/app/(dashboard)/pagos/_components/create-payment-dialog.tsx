@@ -59,6 +59,7 @@ export function CreatePaymentDialog({
   const [loadingInvoices, setLoadingInvoices] = useState(false);
 
   // Concept counter
+  // eslint-disable-next-line react-hooks/incompatible-library -- form.watch is required for live character count
   const conceptValue = form.watch("concept");
   const conceptLen = conceptValue?.length || 0;
 

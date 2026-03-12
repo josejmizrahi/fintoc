@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { type ColumnDef } from "@tanstack/react-table";
 import { toast } from "sonner";
@@ -380,22 +380,22 @@ export default function CobranzaPage() {
   }, [agingQuery.data, overdueQuery.data]);
 
   // Actions
-  function handlePaymentLink(invoice: Invoice) {
+  const handlePaymentLink = useCallback((invoice: Invoice) => {
     setSelectedInvoice(invoice);
     setLinkDialogOpen(true);
-  }
+  }, []);
 
-  function handleReminder(invoice: Invoice) {
+  const handleReminder = useCallback((invoice: Invoice) => {
     sendReminderMutation.mutate({ invoice_id: invoice.id });
-  }
+  }, [sendReminderMutation]);
 
-  function handleManualPayment(invoice: Invoice) {
+  const handleManualPayment = useCallback((invoice: Invoice) => {
     setSelectedInvoice(invoice);
     setManualPayDialogOpen(true);
-  }
+  }, []);
 
   // Actions column renderer
-  function ActionsCell({ invoice }: { invoice: Invoice }) {
+  const ActionsCell = useCallback(({ invoice }: { invoice: Invoice }) => {
     return (
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
@@ -425,7 +425,7 @@ export default function CobranzaPage() {
         </DropdownMenuContent>
       </DropdownMenu>
     );
-  }
+  }, [handlePaymentLink, handleReminder, handleManualPayment]);
 
   // Columns for Pendientes
   const pendingColumns: ColumnDef<Invoice>[] = useMemo(
@@ -508,7 +508,7 @@ export default function CobranzaPage() {
         cell: ({ row }) => <ActionsCell invoice={row.original} />,
       },
     ],
-    []
+    [ActionsCell]
   );
 
   // Columns for Vencidas (adds Dias Vencido column)
@@ -607,7 +607,7 @@ export default function CobranzaPage() {
         cell: ({ row }) => <ActionsCell invoice={row.original} />,
       },
     ],
-    []
+    [ActionsCell]
   );
 
   // Aging grouped columns

@@ -85,4 +85,4 @@ export const GET = createHandler(async (req) => {
       },
     });
   }))(req, { params: Promise.resolve({}) });
-});
+}, { rateLimit: 'read' });
