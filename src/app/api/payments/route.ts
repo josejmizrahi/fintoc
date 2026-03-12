@@ -65,7 +65,7 @@ export const GET = createHandler(async (req) => {
       meta: { total: count || 0, page, limit },
     });
   }))(req, { params: Promise.resolve({}) });
-});
+}, { rateLimit: 'read' });
 
 // POST /api/payments - Create payment
 export const POST = createHandler(async (req) => {

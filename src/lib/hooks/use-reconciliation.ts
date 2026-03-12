@@ -17,7 +17,7 @@ export function useReconciliationHistory() {
 export function useSatOdooReconciliation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (data: { period_start: string; period_end: string }) => api.reconciliation.satOdoo(data as any),
+    mutationFn: (data: { period_start: string; period_end: string }) => api.reconciliation.satOdoo(data as Record<string, unknown>),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: reconciliationKeys.all });
       toast.success('Conciliacion SAT-Odoo completada');
@@ -31,7 +31,7 @@ export function useSatOdooReconciliation() {
 export function useSatAppReconciliation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (data: { period_start: string; period_end: string }) => api.reconciliation.satApp(data as any),
+    mutationFn: (data: { period_start: string; period_end: string }) => api.reconciliation.satApp(data as Record<string, unknown>),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: reconciliationKeys.all });
       toast.success('Conciliacion SAT-App completada');
@@ -45,7 +45,7 @@ export function useSatAppReconciliation() {
 export function useBancoAppReconciliation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (data: { period_start: string; period_end: string }) => api.reconciliation.bancoApp(data as any),
+    mutationFn: (data: { period_start: string; period_end: string }) => api.reconciliation.bancoApp(data as Record<string, unknown>),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: reconciliationKeys.all });
       toast.success('Conciliacion Banco-App completada');

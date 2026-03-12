@@ -7,4 +7,4 @@ export const GET = createHandler(async (req) => {
   return withAuth(withRbac('treasury.read', async () => {
     return Response.json({ data: [] });
   }))(req, { params: Promise.resolve({}) });
-});
+}, { rateLimit: 'read' });

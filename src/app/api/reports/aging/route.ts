@@ -28,4 +28,4 @@ export const GET = createHandler(async (req) => {
 
     return Response.json({ data: { totals, by_customer: Array.from(byCustomer.values()).sort((a, b) => b.total - a.total) } });
   }))(req, { params: Promise.resolve({}) });
-});
+}, { rateLimit: 'read' });

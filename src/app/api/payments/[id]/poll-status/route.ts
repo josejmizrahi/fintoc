@@ -20,4 +20,4 @@ export const POST = createHandler(async (req, params) => {
 
     return Response.json({ data: payment });
   }))(req, { params: Promise.resolve(params) });
-});
+}, { rateLimit: 'read' });

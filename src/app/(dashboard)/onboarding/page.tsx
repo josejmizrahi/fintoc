@@ -220,6 +220,7 @@ export default function OnboardingPage() {
 
   useEffect(() => {
     if (!existingStatus || configsLoaded) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- guard flag to run initialization once
     setConfigsLoaded(true);
 
     const completed = new Set<string>(["welcome"]);

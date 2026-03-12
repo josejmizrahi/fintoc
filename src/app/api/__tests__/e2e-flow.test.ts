@@ -629,7 +629,7 @@ describe('E2E Flow: Register → Login → Me → Dashboard → Onboarding → C
       });
 
       const res = await POST(req, { params: Promise.resolve({}) });
-      const data = await res.json();
+      const _data = await res.json();
 
       expect(res.status).toBe(200);
       // Tokens are now in httpOnly cookies, not in response body

@@ -17,4 +17,4 @@ export const GET = createHandler(async (req, params) => {
 
     return Response.json(data || []);
   }))(req, { params: Promise.resolve(params) });
-});
+}, { rateLimit: 'read' });

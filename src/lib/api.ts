@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- API client uses `any` for untyped endpoint responses */
 import type { Payment, Invoice, Vendor, Customer, Expense, Budget, Notification } from '@/types';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || '';
@@ -82,7 +83,7 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
 
   if (res.status === 401) {
     const detail = await res.json().catch(() => ({}));
-    const debugMsg = `401 en ${url}: ${detail?.detail || detail?.error?.message || JSON.stringify(detail)}`;
+    const debugMsg = `401 en ${url}: ${detail?.error?.message || detail?.detail || JSON.stringify(detail)}`;
     console.warn('[API 401]', debugMsg);
     if (typeof window !== 'undefined' && !isRedirectingTo401) {
       isRedirectingTo401 = true;
@@ -107,8 +108,8 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    const message = body.detail || body.error?.message || (typeof body.error === 'string' ? body.error : `Error ${res.status}`);
-    throw new ApiError(res.status, message, body.error?.code || body.code);
+    const message = body.error?.message || body.detail || (typeof body.error === 'string' ? body.error : `Error ${res.status}`);
+    throw new ApiError(res.status, message, body.error?.code);
   }
 
   return res.json();
@@ -123,7 +124,7 @@ async function authRequest<T>(path: string, body: object): Promise<T> {
   });
   if (!res.ok) {
     const data = await res.json().catch(() => ({ detail: res.statusText }));
-    let message = data.detail || data.error?.message || data.message || (typeof data.error === 'string' ? data.error : `Error ${res.status}`);
+    let message = data.error?.message || data.detail || data.message || (typeof data.error === 'string' ? data.error : `Error ${res.status}`);
     const fields = data.error?.details?.fields;
     if (Array.isArray(fields) && fields.length > 0) {
       message += ': ' + fields.map((f: { path?: string; message?: string }) => `${f.path}: ${f.message}`).join(', ');
@@ -166,19 +167,14 @@ export const api = {
 
   auth: {
     register: (data: { email: string; password: string; full_name?: string; company_name: string; rfc: string }) =>
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       authRequest<any>('/api/auth/register', data),
     login: (data: { email: string; password: string }) =>
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       authRequest<any>('/api/auth/login', data),
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     me: () => get<any>('/api/auth/me'),
     resetPassword: (data: { email: string }) =>
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       authRequest<any>('/api/auth/reset-password', data),
     switchCompany: async (data: { company_id: string | number }) => {
       // Tokens are handled via httpOnly cookies automatically
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const res = await request<any>('/api/auth/switch-company', {
         method: 'POST',
         body: JSON.stringify(data),

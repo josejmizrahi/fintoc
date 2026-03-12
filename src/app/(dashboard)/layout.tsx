@@ -19,6 +19,7 @@ export default function ProtectedLayout({
   const collapsed = useSidebarStore((s) => s.collapsed);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- hydration guard pattern
     setMounted(true);
   }, []);
 

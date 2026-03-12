@@ -19,4 +19,4 @@ export const GET = createHandler(async (req) => {
 
     return Response.json({ count: count || 0 });
   })(req, { params: Promise.resolve({}) });
-});
+}, { rateLimit: 'read' });

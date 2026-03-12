@@ -99,4 +99,5 @@ export const GET = createHandler(
       },
     });
   }),
+  { rateLimit: 'read' },
 );

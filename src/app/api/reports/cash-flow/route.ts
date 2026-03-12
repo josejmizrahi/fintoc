@@ -33,4 +33,4 @@ export const GET = createHandler(async (req) => {
 
     return Response.json({ data: result });
   }))(req, { params: Promise.resolve({}) });
-});
+}, { rateLimit: 'read' });

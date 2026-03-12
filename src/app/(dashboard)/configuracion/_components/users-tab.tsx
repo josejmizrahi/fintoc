@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { type ColumnDef } from "@tanstack/react-table";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm, Controller } from "react-hook-form";
@@ -289,8 +289,8 @@ export function UsersTab() {
       toast.error(err.message || "Error al desactivar usuario"),
   });
 
-  const handleChangeRole = (id: string, role: string) =>
-    changeRoleMutation.mutate({ id, role });
+  const handleChangeRole = useCallback((id: string, role: string) =>
+    changeRoleMutation.mutate({ id, role }), [changeRoleMutation]);
   const handleDeactivate = (id: string) => setDeactivateId(id);
 
   /* Desktop columns */
@@ -361,7 +361,7 @@ export function UsersTab() {
         ),
       },
     ],
-    [changeRoleMutation]
+    [handleChangeRole]
   );
 
   const emptyState = (

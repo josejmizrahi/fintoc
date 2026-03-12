@@ -42,4 +42,4 @@ export const POST = createHandler(async (req, params) => {
 
     return Response.json({ data: updated });
   }))(req, { params: Promise.resolve(params) });
-});
+}, { rateLimit: 'write' });

@@ -19,7 +19,7 @@ export const GET = createHandler(async (req, params) => {
     if (!vendor) throw new ApiError('NOT_FOUND', 'Proveedor no encontrado', 404);
     return Response.json({ data: vendor });
   }))(req, { params: Promise.resolve(params) });
-});
+}, { rateLimit: 'read' });
 
 export const PUT = createHandler(async (req, params) => {
   return withAuth(withRbac('vendors.write', async (_req, ctx) => {

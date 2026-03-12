@@ -72,7 +72,7 @@ export function InvoicesTab({ taxpayerId }: { taxpayerId: string }) {
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const invoices: SyntageInvoice[] = invoicesQuery.data?.invoices || [];
+  const invoices: SyntageInvoice[] = useMemo(() => invoicesQuery.data?.invoices || [], [invoicesQuery.data?.invoices]);
   const total = invoicesQuery.data?.total || 0;
 
   // Client-side search/filter on current page

@@ -40,7 +40,7 @@ export const GET = createHandler(async (req, params) => {
       data: { ...payment, audit: audit || [], timeline },
     });
   }))(req, { params: Promise.resolve(params) });
-});
+}, { rateLimit: 'read' });
 
 // PUT /api/payments/:id
 export const PUT = createHandler(async (req, params) => {

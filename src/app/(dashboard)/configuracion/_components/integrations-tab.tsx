@@ -191,7 +191,7 @@ function OdooEditDialog({
     } else if (open && !savedConfig) {
       form.reset({ url: "", database: "", user: "", apiKey: "" });
     }
-  }, [open, savedConfig]);
+  }, [open, savedConfig, form]);
 
   const saveMutation = useMutation({
     mutationFn: (data: Record<string, string>) =>
@@ -320,7 +320,7 @@ function FintocEditDialog({
     } else if (open && !savedConfig) {
       form.reset({ secretKey: "" });
     }
-  }, [open, savedConfig]);
+  }, [open, savedConfig, form]);
 
   const saveMutation = useMutation({
     mutationFn: (data: Record<string, string>) =>
@@ -416,7 +416,7 @@ function SatEditDialog({
     } else if (open && !savedConfig) {
       form.reset({ syntageApiKey: "", rfcEmisor: "" });
     }
-  }, [open, savedConfig]);
+  }, [open, savedConfig, form]);
 
   const saveMutation = useMutation({
     mutationFn: async (data: Record<string, string>) => {

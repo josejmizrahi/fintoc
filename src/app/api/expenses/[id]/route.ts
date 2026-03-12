@@ -11,4 +11,4 @@ export const GET = createHandler(async (req, params) => {
     if (!data) throw new ApiError('NOT_FOUND', 'Gasto no encontrado', 404);
     return Response.json({ data });
   }))(req, { params: Promise.resolve(params) });
-});
+}, { rateLimit: 'read' });

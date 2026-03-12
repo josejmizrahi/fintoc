@@ -12,7 +12,7 @@ export const GET = createHandler(async (req) => {
     const { data } = await admin.from('budgets').select('*').eq('company_id', ctx.company_id).order('period_start', { ascending: false });
     return Response.json({ data: data || [] });
   }))(req, { params: Promise.resolve({}) });
-});
+}, { rateLimit: 'read' });
 
 export const POST = createHandler(async (req) => {
   return withAuth(withRbac('budgets.write', async (_req, ctx) => {

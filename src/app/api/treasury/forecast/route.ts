@@ -54,4 +54,4 @@ export const GET = createHandler(async (req) => {
 
     return Response.json({ data: forecast });
   }))(req, { params: Promise.resolve({}) });
-});
+}, { rateLimit: 'read' });

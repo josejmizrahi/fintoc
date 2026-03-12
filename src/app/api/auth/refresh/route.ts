@@ -42,4 +42,4 @@ export const POST = createHandler(async (req) => {
     Response.json({ expires_at: data.session.expires_at }),
     cookies,
   );
-}, { public: true });
+}, { rateLimit: 'auth', public: true });

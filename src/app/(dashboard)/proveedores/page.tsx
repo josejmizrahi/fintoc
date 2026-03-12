@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import { type ColumnDef } from "@tanstack/react-table";
 import { useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
@@ -155,6 +155,7 @@ function CreateVendorDialog({
     },
   });
 
+  // eslint-disable-next-line react-hooks/incompatible-library -- form.watch is required for live bank detection
   const clabeValue = form.watch("clabe");
   const detectedBank = clabeValue && clabeValue.length >= 3
     ? getBankFromCLABE(clabeValue)
@@ -303,6 +304,7 @@ function VendorDetailContent({ vendorId }: { vendorId: string }) {
   const [_payments, _setPayments] = useState<Payment[]>([]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- loading state for async fetch
     setBillsLoading(true);
     api.vendors
       .bills(vendorId)
@@ -376,9 +378,9 @@ export default function ProveedoresPage() {
   const verifyClabe = useVerifyVendorClabe();
 
   // Actions
-  function handleVerifyClabe(vendor: Vendor) {
+  const handleVerifyClabe = useCallback((vendor: Vendor) => {
     verifyClabe.mutate(vendor.id);
-  }
+  }, [verifyClabe]);
 
   async function handleValidateRfc(vendor: Vendor) {
     if (!vendor.rfc) {
@@ -412,7 +414,7 @@ export default function ProveedoresPage() {
     }
   }
 
-  async function handleSyncOdoo(_vendor: Vendor) {
+  const handleSyncOdoo = useCallback(async (_vendor: Vendor) => {
     setSyncingId("_all");
     try {
       const result = await api.sync.odooPartners();
@@ -425,7 +427,7 @@ export default function ProveedoresPage() {
     } finally {
       setSyncingId(null);
     }
-  }
+  }, [queryClient]);
 
   // Columns
   const columns: ColumnDef<Vendor>[] = useMemo(
@@ -609,7 +611,7 @@ export default function ProveedoresPage() {
         },
       },
     ],
-    [verifyClabe.isPending, syncingId]
+    [verifyClabe.isPending, syncingId, handleVerifyClabe, handleSyncOdoo]
   );
 
   const toolbar = (
