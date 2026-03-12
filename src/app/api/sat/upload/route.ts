@@ -2,6 +2,7 @@ import { createHandler } from '@/lib/middleware/route-handler';
 import { withAuth } from '@/lib/middleware/auth';
 import { ApiError } from '@/lib/utils/errors';
 import { hasDB, query, update } from '@/lib/db';
+import { writeAuditLog } from '@/lib/middleware/audit';
 
 /**
  * POST /api/sat/upload
@@ -90,6 +91,15 @@ export const POST = createHandler(async (req) => {
     const uploadedFiles = [];
     if (cerFile) uploadedFiles.push(cerFile.name);
     if (keyFile) uploadedFiles.push(keyFile.name);
+
+    writeAuditLog({
+      company_id: ctx.company_id,
+      user_id: ctx.user_id,
+      action: 'sat.xml_uploaded',
+      entity_type: 'sat',
+      entity_id: ctx.company_id,
+      metadata: { files: uploadedFiles, rfc_emisor: rfcEmisor },
+    });
 
     return Response.json({
       data: {

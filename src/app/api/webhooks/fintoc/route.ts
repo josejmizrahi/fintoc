@@ -1,10 +1,13 @@
+import { z } from 'zod';
 import { getAdminClient } from '@/lib/supabase/admin';
 import { verifyFintocWebhook, centavosToPesos } from '@/lib/integrations/fintoc';
 
-interface FintocWebhookPayload {
-  type: string;
-  data: Record<string, unknown>;
-}
+const fintocWebhookSchema = z.object({
+  type: z.string().min(1),
+  data: z.record(z.string(), z.unknown()),
+});
+
+type FintocWebhookPayload = z.infer<typeof fintocWebhookSchema>;
 
 export async function POST(req: Request): Promise<Response> {
   try {
@@ -19,8 +22,21 @@ export async function POST(req: Request): Promise<Response> {
       return Response.json({ error: 'Invalid signature' }, { status: 401 });
     }
 
-    const payload = JSON.parse(rawBody) as FintocWebhookPayload;
+    const parsed = fintocWebhookSchema.safeParse(JSON.parse(rawBody));
     const admin = getAdminClient();
+
+    if (!parsed.success) {
+      await admin.from('webhook_logs').insert({
+        provider: 'fintoc',
+        event_type: 'unknown',
+        payload: rawBody,
+        processed: false,
+        error: `Validation failed: ${parsed.error.message}`,
+      });
+      return Response.json({ received: true });
+    }
+
+    const payload = parsed.data;
 
     // For retries, verify the log ID actually exists and belongs to fintoc
     if (isRetry && retryLogId) {

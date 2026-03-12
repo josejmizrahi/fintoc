@@ -4,6 +4,7 @@ import { withRbac } from '@/lib/middleware/rbac';
 import { budgetUpdateSchema } from '@/lib/validations/schemas';
 import { ApiError } from '@/lib/utils/errors';
 import { getAdminClient } from '@/lib/supabase/admin';
+import { writeAuditLog } from '@/lib/middleware/audit';
 
 export const GET = createHandler(async (req, params) => {
   return withAuth(withRbac('budgets.read', async (_req, ctx) => {
@@ -24,6 +25,16 @@ export const PUT = createHandler(async (req, params) => {
     const admin = getAdminClient();
     const { data, error } = await admin.from('budgets').update(result.data).eq('id', params.id).eq('company_id', ctx.company_id).select().single();
     if (error || !data) throw new ApiError('NOT_FOUND', 'Presupuesto no encontrado', 404);
+
+    writeAuditLog({
+      company_id: ctx.company_id,
+      user_id: ctx.user_id,
+      action: 'budget.updated',
+      entity_type: 'budget',
+      entity_id: params.id,
+      changes: { after: result.data as Record<string, unknown> },
+    });
+
     return Response.json({ data });
   }))(req, { params: Promise.resolve(params) });
 }, { rateLimit: 'write' });
@@ -33,6 +44,15 @@ export const DELETE = createHandler(async (req, params) => {
     const admin = getAdminClient();
     const { error } = await admin.from('budgets').delete().eq('id', params.id).eq('company_id', ctx.company_id);
     if (error) throw new ApiError('NOT_FOUND', 'Presupuesto no encontrado', 404);
+
+    writeAuditLog({
+      company_id: ctx.company_id,
+      user_id: ctx.user_id,
+      action: 'budget.deleted',
+      entity_type: 'budget',
+      entity_id: params.id,
+    });
+
     return new Response(null, { status: 204 });
   }))(req, { params: Promise.resolve(params) });
 }, { rateLimit: 'write' });

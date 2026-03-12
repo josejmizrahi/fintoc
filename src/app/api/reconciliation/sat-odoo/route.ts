@@ -7,6 +7,7 @@ import { getAdminClient } from '@/lib/supabase/admin';
 import * as syntage from '@/lib/integrations/syntage';
 import * as odoo from '@/lib/integrations/odoo';
 import { decrypt } from '@/lib/utils/crypto';
+import { writeAuditLog } from '@/lib/middleware/audit';
 
 export const POST = createHandler(async (req) => {
   return withAuth(withRbac('reconciliation.execute', async (_req, ctx) => {
@@ -112,6 +113,15 @@ export const POST = createHandler(async (req) => {
         onlyOdoo.push(odooInv);
       }
     }
+
+    writeAuditLog({
+      company_id: ctx.company_id,
+      user_id: ctx.user_id,
+      action: 'reconciliation.sat_odoo_executed',
+      entity_type: 'reconciliation',
+      entity_id: ctx.company_id,
+      metadata: { period_start, period_end, matched: matched.length, only_sat: onlySat.length, only_odoo: onlyOdoo.length, amount_diff: amountDiff.length },
+    });
 
     return Response.json({
       data: {

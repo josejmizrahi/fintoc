@@ -5,6 +5,7 @@ import { reconciliationPeriodSchema } from '@/lib/validations/schemas';
 import { ApiError } from '@/lib/utils/errors';
 import { getAdminClient } from '@/lib/supabase/admin';
 import * as syntage from '@/lib/integrations/syntage';
+import { writeAuditLog } from '@/lib/middleware/audit';
 
 export const POST = createHandler(async (req) => {
   return withAuth(withRbac('reconciliation.execute', async (_req, ctx) => {
@@ -69,6 +70,15 @@ export const POST = createHandler(async (req) => {
     for (const [uuid, appInv] of appMap) {
       if (!satMap.has(uuid)) onlyApp.push(appInv);
     }
+
+    writeAuditLog({
+      company_id: ctx.company_id,
+      user_id: ctx.user_id,
+      action: 'reconciliation.sat_app_executed',
+      entity_type: 'reconciliation',
+      entity_id: ctx.company_id,
+      metadata: { period_start, period_end, matched: matched.length, only_sat: onlySat.length, only_app: onlyApp.length },
+    });
 
     return Response.json({
       data: {

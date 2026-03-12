@@ -1,5 +1,11 @@
 import crypto from 'crypto';
+import { z } from 'zod';
 import { getAdminClient } from '@/lib/supabase/admin';
+
+const odooWebhookSchema = z.object({
+  type: z.string().min(1),
+  data: z.record(z.string(), z.unknown()),
+});
 
 export async function POST(req: Request): Promise<Response> {
   try {
@@ -19,12 +25,21 @@ export async function POST(req: Request): Promise<Response> {
       return Response.json({ error: { code: 'UNAUTHORIZED', message: 'Invalid webhook token' } }, { status: 401 });
     }
 
-    const payload = await req.json() as {
-      type: string;
-      data: Record<string, unknown>;
-    };
-
+    const parsed = odooWebhookSchema.safeParse(await req.json());
     const admin = getAdminClient();
+
+    if (!parsed.success) {
+      await admin.from('webhook_logs').insert({
+        provider: 'odoo',
+        event_type: 'unknown',
+        payload: null,
+        processed: false,
+        error: `Validation failed: ${parsed.error.message}`,
+      });
+      return Response.json({ received: true });
+    }
+
+    const payload = parsed.data;
 
     await admin.from('webhook_logs').insert({
       provider: 'odoo',
