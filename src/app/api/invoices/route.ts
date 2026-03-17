@@ -46,7 +46,8 @@ export const GET = createHandler(async (req) => {
     const overdue = url.searchParams.get('overdue');
     if (overdue === 'true') {
       const today = new Date().toISOString().split('T')[0];
-      query = query.lt('due_date', today).gt('amount_residual', 0);
+      // Check both date_due (seed/manual) and due_date (Odoo sync) columns
+      query = query.or(`due_date.lt.${today},date_due.lt.${today}`).gt('amount_residual', 0);
     }
 
     if (search) {

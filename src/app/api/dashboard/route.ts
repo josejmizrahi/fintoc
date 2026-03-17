@@ -49,6 +49,14 @@ export const GET = createHandler(async (req) => {
         .limit(5),
     ]);
 
+    // Check for query errors and log them
+    const queryResults = [balanceResult, receivableResult, payableResult, overdueDateDueResult, overdueDueDateResult, recentPaymentsResult, overdueInvoicesResult];
+    for (const result of queryResults) {
+      if (result.error) {
+        console.error('Dashboard query error:', result.error.message);
+      }
+    }
+
     const totalBalance = (balanceResult.data || []).reduce((s, a) => s + (a.balance || 0), 0);
     const receivable = receivableResult.data || [];
     const payable = payableResult.data || [];

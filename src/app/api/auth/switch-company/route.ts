@@ -55,8 +55,11 @@ export const POST = createHandler(async (req) => {
       .eq('company_id', company_id);
 
     if (activateError) {
+      // Rollback: re-activate the previous company using the specific membership
       await admin.from('user_companies').update({ is_active: true })
-        .eq('user_id', ctx.user_id).eq('company_id', ctx.company_id);
+        .eq('user_id', ctx.user_id)
+        .eq('company_id', ctx.company_id)
+        .eq('status', 'active');
       throw new ApiError('INTERNAL_ERROR', 'Error al activar nueva empresa', 500);
     }
 
@@ -66,6 +69,15 @@ export const POST = createHandler(async (req) => {
       .select('id, name, rfc, onboarding_completed')
       .eq('id', company_id)
       .single();
+
+    if (!company) {
+      // Rollback: re-activate the previous company
+      await admin.from('user_companies').update({ is_active: false })
+        .eq('user_id', ctx.user_id).eq('company_id', company_id);
+      await admin.from('user_companies').update({ is_active: true })
+        .eq('user_id', ctx.user_id).eq('company_id', ctx.company_id).eq('status', 'active');
+      throw new ApiError('NOT_FOUND', 'Empresa no encontrada', 404);
+    }
 
     // Force a token refresh so the JWT gets the new active_company_id claim
     let cookies: string[] = [];

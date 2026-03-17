@@ -234,6 +234,8 @@ export const api = {
     sendReminder: (data: Record<string, unknown>) => post<any>('/api/collections/send-reminder', data),
     summary: () => get<any>('/api/collections/summary'),
     overdueSummary: () => get<any>('/api/collections/overdue-summary'),
+    recordPayment: (data: { invoice_id: number | string; amount: number; reference?: string }) =>
+      post<{ data: Payment }>('/api/collections/record-payment', data),
   },
 
   expenses: {

@@ -392,8 +392,8 @@ export default function PresupuestosPage() {
     () =>
       vsActual.map((item: Record<string, unknown>) => ({
         name: item.category || item.name || "-",
-        Presupuestado: item.amount_budgeted ?? item.budgeted ?? 0,
-        Real: item.amount_spent ?? item.actual ?? 0,
+        Presupuestado: item.budgeted ?? 0,
+        Real: item.spent ?? 0,
       })),
     [vsActual]
   );

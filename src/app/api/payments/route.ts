@@ -172,7 +172,8 @@ export const POST = createHandler(async (req) => {
       approvalRequest = approval;
 
       // Notify approvers
-      for (const approverId of matchingRule.approvers) {
+      const approvers = Array.isArray(matchingRule.approvers) ? matchingRule.approvers : [];
+      for (const approverId of approvers) {
         await admin.from('notifications').insert({
           company_id: ctx.company_id,
           user_id: approverId,

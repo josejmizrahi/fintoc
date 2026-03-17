@@ -114,10 +114,16 @@ export const POST = createHandler(async (req) => {
   const accessToken = session?.session?.access_token;
   const refreshToken = session?.session?.refresh_token;
 
-  if (accessToken && refreshToken) {
-    const cookies = setAuthCookies(accessToken, refreshToken);
-    return withCookies(Response.json(responseBody, { status: 201 }), cookies);
+  if (!accessToken || !refreshToken) {
+    // User/company created but auto sign-in failed.
+    // Return a flag so the frontend redirects to login instead of leaving
+    // the user in a broken authenticated-but-no-token state.
+    return Response.json(
+      { ...responseBody, requires_login: true },
+      { status: 201 },
+    );
   }
 
-  return Response.json(responseBody, { status: 201 });
+  const cookies = setAuthCookies(accessToken, refreshToken);
+  return withCookies(Response.json(responseBody, { status: 201 }), cookies);
 }, { rateLimit: 'auth', public: true });

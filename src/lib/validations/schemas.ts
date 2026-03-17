@@ -57,7 +57,7 @@ export const paymentCreateSchema = z.object({
   invoice_id: entityId.optional(),
   amount: z.number().positive('Monto debe ser mayor a 0'),
   concept: z.string().min(1).max(40, 'Concepto SPEI max 40 caracteres'),
-  reference: z.string().max(7).regex(/^\d*$/, 'Referencia debe ser numerica').optional(),
+  reference: z.string().min(1).max(7).regex(/^\d+$/, 'Referencia debe ser numerica').optional(),
   scheduled_date: z.string().date().optional(),
 });
 
@@ -65,7 +65,7 @@ export const paymentUpdateSchema = z.object({
   vendor_id: entityId.optional(),
   amount: z.number().positive().optional(),
   concept: z.string().min(1).max(40).optional(),
-  reference: z.string().max(7).regex(/^\d*$/).optional(),
+  reference: z.string().min(1).max(7).regex(/^\d+$/, 'Referencia debe ser numerica').optional(),
   scheduled_date: z.string().date().optional(),
 });
 

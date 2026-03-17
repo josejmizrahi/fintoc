@@ -186,9 +186,9 @@ export default function TesoreriaPage() {
         day: "2-digit",
         month: "short",
       }),
-      optimista: (f.optimistic as number) ?? (f.expected_inflows as number) ?? 0,
-      base: (f.projected_balance as number) ?? (f.base as number) ?? 0,
-      pesimista: (f.pessimistic as number) ?? (f.expected_outflows as number) ?? 0,
+      optimista: (f.optimistic as number) ?? 0,
+      base: (f.base as number) ?? 0,
+      pesimista: (f.pessimistic as number) ?? 0,
     }));
   }, [forecast]);
 

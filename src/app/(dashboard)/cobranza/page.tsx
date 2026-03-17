@@ -211,7 +211,8 @@ function ManualPaymentDialog({
   const [reference, setReference] = useState("");
 
   const registerMutation = useMutation({
-    mutationFn: (data: Record<string, unknown>) => api.payments.create(data),
+    mutationFn: (data: { invoice_id: number | string; amount: number; reference?: string }) =>
+      api.collections.recordPayment(data),
     onSuccess: () => {
       toast.success("Pago registrado exitosamente");
       setAmount("");
@@ -229,8 +230,7 @@ function ManualPaymentDialog({
     registerMutation.mutate({
       invoice_id: invoice.id,
       amount: parseFloat(amount),
-      reference,
-      direction: "inbound",
+      reference: reference || undefined,
     });
   }
 
