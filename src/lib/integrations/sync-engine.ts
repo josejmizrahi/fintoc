@@ -365,9 +365,9 @@ export async function syncSat(
   const details: Record<string, number> = {};
 
   const extractors = options?.extractors || [
-    'invoices' as syntage.Extractor,
+    'invoice' as syntage.Extractor,
     'tax_status' as syntage.Extractor,
-    'tax_compliance_checks' as syntage.Extractor,
+    'tax_compliance' as syntage.Extractor,
   ];
 
   const syncId = await acquireSyncLock(admin, companyId, 'syntage');
@@ -377,8 +377,8 @@ export async function syncSat(
       try {
         const extraction = await withRetry(
           () => syntage.createExtraction(taxpayerId, extractor, {
-            dateFrom: options?.dateFrom,
-            dateTo: options?.dateTo,
+            date_from: options?.dateFrom,
+            date_to: options?.dateTo,
           }),
           RETRY_OPTS,
         );
