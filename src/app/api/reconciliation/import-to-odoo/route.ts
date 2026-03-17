@@ -50,9 +50,14 @@ export const POST = createHandler(async (req) => {
     const odooConfig = decrypt(odooInt.config_encrypted) as unknown as odoo.OdooConfig;
     const moveId = await odoo.odooCreate(odooConfig, 'account.move', {
       move_type: 'in_invoice',
-      invoice_date: cfdi.date || cfdi.issued_at,
-      amount_total: cfdi.total,
+      invoice_date: cfdi.issued_at,
       l10n_mx_edi_cfdi_uuid: cfdi_uuid,
+      partner_id: false, // Must be set manually or looked up
+      invoice_line_ids: [[0, 0, {
+        name: `CFDI ${cfdi_uuid}`,
+        price_unit: cfdi.total,
+        quantity: 1,
+      }]],
     });
 
     // Update local invoice if exists

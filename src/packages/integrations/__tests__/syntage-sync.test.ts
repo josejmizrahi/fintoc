@@ -55,7 +55,7 @@ describe('SyntageSyncProvider', () => {
     it('maps extractions with correct shape and company_id', () => {
       const remote: SyncData = {
         extractions: [
-          { id: 'ext-1', _extractor: 'invoices', status: 'pending' },
+          { id: 'ext-1', _extractor: 'invoice', status: 'pending' },
           { id: 'ext-2', _extractor: 'tax_status', status: 'completed' },
         ],
       };
@@ -66,7 +66,7 @@ describe('SyntageSyncProvider', () => {
       expect(diff.extractions.rows[0]).toEqual({
         company_id: 'company-abc',
         syntage_extraction_id: 'ext-1',
-        extractor: 'invoices',
+        extractor: 'invoice',
         status: 'pending',
       });
       expect(diff.extractions.rows[1]).toEqual({
@@ -82,8 +82,8 @@ describe('SyntageSyncProvider', () => {
     it('filters out extractions without an id', () => {
       const remote: SyncData = {
         extractions: [
-          { id: 'ext-1', _extractor: 'invoices', status: 'pending' },
-          { id: '', _extractor: 'tax_compliance_checks', status: 'failed' },
+          { id: 'ext-1', _extractor: 'invoice', status: 'pending' },
+          { id: '', _extractor: 'tax_compliance', status: 'failed' },
           { id: undefined, _extractor: 'tax_status', status: 'failed' },
         ],
       };
@@ -112,44 +112,44 @@ describe('SyntageSyncProvider', () => {
 
     it('returns extraction results populated during fetch()', async () => {
       mockCreateExtraction
-        .mockResolvedValueOnce({ id: 'ext-1', status: 'pending', extractor: 'invoices' })
+        .mockResolvedValueOnce({ id: 'ext-1', status: 'pending', extractor: 'invoice' })
         .mockResolvedValueOnce({ id: 'ext-2', status: 'pending', extractor: 'tax_status' })
-        .mockResolvedValueOnce({ id: 'ext-3', status: 'pending', extractor: 'tax_compliance_checks' });
+        .mockResolvedValueOnce({ id: 'ext-3', status: 'pending', extractor: 'tax_compliance' });
 
       const config = {
         taxpayerId: 'TAX123',
-        extractors: ['invoices', 'tax_status', 'tax_compliance_checks'] as Extractor[],
+        extractors: ['invoice', 'tax_status', 'tax_compliance'] as Extractor[],
       };
 
       await provider.fetch(config, mockOpts);
 
       const results = provider.getExtractionResults();
       expect(results).toHaveLength(3);
-      expect(results[0]).toEqual({ extractor: 'invoices', extractionId: 'ext-1', status: 'pending' });
+      expect(results[0]).toEqual({ extractor: 'invoice', extractionId: 'ext-1', status: 'pending' });
       expect(results[1]).toEqual({ extractor: 'tax_status', extractionId: 'ext-2', status: 'pending' });
-      expect(results[2]).toEqual({ extractor: 'tax_compliance_checks', extractionId: 'ext-3', status: 'pending' });
+      expect(results[2]).toEqual({ extractor: 'tax_compliance', extractionId: 'ext-3', status: 'pending' });
     });
   });
 
   describe('fetch()', () => {
     it('handles partial failures — failed extractors recorded with empty extractionId', async () => {
       mockCreateExtraction
-        .mockResolvedValueOnce({ id: 'ext-1', status: 'pending', extractor: 'invoices' })
+        .mockResolvedValueOnce({ id: 'ext-1', status: 'pending', extractor: 'invoice' })
         .mockRejectedValueOnce(new Error('Network error'))
-        .mockResolvedValueOnce({ id: 'ext-3', status: 'pending', extractor: 'tax_compliance_checks' });
+        .mockResolvedValueOnce({ id: 'ext-3', status: 'pending', extractor: 'tax_compliance' });
 
       const config = {
         taxpayerId: 'TAX123',
-        extractors: ['invoices', 'tax_status', 'tax_compliance_checks'] as Extractor[],
+        extractors: ['invoice', 'tax_status', 'tax_compliance'] as Extractor[],
       };
 
       const data = await provider.fetch(config, mockOpts);
       const results = provider.getExtractionResults();
 
       expect(results).toHaveLength(3);
-      expect(results[0]).toEqual({ extractor: 'invoices', extractionId: 'ext-1', status: 'pending' });
+      expect(results[0]).toEqual({ extractor: 'invoice', extractionId: 'ext-1', status: 'pending' });
       expect(results[1]).toEqual({ extractor: 'tax_status', extractionId: '', status: 'failed' });
-      expect(results[2]).toEqual({ extractor: 'tax_compliance_checks', extractionId: 'ext-3', status: 'pending' });
+      expect(results[2]).toEqual({ extractor: 'tax_compliance', extractionId: 'ext-3', status: 'pending' });
 
       // The returned SyncData should only contain successful extractions
       const extractions = data.extractions as Array<{ id: string; _extractor: string }>;
@@ -159,11 +159,11 @@ describe('SyntageSyncProvider', () => {
     });
 
     it('resets extraction results on each fetch call', async () => {
-      mockCreateExtraction.mockResolvedValue({ id: 'ext-1', status: 'pending', extractor: 'invoices' });
+      mockCreateExtraction.mockResolvedValue({ id: 'ext-1', status: 'pending', extractor: 'invoice' });
 
       const config = {
         taxpayerId: 'TAX123',
-        extractors: ['invoices'] as Extractor[],
+        extractors: ['invoice'] as Extractor[],
       };
 
       await provider.fetch(config, mockOpts);

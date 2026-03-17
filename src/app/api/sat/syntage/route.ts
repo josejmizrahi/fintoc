@@ -35,7 +35,7 @@ async function ensureTaxpayerBelongsToCompany(
   if (!companyRfc) return true;
   const data = await client.listTaxpayers();
   const members = (data['hydra:member'] || []) as Array<{ id: string; rfc?: string }>;
-  const match = members.find((tp) => tp.id === taxpayerId && normalizeRfc(tp.rfc) === companyRfc);
+  const match = members.find((tp) => tp.id === taxpayerId && (normalizeRfc(tp.rfc) === companyRfc || normalizeRfc(tp.id) === companyRfc));
   return !!match;
 }
 
@@ -112,7 +112,7 @@ export const GET = createHandler(async (req) => {
         const companyRfc = await getCompanyRfc(companyId);
         let members = (data['hydra:member'] || []) as Array<{ id: string; rfc?: string; name?: string }>;
         if (companyRfc) {
-          members = members.filter((tp) => normalizeRfc(tp.rfc) === companyRfc);
+          members = members.filter((tp) => normalizeRfc(tp.rfc) === companyRfc || normalizeRfc(tp.id) === companyRfc);
         }
         return Response.json({ taxpayers: members, total: members.length });
       }
@@ -384,7 +384,7 @@ async function saveConfig(companyId: number, params: Record<string, unknown>) {
       const client = createSyntageClient(mergedConfig as Record<string, string>);
       const data = await client.listTaxpayers();
       const members = (data['hydra:member'] || []) as Array<{ id: string; rfc?: string }>;
-      const match = members.find((tp) => normalizeRfc(tp.rfc) === rfcToMatch);
+      const match = members.find((tp) => normalizeRfc(tp.rfc) === rfcToMatch || normalizeRfc(tp.id) === rfcToMatch);
       if (match) {
         updatePayload.syntage_taxpayer_id = match.id;
       }

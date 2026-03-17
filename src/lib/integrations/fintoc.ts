@@ -8,6 +8,7 @@ import { ApiError } from '@/lib/utils/errors';
 // ---------------------------------------------------------------------------
 
 const FINTOC_BASE = 'https://api.fintoc.com/v1';
+const FINTOC_BASE_V2 = 'https://api.fintoc.com/v2';
 const DEFAULT_TIMEOUT = 30_000;
 const MAX_RETRIES = 3;
 const DEFAULT_PER_PAGE = 50;
@@ -16,8 +17,8 @@ const MAX_PER_PAGE = 300;
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-export type TransferStatus = 'pending' | 'processing' | 'succeeded' | 'failed' | 'rejected';
-export type MovementType = 'credit' | 'debit';
+export type TransferStatus = 'pending' | 'succeeded' | 'failed' | 'rejected' | 'returned' | 'return_pending';
+export type MovementType = 'credit' | 'debit' | 'transfer' | 'check' | 'other';
 export type PaymentIntentStatus = 'pending' | 'succeeded' | 'failed' | 'expired';
 
 export interface FintocAccount {
@@ -66,13 +67,15 @@ export interface FintocTransfer {
   amount: number;
   currency: string;
   status: TransferStatus;
-  destination_account: {
+  counterparty: {
     holder_id?: string;
     holder_name?: string;
     number: string;
+    institution_id?: string;
     institution?: { id: string; name: string };
   };
-  concept: string;
+  comment: string;
+  account_id: string;
   reference_id?: string;
   created_at: string;
   executed_at?: string;
@@ -137,6 +140,8 @@ async function fintocRequest<T = unknown>(
     timeout?: number;
     retries?: number;
     idempotencyKey?: string;
+    baseUrl?: string;
+    extraHeaders?: Record<string, string>;
   }
 ): Promise<{ data: T; meta: FintocRequestMeta }> {
   const retries = options?.retries ?? MAX_RETRIES;
@@ -147,10 +152,12 @@ async function fintocRequest<T = unknown>(
   const timer = setTimeout(() => controller.abort(), timeout);
 
   try {
-    const url = path.startsWith('http') ? path : `${FINTOC_BASE}${path}`;
+    const base = options?.baseUrl ?? FINTOC_BASE;
+    const url = path.startsWith('http') ? path : `${base}${path}`;
     const headers: Record<string, string> = {
-      'Authorization': `Bearer ${key}`,
+      'Authorization': key,
       'Content-Type': 'application/json',
+      ...options?.extraHeaders,
     };
 
     // Idempotency key for POST requests to prevent duplicate operations
@@ -255,18 +262,34 @@ export async function createTransfer(
   params: {
     amount: number;
     currency: string;
-    destination_account: { institution_id?: string; number: string };
-    concept: string;
+    counterparty: { holder_id?: string; institution_id?: string; number: string };
+    comment: string;
+    account_id: string;
     reference_id?: string;
     metadata?: Record<string, string>;
   },
   secretKey?: string,
   idempotencyKey?: string
 ): Promise<FintocTransfer> {
+  const key = getSecretKey(secretKey);
+  const body = {
+    amount: params.amount,
+    currency: params.currency,
+    counterparty: params.counterparty,
+    comment: params.comment,
+    account_id: params.account_id,
+    ...(params.reference_id && { reference_id: params.reference_id }),
+    ...(params.metadata && { metadata: params.metadata }),
+  };
+
+  const jwsSignature = await signTransferBody(body, key);
+
   const { data } = await fintocRequest<FintocTransfer>('POST', '/transfers', {
-    body: params,
+    body,
     secretKey,
     idempotencyKey: idempotencyKey || `transfer_${params.reference_id || Date.now()}`,
+    baseUrl: FINTOC_BASE_V2,
+    extraHeaders: { 'Fintoc-JWS-Signature': jwsSignature },
   });
   return data;
 }
@@ -431,13 +454,39 @@ export async function verifyCLABE(clabe: string, secretKey?: string) {
 // ---------------------------------------------------------------------------
 // Webhook Verification
 // ---------------------------------------------------------------------------
+/**
+ * Verify Fintoc webhook signature.
+ * Format: `t=<unix_timestamp>,v1=<hmac_hex>`
+ * The signed content is `<timestamp>.<payload>`.
+ */
 export function verifyFintocWebhook(payload: string, signature: string): boolean {
   const secret = process.env.FINTOC_WEBHOOK_SECRET;
   if (!secret || !signature) return false;
 
-  const expected = crypto.createHmac('sha256', secret).update(payload).digest('hex');
+  // Parse the t= and v1= components
+  const parts = signature.split(',');
+  const timestampPart = parts.find(p => p.startsWith('t='));
+  const signaturePart = parts.find(p => p.startsWith('v1='));
+
+  if (!timestampPart || !signaturePart) return false;
+
+  const timestamp = timestampPart.slice(2);
+  const sig = signaturePart.slice(3);
+
+  if (!timestamp || !sig) return false;
+
+  // Check timestamp tolerance (5 minutes)
+  const TOLERANCE_SECONDS = 300;
+  const now = Math.floor(Date.now() / 1000);
+  const webhookTime = parseInt(timestamp, 10);
+  if (isNaN(webhookTime) || Math.abs(now - webhookTime) > TOLERANCE_SECONDS) return false;
+
+  // Compute expected HMAC over "timestamp.payload"
+  const signedContent = `${timestamp}.${payload}`;
+  const expected = crypto.createHmac('sha256', secret).update(signedContent).digest('hex');
+
   try {
-    return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
+    return crypto.timingSafeEqual(Buffer.from(sig, 'hex'), Buffer.from(expected, 'hex'));
   } catch {
     return false;
   }

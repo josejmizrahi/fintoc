@@ -36,7 +36,7 @@ export const POST = createHandler(async (req) => {
     const extraction = (await syntage.createExtraction(
       integration.syntage_taxpayer_id,
       extractor,
-      { dateFrom: date_from, dateTo: date_to }
+      { date_from, date_to }
     )) as { id: string };
 
     // Track extraction

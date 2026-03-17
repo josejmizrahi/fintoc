@@ -36,14 +36,24 @@ vi.mock("@/lib/supabase/admin", () => ({
         return { data: { user: null }, error: { message: "Invalid token" } };
       }),
     },
-    from: vi.fn().mockImplementation(() => {
+    from: vi.fn().mockImplementation((table: string) => {
       const chain: Record<string, unknown> = {};
       chain.select = vi.fn().mockReturnValue(chain);
       chain.eq = vi.fn().mockReturnValue(chain);
-      chain.single = vi.fn().mockResolvedValue({
-        data: { user_id: TEST_USER_ID, company_id: COMPANY_ID, role: "admin", is_active: true, status: "active" },
-        error: null,
-      });
+      chain.not = vi.fn().mockReturnValue(chain);
+      chain.limit = vi.fn().mockReturnValue(chain);
+
+      if (table === "bank_accounts") {
+        chain.single = vi.fn().mockResolvedValue({
+          data: { fintoc_account_id: "acc_test_123" },
+          error: null,
+        });
+      } else {
+        chain.single = vi.fn().mockResolvedValue({
+          data: { user_id: TEST_USER_ID, company_id: COMPANY_ID, role: "admin", is_active: true, status: "active" },
+          error: null,
+        });
+      }
       return chain;
     }),
   }),

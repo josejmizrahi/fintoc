@@ -37,18 +37,18 @@ export type ExtractionStatus =
 export type CredentialStatus = 'pending' | 'valid' | 'invalid' | 'deactivated' | 'error';
 
 export type Extractor =
-  | 'invoices' | 'tax_returns' | 'tax_status' | 'tax_compliance_checks'
-  | 'tax_retentions' | 'electronic_accounting' | 'sat_certificates'
-  | 'expense_receipts' | 'accounting_data';
+  | 'invoice' | 'tax_return' | 'tax_status' | 'tax_compliance'
+  | 'tax_retention' | 'electronic_accounting' | 'sat_certificate'
+  | 'expense_receipt' | 'accounting_data';
 
-export type EfosCode = 200 | 201 | 202 | 203 | 204;
+export type EfosStatus = 'no_listed' | 'presumed' | 'definitive' | 'acquitted' | 'favorable_sentence';
 
-export const EFOS_LABELS: Record<EfosCode, string> = {
-  200: 'No en lista 69-B',
-  201: 'Presunto (bajo investigación)',
-  202: 'Desvirtuado',
-  203: 'Definitivo (empresa fantasma)',
-  204: 'Sentencia favorable',
+export const EFOS_LABELS: Record<EfosStatus, string> = {
+  'no_listed': 'No en lista 69-B',
+  'presumed': 'Presunto (bajo investigación)',
+  'acquitted': 'Desvirtuado',
+  'definitive': 'Definitivo (empresa fantasma)',
+  'favorable_sentence': 'Sentencia favorable',
 };
 
 export type PaginationStyle = 'offset' | 'cursor';
@@ -99,25 +99,29 @@ export interface CredentialResult {
 export interface SyntageInvoice {
   id: string;
   uuid: string;
-  type: 'ingreso' | 'egreso' | 'traslado' | 'nomina' | 'pago';
-  status: 'active' | 'cancelled';
+  type: 'I' | 'E' | 'T' | 'N' | 'P';
+  status: 'Vigente' | 'Cancelado';
   total: number;
   subtotal?: number;
   discount?: number;
   currency?: string;
-  exchangeRate?: number;
-  issuedAt: string;
-  certifiedAt?: string;
-  cancelledAt?: string;
-  issuerRfc: string;
-  issuerName?: string;
-  receiverRfc: string;
-  receiverName?: string;
-  efosValidation?: EfosCode;
-  paymentMethod?: string;
-  paymentForm?: string;
-  cfdiUsage?: string;
-  voucherEffect?: string;
+  exchange_rate?: number;
+  issued_at: string;
+  certified_at?: string;
+  cancelled_at?: string;
+  issuer: {
+    rfc: string;
+    name?: string;
+  };
+  receiver: {
+    rfc: string;
+    name?: string;
+  };
+  efos_validation?: EfosStatus;
+  payment_method?: string;
+  payment_form?: string;
+  cfdi_usage?: string;
+  voucher_effect?: string;
   [key: string]: unknown;
 }
 
@@ -394,27 +398,27 @@ export async function deleteCredential(credentialId: string): Promise<void> {
 // Extractions
 // ---------------------------------------------------------------------------
 export interface CreateExtractionOptions {
-  dateFrom?: string;
-  dateTo?: string;
+  date_from?: string;
+  date_to?: string;
   type?: 'issued' | 'received';
-  fileFormat?: 'xml' | 'pdf' | 'both';
+  file_format?: 'xml' | 'pdf' | 'both';
 }
 
 export async function createExtraction(
-  taxpayerId: string,
+  entityId: string,
   extractor: Extractor,
   options?: CreateExtractionOptions
 ): Promise<ExtractionResult> {
   const body: Record<string, unknown> = {
     extractor,
-    taxpayer: `/taxpayers/${taxpayerId}`,
+    entity: `/entities/${entityId}`,
   };
   if (options) {
     const extractionOptions: Record<string, unknown> = {};
-    if (options.dateFrom) extractionOptions.dateFrom = options.dateFrom;
-    if (options.dateTo) extractionOptions.dateTo = options.dateTo;
+    if (options.date_from) extractionOptions.date_from = options.date_from;
+    if (options.date_to) extractionOptions.date_to = options.date_to;
     if (options.type) extractionOptions.type = options.type;
-    if (options.fileFormat) extractionOptions.fileFormat = options.fileFormat;
+    if (options.file_format) extractionOptions.file_format = options.file_format;
     if (Object.keys(extractionOptions).length > 0) body.options = extractionOptions;
   }
   const { data } = await syntageRequest<ExtractionResult>('POST', '/extractions', { body });
@@ -444,18 +448,18 @@ export async function cancelExtraction(extractionId: string): Promise<Extraction
  * Returns extraction IDs for each extractor.
  */
 export async function createFullExtraction(
-  taxpayerId: string,
+  entityId: string,
   options?: CreateExtractionOptions
 ): Promise<Record<Extractor, ExtractionResult>> {
   const extractors: Extractor[] = [
-    'invoices', 'tax_returns', 'tax_status',
-    'tax_compliance_checks', 'tax_retentions',
+    'invoice', 'tax_return', 'tax_status',
+    'tax_compliance', 'tax_retention',
   ];
 
   const results: Record<string, ExtractionResult> = {};
   for (const extractor of extractors) {
     try {
-      results[extractor] = await createExtraction(taxpayerId, extractor, options);
+      results[extractor] = await createExtraction(entityId, extractor, options);
     } catch (err) {
       // Log but continue — partial extraction is better than none
       results[extractor] = {
@@ -474,22 +478,22 @@ export async function createFullExtraction(
 // ---------------------------------------------------------------------------
 export interface InvoiceQueryParams extends SyntageListParams {
   type?: 'issued' | 'received';
-  dateFrom?: string;
-  dateTo?: string;
+  date_from?: string;
+  date_to?: string;
   uuid?: string[];
-  status?: 'active' | 'cancelled';
+  status?: 'Vigente' | 'Cancelado';
   issuerRfc?: string;
   receiverRfc?: string;
 }
 
 export async function getInvoices(
-  taxpayerId: string,
+  entityId: string,
   params?: InvoiceQueryParams
 ): Promise<SyntageInvoice[]> {
   const queryParams: Record<string, unknown> = {};
   if (params?.type) queryParams.type = params.type;
-  if (params?.dateFrom) queryParams.dateFrom = params.dateFrom;
-  if (params?.dateTo) queryParams.dateTo = params.dateTo;
+  if (params?.date_from) queryParams.date_from = params.date_from;
+  if (params?.date_to) queryParams.date_to = params.date_to;
   if (params?.uuid) queryParams.uuid = params.uuid;
   if (params?.status) queryParams.status = params.status;
   if (params?.issuerRfc) queryParams['issuer.rfc'] = params.issuerRfc;
@@ -499,7 +503,7 @@ export async function getInvoices(
   if (params?.properties) queryParams.properties = params.properties;
 
   return fetchAllCursor<SyntageInvoice>(
-    `/taxpayers/${taxpayerId}/invoices`,
+    `/entities/${entityId}/invoices`,
     queryParams as SyntageCursorParams & Record<string, unknown>
   );
 }
@@ -533,20 +537,20 @@ export async function getInvoiceCfdi(
  * Fetch all invoices with cursor pagination — ideal for large-scale data extraction.
  */
 export async function getAllInvoices(
-  taxpayerId: string,
+  entityId: string,
   params?: Omit<InvoiceQueryParams, 'page' | 'itemsPerPage'> & { batchSize?: number }
 ): Promise<SyntageInvoice[]> {
   const queryParams: Record<string, unknown> = {
     itemsPerPage: params?.batchSize || DEFAULT_PAGE_SIZE,
   };
   if (params?.type) queryParams.type = params.type;
-  if (params?.dateFrom) queryParams.dateFrom = params.dateFrom;
-  if (params?.dateTo) queryParams.dateTo = params.dateTo;
+  if (params?.date_from) queryParams.date_from = params.date_from;
+  if (params?.date_to) queryParams.date_to = params.date_to;
   if (params?.uuid) queryParams.uuid = params.uuid;
   if (params?.status) queryParams.status = params.status;
 
   return fetchAllCursor<SyntageInvoice>(
-    `/taxpayers/${taxpayerId}/invoices`,
+    `/entities/${entityId}/invoices`,
     queryParams as SyntageCursorParams & Record<string, unknown>
   );
 }
@@ -574,46 +578,46 @@ export async function getInvoicePayments(
 // ---------------------------------------------------------------------------
 // Tax Status
 // ---------------------------------------------------------------------------
-export async function getTaxStatus(taxpayerId: string) {
-  const { data } = await syntageRequest('GET', `/taxpayers/${taxpayerId}/tax-status`);
+export async function getTaxStatus(entityId: string) {
+  const { data } = await syntageRequest('GET', `/entities/${entityId}/tax-status`);
   return data;
 }
 
 // ---------------------------------------------------------------------------
 // Tax Retentions
 // ---------------------------------------------------------------------------
-export async function getTaxRetentions(taxpayerId: string, params?: SyntageListParams) {
-  return fetchAllPages(`/taxpayers/${taxpayerId}/tax-retentions`, params);
+export async function getTaxRetentions(entityId: string, params?: SyntageListParams) {
+  return fetchAllPages(`/entities/${entityId}/tax-retentions`, params);
 }
 
 // ---------------------------------------------------------------------------
 // Tax Compliance
 // ---------------------------------------------------------------------------
-export async function getTaxCompliance(taxpayerId: string) {
-  const { data } = await syntageRequest('GET', `/taxpayers/${taxpayerId}/tax-compliance-checks`);
+export async function getTaxCompliance(entityId: string) {
+  const { data } = await syntageRequest('GET', `/entities/${entityId}/tax-compliance-checks`);
   return data;
 }
 
 // ---------------------------------------------------------------------------
 // Tax Returns
 // ---------------------------------------------------------------------------
-export async function getTaxReturns(taxpayerId: string, params?: SyntageListParams) {
-  return fetchAllPages(`/taxpayers/${taxpayerId}/tax-returns`, params);
+export async function getTaxReturns(entityId: string, params?: SyntageListParams) {
+  return fetchAllPages(`/entities/${entityId}/tax-returns`, params);
 }
 
 // ---------------------------------------------------------------------------
 // SAT Certificates
 // ---------------------------------------------------------------------------
-export async function getSatCertificates(taxpayerId: string) {
-  const { data } = await syntageRequest('GET', `/taxpayers/${taxpayerId}/sat-certificates`);
+export async function getSatCertificates(entityId: string) {
+  const { data } = await syntageRequest('GET', `/entities/${entityId}/sat-certificates`);
   return data;
 }
 
 // ---------------------------------------------------------------------------
 // Electronic Accounting
 // ---------------------------------------------------------------------------
-export async function getElectronicAccounting(taxpayerId: string, params?: SyntageListParams) {
-  return fetchAllPages(`/taxpayers/${taxpayerId}/electronic-accounting-records`, params);
+export async function getElectronicAccounting(entityId: string, params?: SyntageListParams) {
+  return fetchAllPages(`/entities/${entityId}/electronic-accounting-records`, params);
 }
 
 // ---------------------------------------------------------------------------
@@ -638,13 +642,13 @@ export async function deleteWebhook(webhookId: string) {
 // Schedulers
 // ---------------------------------------------------------------------------
 export async function createScheduler(
-  taxpayerId: string,
+  entityId: string,
   extractor: Extractor,
   frequency: string
 ) {
   const { data } = await syntageRequest('POST', '/schedulers', {
     body: {
-      taxpayer: `/taxpayers/${taxpayerId}`,
+      entity: `/entities/${entityId}`,
       extractor,
       frequency,
     },
@@ -678,28 +682,27 @@ export function verifySyntageWebhook(webhookSecret: string, headerSecret: string
 // EFOS Helpers — single canonical implementation (SAT 69-B / ValidacionEFOS)
 // ---------------------------------------------------------------------------
 export interface EfosResult {
-  code: string | null;
+  status: EfosStatus | null;
   label: string;
-  isBlocked: boolean;  // 203 Definitivo
-  isRisky: boolean;    // 201 Presunto
-  safe: boolean;       // 200, 202, 204 or not listed
+  isBlocked: boolean;  // 'definitive'
+  isRisky: boolean;    // 'presumed'
+  safe: boolean;       // 'no_listed', 'acquitted', 'favorable_sentence' or not listed
 }
 
-export function parseEfosCode(code: number | string | undefined): EfosResult {
-  if (code === undefined || code === null) {
-    return { code: null, label: 'Sin información EFOS', isBlocked: false, isRisky: false, safe: true };
+export function parseEfosStatus(status: string | undefined | null): EfosResult {
+  if (status === undefined || status === null) {
+    return { status: null, label: 'Sin información EFOS', isBlocked: false, isRisky: false, safe: true };
   }
-  const numCode = typeof code === 'string' ? parseInt(code, 10) : code;
-  if (Number.isNaN(numCode) || !(numCode in EFOS_LABELS)) {
-    return { code: null, label: `Código EFOS desconocido: ${code}`, isBlocked: false, isRisky: false, safe: true };
+  if (!(status in EFOS_LABELS)) {
+    return { status: null, label: `Estado EFOS desconocido: ${status}`, isBlocked: false, isRisky: false, safe: true };
   }
-  const efosCode = numCode as EfosCode;
-  const isBlocked = efosCode === 203;
-  const isRisky = efosCode === 201;
-  const safe = !isBlocked && !isRisky; // 200, 202, 204 are safe
+  const efosStatus = status as EfosStatus;
+  const isBlocked = efosStatus === 'definitive';
+  const isRisky = efosStatus === 'presumed';
+  const safe = !isBlocked && !isRisky;
   return {
-    code: String(efosCode),
-    label: EFOS_LABELS[efosCode],
+    status: efosStatus,
+    label: EFOS_LABELS[efosStatus],
     isBlocked,
     isRisky,
     safe,
@@ -711,9 +714,9 @@ export function parseEfosCode(code: number | string | undefined): EfosResult {
  */
 export function mapInvoiceType(syntageType: string): 'payable' | 'receivable' {
   switch (syntageType) {
-    case 'ingreso': return 'receivable';
-    case 'egreso': return 'payable';
-    case 'pago': return 'payable';
+    case 'I': return 'receivable';  // Ingreso
+    case 'E': return 'payable';     // Egreso
+    case 'P': return 'payable';     // Pago
     default: return 'payable';
   }
 }
@@ -723,8 +726,8 @@ export function mapInvoiceType(syntageType: string): 'payable' | 'receivable' {
  */
 export function mapSatStatus(syntageStatus: string): string {
   switch (syntageStatus) {
-    case 'active': return 'vigente';
-    case 'cancelled': return 'cancelado';
+    case 'Vigente': return 'vigente';
+    case 'Cancelado': return 'cancelado';
     default: return syntageStatus;
   }
 }
@@ -782,13 +785,13 @@ export function createSyntageClient(config: SyntageClientConfig | Record<string,
   return {
     async testConnection() {
       try {
-        const [taxpayers, credentials] = await Promise.all([
-          req<{ 'hydra:totalItems': number }>('GET', '/taxpayers'),
+        const [entities, credentials] = await Promise.all([
+          req<{ 'hydra:totalItems': number }>('GET', '/entities'),
           req<{ 'hydra:totalItems': number }>('GET', '/credentials'),
         ]);
         return {
           ok: true,
-          taxpayers: taxpayers['hydra:totalItems'] ?? 0,
+          taxpayers: entities['hydra:totalItems'] ?? 0,
           credentials: credentials['hydra:totalItems'] ?? 0,
         };
       } catch (e) {
@@ -804,11 +807,11 @@ export function createSyntageClient(config: SyntageClientConfig | Record<string,
     },
     listTaxpayers(params) {
       const qs = params && Object.keys(params).length ? '?' + new URLSearchParams(params).toString() : '';
-      return req('GET', `/taxpayers${qs}`);
+      return req('GET', `/entities${qs}`);
     },
     listInvoices(taxpayerId, params) {
       const qs = params && Object.keys(params).length ? '?' + new URLSearchParams(params).toString() : '';
-      return req('GET', `/taxpayers/${taxpayerId}/invoices${qs}`);
+      return req('GET', `/entities/${taxpayerId}/invoices${qs}`);
     },
     getInvoice(id) {
       return req('GET', `/invoices/${id}`);
@@ -828,7 +831,7 @@ export function createSyntageClient(config: SyntageClientConfig | Record<string,
       return req('GET', `/invoices/${invoiceId}/payments`);
     },
     listTaxReturns(taxpayerId) {
-      return req('GET', `/taxpayers/${taxpayerId}/tax-returns`);
+      return req('GET', `/entities/${taxpayerId}/tax-returns`);
     },
     getTaxReturn(id) {
       return req('GET', `/tax-returns/${id}`);
@@ -837,13 +840,13 @@ export function createSyntageClient(config: SyntageClientConfig | Record<string,
       return req('GET', `/tax-returns/${id}/data`);
     },
     listTaxComplianceChecks(taxpayerId) {
-      return req('GET', `/taxpayers/${taxpayerId}/tax-compliance-checks`);
+      return req('GET', `/entities/${taxpayerId}/tax-compliance-checks`);
     },
     listTaxStatus(taxpayerId) {
-      return req('GET', `/taxpayers/${taxpayerId}/tax-status`);
+      return req('GET', `/entities/${taxpayerId}/tax-status`);
     },
     listTaxRetentions(taxpayerId) {
-      return req('GET', `/taxpayers/${taxpayerId}/tax-retentions`);
+      return req('GET', `/entities/${taxpayerId}/tax-retentions`);
     },
     listCertificates(entityId) {
       return req('GET', `/entities/${entityId}/sat-certificates`);
@@ -881,8 +884,8 @@ export function createSyntageClient(config: SyntageClientConfig | Record<string,
     revalidateCredential(id) {
       return req('POST', `/credentials/${id}/revalidate`);
     },
-    createExtraction(taxpayerId, extractor = 'invoice', options?) {
-      const body: Record<string, unknown> = { taxpayer: `/taxpayers/${taxpayerId}`, extractor };
+    createExtraction(entityId, extractor = 'invoice', options?) {
+      const body: Record<string, unknown> = { entity: `/entities/${entityId}`, extractor };
       if (options && typeof options === 'object' && !Array.isArray(options)) {
         body.options = options;
       }

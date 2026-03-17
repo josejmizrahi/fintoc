@@ -48,8 +48,8 @@ export const POST = createHandler(async (req) => {
     let satInvoices: syntage.SyntageInvoice[] = [];
     try {
       satInvoices = await syntage.getInvoices(syntageInt.syntage_taxpayer_id, {
-        dateFrom: period_start,
-        dateTo: period_end,
+        date_from: period_start,
+        date_to: period_end,
       });
     } catch {
       throw new ApiError('SYNTAGE_ERROR', 'Error al obtener facturas de SAT', 502);

@@ -39,11 +39,25 @@ export async function GET(req: Request): Promise<Response> {
           continue;
         }
 
+        // Get the company's Fintoc account_id
+        const { data: bankAccount } = await admin.from('bank_accounts')
+          .select('fintoc_account_id')
+          .eq('company_id', payment.company_id)
+          .not('fintoc_account_id', 'is', null)
+          .limit(1)
+          .single();
+
+        if (!bankAccount?.fintoc_account_id) {
+          failed++;
+          continue;
+        }
+
         const transfer = (await fintoc.createTransfer({
           amount: Math.round(payment.amount * 100),
           currency: 'MXN',
-          destination_account: { number: payment.beneficiary_clabe },
-          concept: payment.concept || `Pago ${payment.id}`,
+          counterparty: { number: payment.beneficiary_clabe },
+          comment: payment.concept || `Pago ${payment.id}`,
+          account_id: bankAccount.fintoc_account_id,
         }, secretKey)) as { id: string };
 
         await admin.from('payments').update({

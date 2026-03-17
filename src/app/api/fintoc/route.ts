@@ -3,6 +3,7 @@ import { withAuth } from '@/lib/middleware/auth';
 import { ApiError } from '@/lib/utils/errors';
 import { writeAuditLog } from '@/lib/middleware/audit';
 import { hasDB, query, update } from '@/lib/db';
+import { getAdminClient } from '@/lib/supabase/admin';
 import {
   createTransfer,
   verifyCLABE,
@@ -55,13 +56,29 @@ export const POST = createHandler(async (req) => {
         }
 
         const amountCents = Math.round(amount * 100);
-        const concept = reference_id || (payment_id ? `PAY-${payment_id}` : `Pago`);
+        const comment = reference_id || (payment_id ? `PAY-${payment_id}` : `Pago`);
+
+        // Get the company's Fintoc account_id for outbound transfers
+        const admin = getAdminClient();
+        const { data: bankAccount } = await admin
+          .from('bank_accounts')
+          .select('fintoc_account_id')
+          .eq('company_id', ctx.company_id)
+          .not('fintoc_account_id', 'is', null)
+          .limit(1)
+          .single();
+
+        if (!bankAccount?.fintoc_account_id) {
+          throw new ApiError('INTEGRATION_NOT_CONFIGURED', 'No hay cuenta bancaria vinculada a Fintoc', 422);
+        }
+
         const transfer = await createTransfer(
           {
             amount: amountCents,
             currency: 'MXN',
-            destination_account: { number: clabe },
-            concept,
+            counterparty: { number: clabe },
+            comment,
+            account_id: bankAccount.fintoc_account_id,
             reference_id: reference_id || (payment_id ? `PAY-${payment_id}` : undefined),
             metadata: {
               company_id: String(ctx.company_id),

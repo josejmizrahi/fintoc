@@ -24,10 +24,10 @@ export const GET = createHandler(async (req) => {
     const params: syntage.InvoiceQueryParams = {};
     const type = url.searchParams.get('type');
     if (type) params.type = type as 'issued' | 'received';
-    const dateFrom = url.searchParams.get('dateFrom');
-    if (dateFrom) params.dateFrom = dateFrom;
-    const dateTo = url.searchParams.get('dateTo');
-    if (dateTo) params.dateTo = dateTo;
+    const dateFrom = url.searchParams.get('dateFrom') || url.searchParams.get('date_from');
+    if (dateFrom) params.date_from = dateFrom;
+    const dateTo = url.searchParams.get('dateTo') || url.searchParams.get('date_to');
+    if (dateTo) params.date_to = dateTo;
     const uuids = url.searchParams.getAll('uuid');
     if (uuids.length > 0) params.uuid = uuids;
     const page = url.searchParams.get('page');
@@ -35,7 +35,7 @@ export const GET = createHandler(async (req) => {
     const limit = url.searchParams.get('limit');
     if (limit && !isNaN(parseInt(limit, 10))) params.itemsPerPage = parseInt(limit, 10);
     const status = url.searchParams.get('status');
-    if (status) params.status = status as 'active' | 'cancelled';
+    if (status) params.status = status as 'Vigente' | 'Cancelado';
 
     const invoices = await syntage.getInvoices(integration.syntage_taxpayer_id, params);
 

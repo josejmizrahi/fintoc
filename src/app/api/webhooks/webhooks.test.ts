@@ -66,9 +66,9 @@ vi.mock('@/lib/integrations/fintoc', () => ({
 
 vi.mock('@/lib/integrations/syntage', () => ({
   verifySyntageWebhook: vi.fn(),
-  parseEfosCode: vi.fn(),
-  mapSatStatus: vi.fn((s: string) => (s === 'active' ? 'vigente' : 'cancelado')),
-  mapInvoiceType: vi.fn((t: string) => (t === 'ingreso' ? 'receivable' : 'payable')),
+  parseEfosStatus: vi.fn(),
+  mapSatStatus: vi.fn((s: string) => (s === 'Vigente' ? 'vigente' : 'cancelado')),
+  mapInvoiceType: vi.fn((t: string) => (t === 'I' ? 'receivable' : 'payable')),
 }));
 
 // ---------------------------------------------------------------------------
@@ -79,7 +79,7 @@ import { POST as fintocPOST } from './fintoc/route';
 import { POST as syntagePOST } from './syntage/route';
 import { POST as odooPOST } from './odoo/route';
 import { verifyFintocWebhook } from '@/lib/integrations/fintoc';
-import { verifySyntageWebhook, parseEfosCode } from '@/lib/integrations/syntage';
+import { verifySyntageWebhook, parseEfosStatus } from '@/lib/integrations/syntage';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -374,15 +374,15 @@ describe('Fintoc webhook (POST /api/webhooks/fintoc)', () => {
 
 describe('Syntage webhook (POST /api/webhooks/syntage)', () => {
   const mockVerifyS = verifySyntageWebhook as ReturnType<typeof vi.fn>;
-  const mockParseEfos = parseEfosCode as ReturnType<typeof vi.fn>;
+  const mockParseEfos = parseEfosStatus as ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     clearDbResults();
     vi.clearAllMocks();
     // Default: secret valid
     mockVerifyS.mockReturnValue(true);
-    // Default parseEfosCode: not EFOS
-    mockParseEfos.mockReturnValue({ code: null, isBlocked: false, isRisky: false, label: '' });
+    // Default parseEfosStatus: not EFOS
+    mockParseEfos.mockReturnValue({ status: null, isBlocked: false, isRisky: false, label: '' });
     process.env.SYNTAGE_WEBHOOK_SECRET = 'syntage-secret';
   });
 
@@ -472,15 +472,13 @@ describe('Syntage webhook (POST /api/webhooks/syntage)', () => {
           id: 'inv-sat-1',
           uuid: 'aaaa-bbbb-cccc-dddd',
           taxpayer_id: 'RFC123456789',
-          status: 'active',
-          type: 'ingreso',
+          status: 'Vigente',
+          type: 'I',
           total: 1160,
           tax: 160,
-          issuedAt: '2026-01-15T10:00:00Z',
-          issuerRfc: 'EMPR123456ABC',
-          issuerName: 'Empresa Emisora SA',
-          receiverRfc: 'RECR654321XYZ',
-          receiverName: 'Empresa Receptora SA',
+          issued_at: '2026-01-15T10:00:00Z',
+          issuer: { rfc: 'EMPR123456ABC', name: 'Empresa Emisora SA' },
+          receiver: { rfc: 'RECR654321XYZ', name: 'Empresa Receptora SA' },
           currency: 'MXN',
         },
       },
@@ -513,8 +511,8 @@ describe('Syntage webhook (POST /api/webhooks/syntage)', () => {
           id: 'inv-sat-1',
           uuid: 'aaaa-bbbb-cccc-dddd',
           taxpayer_id: 'RFC123456789',
-          status: 'active',
-          type: 'ingreso',
+          status: 'Vigente',
+          type: 'I',
           total: 1160,
           tax: 160,
         },
@@ -528,10 +526,10 @@ describe('Syntage webhook (POST /api/webhooks/syntage)', () => {
     expect(json.received).toBe(true);
   });
 
-  it('notifies admins when EFOS definitivo (code 203) is detected', async () => {
-    // parseEfosCode returns definitivo (isBlocked = true)
+  it('notifies admins when EFOS definitivo is detected', async () => {
+    // parseEfosStatus returns definitivo (isBlocked = true)
     mockParseEfos.mockReturnValue({
-      code: 203,
+      status: 'definitive',
       isBlocked: true,
       isRisky: false,
       label: 'EFOS definitivo',
@@ -560,15 +558,13 @@ describe('Syntage webhook (POST /api/webhooks/syntage)', () => {
           id: 'inv-efos-1',
           uuid: 'efos-uuid-203',
           taxpayer_id: 'RFC_TAXPAYER',
-          status: 'active',
-          type: 'egreso',
+          status: 'Vigente',
+          type: 'E',
           total: 5800,
           tax: 800,
-          issuerRfc: 'EFOS999999AAA',
-          issuerName: 'Empresa EFOS SA',
-          receiverRfc: 'RECE123456ABC',
-          receiverName: 'Receptor SA',
-          efosValidation: 203,
+          issuer: { rfc: 'EFOS999999AAA', name: 'Empresa EFOS SA' },
+          receiver: { rfc: 'RECE123456ABC', name: 'Receptor SA' },
+          efos_validation: 'definitive',
         },
       },
       { 'x-webhook-secret': 'syntage-secret' },
@@ -580,9 +576,9 @@ describe('Syntage webhook (POST /api/webhooks/syntage)', () => {
     expect(json.received).toBe(true);
   });
 
-  it('notifies admins when EFOS presunto (code 201) is detected', async () => {
+  it('notifies admins when EFOS presunto is detected', async () => {
     mockParseEfos.mockReturnValue({
-      code: 201,
+      status: 'presumed',
       isBlocked: false,
       isRisky: true,
       label: 'EFOS presunto',
@@ -608,15 +604,13 @@ describe('Syntage webhook (POST /api/webhooks/syntage)', () => {
           id: 'inv-efos-2',
           uuid: 'efos-uuid-201',
           taxpayer_id: 'RFC_TAXPAYER',
-          status: 'active',
-          type: 'egreso',
+          status: 'Vigente',
+          type: 'E',
           total: 2320,
           tax: 320,
-          issuerRfc: 'EFOS888888BBB',
-          issuerName: 'Empresa Presunta SA',
-          receiverRfc: 'RECE123456ABC',
-          receiverName: 'Receptor SA',
-          efosValidation: 201,
+          issuer: { rfc: 'EFOS888888BBB', name: 'Empresa Presunta SA' },
+          receiver: { rfc: 'RECE123456ABC', name: 'Receptor SA' },
+          efos_validation: 'presumed',
         },
       },
       { 'x-webhook-secret': 'syntage-secret' },
@@ -704,8 +698,8 @@ describe('Syntage webhook (POST /api/webhooks/syntage)', () => {
           id: 'inv-dedup-1',
           uuid: 'dedup-uuid',
           taxpayer_id: 'RFC_X',
-          status: 'active',
-          type: 'ingreso',
+          status: 'Vigente',
+          type: 'I',
           total: 100,
         },
       },
