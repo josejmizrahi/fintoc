@@ -354,7 +354,7 @@ export async function syncOdoo(companyId: string, config: OdooConfig): Promise<S
   const errors: SyncError[] = [];
   let recordsSynced = 0;
   let recordsFailed = 0;
-  const details: Record<string, number> = { invoices: 0 };
+  const details: Record<string, number> = {};
 
   const syncId = await acquireSyncLock(admin, companyId, 'odoo');
 
@@ -370,49 +370,175 @@ export async function syncOdoo(companyId: string, config: OdooConfig): Promise<S
 
     const lastSyncAt = lastSync?.completed_at || undefined;
 
-    try {
-      const invoices = await withRetry(() => odoo.fetchOdooInvoices(config, lastSyncAt), RETRY_OPTS);
-      const moveTypeToAppType: Record<string, 'payable' | 'receivable'> = {
-        in_invoice: 'payable',
-        in_refund: 'payable',
-        out_invoice: 'receivable',
-        out_refund: 'receivable',
-      };
-      const invoiceRows = invoices
-        .filter((inv: OdooInvoice) => inv.move_type !== 'entry')
-        .map((inv: OdooInvoice) => {
-        const appType = moveTypeToAppType[inv.move_type] ?? 'payable';
-        return {
-          company_id: companyId,
-          type: appType,
-          move_type: inv.move_type,
-          invoice_number: inv.name,
-          uuid: odoo.normalizeOdooValue(inv.l10n_mx_edi_cfdi_uuid),
-          invoice_date: odoo.normalizeOdooValue(inv.invoice_date),
-          due_date: odoo.normalizeOdooValue(inv.invoice_date_due),
-          amount_total: inv.amount_total,
-          amount_residual: inv.amount_residual,
-          amount_paid: inv.amount_total - inv.amount_residual,
-          amount_tax: inv.amount_tax,
-          payment_state: inv.payment_state,
-          payment_method: odoo.normalizeOdooValue(inv.l10n_mx_edi_payment_policy),
-          partner_name: odoo.extractM2oName(inv.partner_id),
-          odoo_id: inv.id,
-          odoo_move_id: String(inv.id),
-          odoo_cfdi_uuid: odoo.normalizeOdooValue(inv.l10n_mx_edi_cfdi_uuid),
-          odoo_payment_method: odoo.normalizeOdooValue(inv.l10n_mx_edi_payment_policy),
-          odoo_usage: odoo.normalizeOdooValue(inv.l10n_mx_edi_usage),
-          source: 'odoo',
-          sat_status: 'no_validado',
-        };
-      });
+    // Fetch all entities in parallel
+    const [invoices, vendors, customers, payments, expenses, purchaseOrders] = await Promise.all([
+      withRetry(() => odoo.fetchOdooInvoices(config, lastSyncAt), RETRY_OPTS).catch((err) => {
+        errors.push({ entity: 'invoices', message: err instanceof Error ? err.message : 'Error fetching invoices', retryable: isRetryableError(err) });
+        return [] as OdooInvoice[];
+      }),
+      withRetry(() => odoo.fetchOdooVendors(config, lastSyncAt), RETRY_OPTS).catch((err) => {
+        errors.push({ entity: 'vendors', message: err instanceof Error ? err.message : 'Error fetching vendors', retryable: isRetryableError(err) });
+        return [] as OdooPartner[];
+      }),
+      withRetry(() => odoo.fetchOdooCustomers(config, lastSyncAt), RETRY_OPTS).catch((err) => {
+        errors.push({ entity: 'customers', message: err instanceof Error ? err.message : 'Error fetching customers', retryable: isRetryableError(err) });
+        return [] as OdooPartner[];
+      }),
+      withRetry(() => odoo.fetchOdooPayments(config, lastSyncAt), RETRY_OPTS).catch((err) => {
+        errors.push({ entity: 'payments', message: err instanceof Error ? err.message : 'Error fetching payments', retryable: isRetryableError(err) });
+        return [];
+      }),
+      withRetry(() => odoo.fetchOdooExpenses(config, lastSyncAt), RETRY_OPTS).catch((err) => {
+        errors.push({ entity: 'expenses', message: err instanceof Error ? err.message : 'Error fetching expenses', retryable: isRetryableError(err) });
+        return [];
+      }),
+      withRetry(() => odoo.fetchOdooPurchaseOrders(config, lastSyncAt), RETRY_OPTS).catch((err) => {
+        errors.push({ entity: 'purchase_orders', message: err instanceof Error ? err.message : 'Error fetching purchase orders', retryable: isRetryableError(err) });
+        return [];
+      }),
+    ]);
 
-      if (invoiceRows.length > 0) {
-        const r = await batchUpsert(admin, 'invoices', invoiceRows, 'company_id,odoo_id', errors, 'invoices');
-        recordsSynced += r.synced; recordsFailed += r.failed; details.invoices = r.synced;
-      }
-    } catch (err) {
-      errors.push({ entity: 'invoices', message: err instanceof Error ? err.message : 'Error fetching invoices', retryable: isRetryableError(err) });
+    // Transform and upsert invoices
+    const moveTypeToAppType: Record<string, 'payable' | 'receivable'> = {
+      in_invoice: 'payable', in_refund: 'payable',
+      out_invoice: 'receivable', out_refund: 'receivable',
+    };
+    const invoiceRows = invoices
+      .filter((inv: OdooInvoice) => inv.move_type !== 'entry')
+      .map((inv: OdooInvoice) => ({
+        company_id: companyId,
+        type: moveTypeToAppType[inv.move_type] ?? 'payable',
+        move_type: inv.move_type,
+        invoice_number: inv.name,
+        uuid: odoo.normalizeOdooValue(inv.l10n_mx_edi_cfdi_uuid),
+        invoice_date: odoo.normalizeOdooValue(inv.invoice_date),
+        due_date: odoo.normalizeOdooValue(inv.invoice_date_due),
+        amount_total: inv.amount_total,
+        amount_residual: inv.amount_residual,
+        amount_paid: inv.amount_total - inv.amount_residual,
+        amount_tax: inv.amount_tax,
+        payment_state: inv.payment_state,
+        payment_method: odoo.normalizeOdooValue(inv.l10n_mx_edi_payment_policy),
+        partner_name: odoo.extractM2oName(inv.partner_id),
+        odoo_id: inv.id,
+        odoo_move_id: String(inv.id),
+        odoo_cfdi_uuid: odoo.normalizeOdooValue(inv.l10n_mx_edi_cfdi_uuid),
+        odoo_payment_method: odoo.normalizeOdooValue(inv.l10n_mx_edi_payment_policy),
+        odoo_usage: odoo.normalizeOdooValue(inv.l10n_mx_edi_usage),
+        currency: odoo.extractM2oName(inv.currency_id) ?? 'MXN',
+        source: 'odoo',
+        sat_status: 'no_validado',
+      }));
+
+    if (invoiceRows.length > 0) {
+      const r = await batchUpsert(admin, 'invoices', invoiceRows, 'company_id,odoo_id', errors, 'invoices');
+      recordsSynced += r.synced; recordsFailed += r.failed; details.invoices = r.synced;
+    }
+
+    // Transform and upsert vendors
+    const vendorByRfc = new Map<string, Record<string, unknown>>();
+    for (const v of vendors) {
+      const rfc = (odoo.normalizeOdooValue(v.vat) || '').toUpperCase();
+      if (rfc.length === 0) continue;
+      vendorByRfc.set(`${companyId}:${rfc}`, {
+        company_id: Number(companyId), name: v.name, rfc,
+        email: odoo.normalizeOdooValue(v.email), phone: odoo.normalizeOdooValue(v.phone),
+        supplier_rank: v.supplier_rank ?? 1,
+        odoo_id: String(v.id), synced_at: new Date().toISOString(), source: 'odoo',
+      });
+    }
+    const vendorRows = [...vendorByRfc.values()];
+    if (vendorRows.length > 0) {
+      const r = await batchUpsert(admin, 'vendors', vendorRows, 'company_id,rfc', errors, 'vendors');
+      recordsSynced += r.synced; recordsFailed += r.failed; details.vendors = r.synced;
+    }
+
+    // Transform and upsert customers
+    const customerByRfc = new Map<string, Record<string, unknown>>();
+    for (const c of customers) {
+      const rfc = (odoo.normalizeOdooValue(c.vat) || '').toUpperCase();
+      if (rfc.length === 0) continue;
+      customerByRfc.set(`${companyId}:${rfc}`, {
+        company_id: Number(companyId), name: c.name, rfc,
+        email: odoo.normalizeOdooValue(c.email), phone: odoo.normalizeOdooValue(c.phone),
+        customer_rank: c.customer_rank ?? 1,
+        odoo_id: String(c.id), source: 'odoo',
+      });
+    }
+    const customerRows = [...customerByRfc.values()];
+    if (customerRows.length > 0) {
+      const r = await batchUpsert(admin, 'customers', customerRows, 'company_id,rfc', errors, 'customers');
+      recordsSynced += r.synced; recordsFailed += r.failed; details.customers = r.synced;
+    }
+
+    // Transform and upsert payments
+    type OdooPaymentRec = { id: number; payment_type: string; partner_id: [number, string] | false; amount: number; currency_id: [number, string]; date: string; ref: string | false; state: string; reconciled_invoice_ids: number[]; move_id: [number, string] | false; write_date: string };
+    const paymentStateMap: Record<string, string> = { posted: 'confirmed', sent: 'processing', reconciled: 'confirmed' };
+    const paymentRows = (payments as OdooPaymentRec[]).map((p) => ({
+      company_id: Number(companyId),
+      direction: p.payment_type === 'inbound' ? 'inbound' : 'outbound',
+      status: paymentStateMap[p.state] ?? 'draft',
+      amount: p.amount,
+      currency: odoo.extractM2oName(p.currency_id) ?? 'MXN',
+      partner_name: odoo.extractM2oName(p.partner_id),
+      reference_id: odoo.normalizeOdooValue(p.ref),
+      odoo_id: p.id,
+      odoo_payment_id: String(p.id),
+      odoo_state: p.state,
+      odoo_synced_at: new Date().toISOString(),
+      reconciled_invoice_ids: p.reconciled_invoice_ids?.length > 0 ? JSON.stringify(p.reconciled_invoice_ids) : '[]',
+      source: 'odoo',
+    }));
+    if (paymentRows.length > 0) {
+      const r = await batchUpsert(admin, 'payments', paymentRows, 'company_id,odoo_id', errors, 'payments');
+      recordsSynced += r.synced; recordsFailed += r.failed; details.payments = r.synced;
+    }
+
+    // Transform and upsert expenses
+    type OdooExpenseRec = { id: number; name: string; employee_id: [number, string]; product_id: [number, string] | false; total_amount: number; currency_id: [number, string]; description: string | false; reference: string | false; state: string; payment_mode: string; sheet_id: [number, string] | false };
+    const expenseStateMap: Record<string, string> = { reported: 'submitted', approved: 'approved', done: 'approved', refused: 'rejected' };
+    const expenseRows = (expenses as OdooExpenseRec[]).map((e) => ({
+      company_id: Number(companyId),
+      employee_name: odoo.extractM2oName(e.employee_id),
+      category: odoo.extractM2oName(e.product_id),
+      description: odoo.normalizeOdooValue(e.description) || e.name,
+      amount: e.total_amount,
+      currency: odoo.extractM2oName(e.currency_id) ?? 'MXN',
+      status: expenseStateMap[e.state] ?? 'submitted',
+      payment_mode: e.payment_mode,
+      sheet_id: odoo.extractM2oId(e.sheet_id),
+      expense_reference: odoo.normalizeOdooValue(e.reference),
+      product_category: odoo.extractM2oName(e.product_id),
+      odoo_id: e.id,
+      source: 'odoo',
+    }));
+    if (expenseRows.length > 0) {
+      const r = await batchUpsert(admin, 'expenses', expenseRows, 'company_id,odoo_id', errors, 'expenses');
+      recordsSynced += r.synced; recordsFailed += r.failed; details.expenses = r.synced;
+    }
+
+    // Transform and upsert purchase orders
+    type OdooPORec = { id: number; name: string; partner_id: [number, string] | false; state: string; amount_total: number; amount_tax: number; currency_id: [number, string]; date_order: string | false; date_planned: string | false; invoice_status: string; invoice_count: number; notes: string | false };
+    const poRows = (purchaseOrders as OdooPORec[]).map((po) => ({
+      company_id: Number(companyId),
+      odoo_id: po.id,
+      name: po.name,
+      partner_id: odoo.extractM2oId(po.partner_id),
+      partner_name: odoo.extractM2oName(po.partner_id),
+      state: po.state,
+      amount_total: po.amount_total,
+      amount_tax: po.amount_tax,
+      currency: odoo.extractM2oName(po.currency_id) ?? 'MXN',
+      date_order: odoo.normalizeOdooValue(po.date_order),
+      date_planned: odoo.normalizeOdooValue(po.date_planned),
+      invoice_status: po.invoice_status,
+      invoice_count: po.invoice_count,
+      notes: odoo.normalizeOdooValue(po.notes),
+      source: 'odoo',
+    }));
+    if (poRows.length > 0) {
+      const r = await batchUpsert(admin, 'odoo_purchase_orders', poRows, 'company_id,odoo_id', errors, 'purchase_orders');
+      recordsSynced += r.synced; recordsFailed += r.failed; details.purchase_orders = r.synced;
     }
 
     const status = computeStatus(errors, recordsSynced);
