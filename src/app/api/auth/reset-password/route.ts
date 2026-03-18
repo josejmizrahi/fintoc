@@ -1,7 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { createHandler } from '@/lib/middleware/route-handler';
 import { ApiError } from '@/lib/utils/errors';
-import { checkRateLimit } from '@/lib/middleware/rate-limit';
 import { z } from 'zod';
 
 const resetSchema = z.object({
@@ -9,8 +8,6 @@ const resetSchema = z.object({
 });
 
 export const POST = createHandler(async (req) => {
-  checkRateLimit(req, 'auth');
-
   let body: unknown;
   try {
     body = await req.json();
@@ -32,17 +29,23 @@ export const POST = createHandler(async (req) => {
     throw new ApiError('INTERNAL_ERROR', 'Supabase no configurado', 500);
   }
 
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://fintoc.vercel.app';
+
   const admin = createClient(supabaseUrl, serviceRoleKey, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
 
   // Always return success to prevent email enumeration
-  // Supabase sends email with link → /auth/callback?code=...&type=recovery
-  await admin.auth.resetPasswordForEmail(email, {
-    redirectTo: `${process.env.NEXT_PUBLIC_APP_URL || ''}/auth/callback?type=recovery`,
-  });
+  try {
+    await admin.auth.resetPasswordForEmail(email, {
+      redirectTo: `${appUrl}/auth/callback`,
+    });
+  } catch (err) {
+    console.error('[reset-password] Supabase error:', err);
+    // Still return success to prevent email enumeration
+  }
 
   return Response.json({
     message: 'Si el email existe, recibiras un link de recuperacion',
   });
-}, { rateLimit: 'auth', public: true });
+}, { public: true });
