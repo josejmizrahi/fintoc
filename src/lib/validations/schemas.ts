@@ -113,9 +113,9 @@ export const satCancelSchema = z.object({
 
 export const satExtractSchema = z.object({
   extractor: z.enum([
-    'invoices', 'tax_returns', 'tax_status', 'tax_compliance_checks',
-    'tax_retentions', 'electronic_accounting', 'sat_certificates',
-    'expense_receipts', 'accounting_data',
+    'invoice', 'tax_return', 'tax_status', 'tax_compliance',
+    'tax_retention', 'electronic_accounting', 'sat_certificate',
+    'expense_receipt', 'accounting_data',
   ]),
   date_from: z.string().date().optional(),
   date_to: z.string().date().optional(),

@@ -378,7 +378,9 @@ export async function syncOdoo(companyId: string, config: OdooConfig): Promise<S
         out_invoice: 'receivable',
         out_refund: 'receivable',
       };
-      const invoiceRows = invoices.map((inv: OdooInvoice) => {
+      const invoiceRows = invoices
+        .filter((inv: OdooInvoice) => inv.move_type !== 'entry')
+        .map((inv: OdooInvoice) => {
         const appType = moveTypeToAppType[inv.move_type] ?? 'payable';
         return {
           company_id: companyId,
@@ -388,8 +390,6 @@ export async function syncOdoo(companyId: string, config: OdooConfig): Promise<S
           uuid: odoo.normalizeOdooValue(inv.l10n_mx_edi_cfdi_uuid),
           invoice_date: odoo.normalizeOdooValue(inv.invoice_date),
           due_date: odoo.normalizeOdooValue(inv.invoice_date_due),
-          date_invoice: odoo.normalizeOdooValue(inv.invoice_date),
-          date_due: odoo.normalizeOdooValue(inv.invoice_date_due),
           amount_total: inv.amount_total,
           amount_residual: inv.amount_residual,
           amount_paid: inv.amount_total - inv.amount_residual,
