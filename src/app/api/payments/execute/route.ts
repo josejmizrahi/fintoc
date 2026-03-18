@@ -79,6 +79,9 @@ export const POST = createHandler(async (req) => {
       throw new ApiError('INTEGRATION_NOT_CONFIGURED', 'No hay cuenta bancaria vinculada a Fintoc', 422);
     }
 
+    // Deterministic idempotency key prevents double-charges on retry
+    const idempotencyKey = `payment_${payment_id}_${ctx.company_id}`;
+
     try {
       // Call Fintoc v2 to create transfer
       const transfer = (await createTransfer({
@@ -90,7 +93,7 @@ export const POST = createHandler(async (req) => {
         comment: payment.concept,
         account_id: bankAccount.fintoc_account_id,
         reference_id: payment.reference || undefined,
-      }, fintocSecretKey)) as { id: string };
+      }, fintocSecretKey, idempotencyKey)) as { id: string };
 
       // Update payment status
       const { data: updated, error } = await admin
@@ -119,7 +122,20 @@ export const POST = createHandler(async (req) => {
     } catch (err) {
       if (err instanceof ApiError) throw err;
 
-      // Update payment with error
+      // Before marking as failed, check if the transfer actually went through
+      // (protects against: transfer succeeds → DB update fails → catch marks as failed)
+      const { data: currentPayment } = await admin
+        .from('payments')
+        .select('fintoc_transfer_id')
+        .eq('id', payment_id)
+        .single();
+
+      if (currentPayment?.fintoc_transfer_id) {
+        // Transfer exists — don't overwrite as failed, it's actually processing
+        throw new ApiError('INTERNAL_ERROR', 'Pago enviado pero error al actualizar estado. Contacta soporte.', 500);
+      }
+
+      // No transfer was created — safe to mark as failed
       await admin
         .from('payments')
         .update({
