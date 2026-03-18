@@ -35,6 +35,11 @@ vi.mock('@/lib/utils/errors', () => ({
   },
 }));
 
+vi.mock('@/lib/retry', () => ({
+  withRetry: (fn: () => Promise<unknown>) => fn(),
+  isRetryableError: () => false,
+}));
+
 vi.mock('@/lib/integrations/odoo', () => ({
   fetchOdooInvoices: vi.fn(),
   fetchOdooVendors: vi.fn(),
@@ -370,6 +375,26 @@ describe('OdooSyncProvider', () => {
       expect(Object.keys(diff).sort()).toEqual([
         'customers', 'expenses', 'invoices', 'payments', 'purchaseOrders', 'vendors',
       ]);
+    });
+
+    it('marks vendors and customers with skipUpsert for smart linking', () => {
+      const diff = provider.transform({
+        invoices: [],
+        vendors: [
+          { id: 1, name: 'V', vat: 'ABC', email: false, phone: false, bank_ids: [], active: true, supplier_rank: 1, write_date: '' },
+        ],
+        customers: [
+          { id: 2, name: 'C', vat: 'DEF', email: false, phone: false, active: true, customer_rank: 1, write_date: '' },
+        ],
+        payments: [],
+        expenses: [],
+        purchaseOrders: [],
+      }, '1');
+
+      expect(diff.vendors.skipUpsert).toBe(true);
+      expect(diff.customers.skipUpsert).toBe(true);
+      expect(diff.invoices.skipUpsert).toBeUndefined();
+      expect(diff.payments.skipUpsert).toBeUndefined();
     });
   });
 });

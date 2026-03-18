@@ -1,10 +1,14 @@
 /**
  * Odoo Sync Provider — full sync: invoices, vendors, customers, payments, expenses, purchase orders.
+ *
+ * Vendors and customers use smart linking: if a manual record exists with the same RFC,
+ * only the odoo_id is linked without overwriting app-specific data (CLABE, EFOS, etc.).
  */
-import { BaseSyncProvider, type SyncData, type SyncDiff, type SyncProviderConfig } from '@/packages/sync-engine';
+import { BaseSyncProvider, type SyncData, type SyncDiff, type SyncProviderConfig, type SyncError } from '@/packages/sync-engine';
 import { getAdminClient } from '@/lib/supabase/admin';
 import { decrypt } from '@/lib/utils/crypto';
 import { ApiError } from '@/lib/utils/errors';
+import { withRetry, isRetryableError } from '@/lib/retry';
 import {
   type OdooConfig,
   type OdooInvoice,
@@ -24,6 +28,8 @@ import {
   extractM2oId,
 } from '@/lib/integrations/odoo';
 import type { SyncProvider as ProviderName } from '@/packages/shared/types';
+
+const LINK_BATCH_SIZE = 50;
 
 /** Raw connection credentials as saved by onboarding */
 interface OdooConnectionCreds {
@@ -137,11 +143,13 @@ export class OdooSyncProvider extends BaseSyncProvider<OdooConfig> {
         rows: this.transformVendors(remote.vendors as OdooPartner[], cid),
         onConflict: 'company_id,rfc',
         table: 'vendors',
+        skipUpsert: true, // Handled in afterTransform for smart linking
       },
       customers: {
         rows: this.transformCustomers(remote.customers as OdooPartner[], cid),
         onConflict: 'company_id,rfc',
         table: 'customers',
+        skipUpsert: true, // Handled in afterTransform for smart linking
       },
       payments: {
         rows: this.transformPayments(remote.payments as OdooPaymentRecord[], cid),
@@ -159,6 +167,152 @@ export class OdooSyncProvider extends BaseSyncProvider<OdooConfig> {
         table: 'odoo_purchase_orders',
       },
     };
+  }
+
+  /**
+   * Smart upsert for vendors and customers:
+   * - If record exists with same RFC and source='manual': only link odoo_id (preserve app data)
+   * - If record exists with same RFC and source='odoo': full update (Odoo is source of truth)
+   * - If no record exists: insert new record
+   */
+  async afterTransform(
+    admin: ReturnType<typeof getAdminClient>,
+    companyId: string,
+    diff: SyncDiff,
+    errors: SyncError[],
+  ): Promise<{ synced: number; failed: number; details: Record<string, number> }> {
+    let synced = 0;
+    let failed = 0;
+    const details: Record<string, number> = {};
+    const cid = Number(companyId);
+
+    // Smart upsert vendors
+    if (diff.vendors?.rows.length > 0) {
+      const result = await this.smartPartnerUpsert(admin, 'vendors', diff.vendors.rows, cid, errors);
+      synced += result.synced;
+      failed += result.failed;
+      details.vendors = result.synced;
+    }
+
+    // Smart upsert customers
+    if (diff.customers?.rows.length > 0) {
+      const result = await this.smartPartnerUpsert(admin, 'customers', diff.customers.rows, cid, errors);
+      synced += result.synced;
+      failed += result.failed;
+      details.customers = result.synced;
+    }
+
+    return { synced, failed, details };
+  }
+
+  /**
+   * Two-phase partner upsert:
+   * Phase 1: Link existing manual records (update only odoo_id, synced_at, source)
+   * Phase 2: Full upsert for new records and existing Odoo-sourced records
+   */
+  private async smartPartnerUpsert(
+    admin: ReturnType<typeof getAdminClient>,
+    table: 'vendors' | 'customers',
+    rows: Record<string, unknown>[],
+    companyId: number,
+    errors: SyncError[],
+  ): Promise<{ synced: number; failed: number }> {
+    let synced = 0;
+    let failed = 0;
+
+    // Get all existing RFCs for this company with their source
+    const rfcs = rows.map(r => r.rfc as string).filter(Boolean);
+    const { data: existing } = await admin
+      .from(table)
+      .select('id, rfc, source, odoo_id')
+      .eq('company_id', companyId)
+      .in('rfc', rfcs);
+
+    const existingByRfc = new Map<string, { id: number; source: string | null; odoo_id: string | null }>();
+    for (const row of existing || []) {
+      existingByRfc.set(row.rfc, { id: row.id, source: row.source, odoo_id: row.odoo_id });
+    }
+
+    const toLink: Record<string, unknown>[] = []; // Manual records to link
+    const toUpsert: Record<string, unknown>[] = []; // New or Odoo records to full upsert
+
+    for (const row of rows) {
+      const rfc = row.rfc as string;
+      const match = existingByRfc.get(rfc);
+
+      if (match && match.source === 'manual') {
+        // Phase 1: Only link — preserve manual data (CLABE, email, phone, etc.)
+        toLink.push({
+          id: match.id,
+          odoo_id: row.odoo_id,
+          synced_at: row.synced_at || new Date().toISOString(),
+          source: 'odoo',
+          // Also update name from Odoo (master data) but preserve clabe, efos, etc.
+          name: row.name,
+        });
+      } else {
+        // Phase 2: Full upsert (new record or already from Odoo)
+        toUpsert.push(row);
+      }
+    }
+
+    // Phase 1: Batch link manual records
+    for (let i = 0; i < toLink.length; i += LINK_BATCH_SIZE) {
+      const chunk = toLink.slice(i, i + LINK_BATCH_SIZE);
+      for (const row of chunk) {
+        try {
+          await withRetry(
+            async () => {
+              const { error } = await admin
+                .from(table)
+                .update({
+                  odoo_id: row.odoo_id,
+                  synced_at: row.synced_at,
+                  source: 'odoo',
+                  name: row.name,
+                })
+                .eq('id', row.id);
+              if (error) throw new Error(error.message);
+            },
+            { maxRetries: 1, baseDelay: 500, retryOn: isRetryableError },
+          );
+          synced++;
+        } catch (err) {
+          errors.push({
+            entity: table,
+            message: err instanceof Error ? err.message : `Error linking ${table}`,
+            retryable: isRetryableError(err),
+          });
+          failed++;
+        }
+      }
+    }
+
+    // Phase 2: Batch upsert new/Odoo records
+    for (let i = 0; i < toUpsert.length; i += LINK_BATCH_SIZE) {
+      const chunk = toUpsert.slice(i, i + LINK_BATCH_SIZE);
+      try {
+        await withRetry(
+          async () => {
+            const { error } = await admin
+              .from(table)
+              .upsert(chunk, { onConflict: 'company_id,rfc', ignoreDuplicates: false });
+            if (error) throw new Error(error.message);
+          },
+          { maxRetries: 2, baseDelay: 1000, retryOn: isRetryableError },
+        );
+        synced += chunk.length;
+      } catch (err) {
+        errors.push({
+          entity: table,
+          message: err instanceof Error ? err.message : `Error upserting ${table}`,
+          retryable: isRetryableError(err),
+        });
+        failed += chunk.length;
+      }
+    }
+
+    return { synced, failed };
   }
 
   private transformInvoices(invoices: OdooInvoice[], companyId: number): Record<string, unknown>[] {

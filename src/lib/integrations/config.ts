@@ -345,6 +345,73 @@ function computeStatus(errors: SyncError[], recordsSynced: number): SyncStatus {
 }
 
 // ---------------------------------------------------------------------------
+// Smart Partner Upsert — link manual records, full upsert for Odoo records
+// ---------------------------------------------------------------------------
+
+async function smartPartnerUpsert(
+  admin: ReturnType<typeof getAdminClient>,
+  table: 'vendors' | 'customers',
+  rows: Record<string, unknown>[],
+  companyId: number,
+  errors: SyncError[],
+): Promise<{ synced: number; failed: number }> {
+  let synced = 0;
+  let failed = 0;
+
+  // Get existing records by RFC with their source
+  const rfcs = rows.map(r => r.rfc as string).filter(Boolean);
+  const { data: existing } = await admin
+    .from(table)
+    .select('id, rfc, source, odoo_id')
+    .eq('company_id', companyId)
+    .in('rfc', rfcs);
+
+  const existingByRfc = new Map<string, { id: number; source: string | null; odoo_id: string | null }>();
+  for (const row of existing || []) {
+    existingByRfc.set(row.rfc, { id: row.id, source: row.source, odoo_id: row.odoo_id });
+  }
+
+  const toLink: { id: number; odoo_id: unknown; name: unknown }[] = [];
+  const toUpsert: Record<string, unknown>[] = [];
+
+  for (const row of rows) {
+    const rfc = row.rfc as string;
+    const match = existingByRfc.get(rfc);
+
+    if (match && match.source === 'manual') {
+      // Link only — preserve app-specific data (CLABE, EFOS, etc.)
+      toLink.push({ id: match.id, odoo_id: row.odoo_id, name: row.name });
+    } else {
+      toUpsert.push(row);
+    }
+  }
+
+  // Phase 1: Link manual records
+  for (const item of toLink) {
+    try {
+      const { error } = await admin
+        .from(table)
+        .update({ odoo_id: item.odoo_id, name: item.name, source: 'odoo', synced_at: new Date().toISOString() })
+        .eq('id', item.id);
+      if (error) throw new Error(error.message);
+      synced++;
+    } catch (err) {
+      errors.push({ entity: table, message: err instanceof Error ? err.message : `Error linking ${table}`, retryable: isRetryableError(err) });
+      failed++;
+    }
+  }
+
+  // Phase 2: Full upsert for new/odoo records
+  if (toUpsert.length > 0) {
+    const r = await batchUpsert(admin, table, toUpsert, 'company_id,rfc', errors, table);
+    synced += r.synced;
+    failed += r.failed;
+  }
+
+  return { synced, failed };
+}
+
+// ---------------------------------------------------------------------------
 // Odoo Sync
 // ---------------------------------------------------------------------------
 
@@ -435,7 +502,7 @@ export async function syncOdoo(companyId: string, config: OdooConfig): Promise<S
       recordsSynced += r.synced; recordsFailed += r.failed; details.invoices = r.synced;
     }
 
-    // Transform and upsert vendors
+    // Smart upsert vendors (link manual records, full upsert for new/odoo)
     const vendorByRfc = new Map<string, Record<string, unknown>>();
     for (const v of vendors) {
       const rfc = (odoo.normalizeOdooValue(v.vat) || '').toUpperCase();
@@ -449,11 +516,11 @@ export async function syncOdoo(companyId: string, config: OdooConfig): Promise<S
     }
     const vendorRows = [...vendorByRfc.values()];
     if (vendorRows.length > 0) {
-      const r = await batchUpsert(admin, 'vendors', vendorRows, 'company_id,rfc', errors, 'vendors');
+      const r = await smartPartnerUpsert(admin, 'vendors', vendorRows, Number(companyId), errors);
       recordsSynced += r.synced; recordsFailed += r.failed; details.vendors = r.synced;
     }
 
-    // Transform and upsert customers
+    // Smart upsert customers (link manual records, full upsert for new/odoo)
     const customerByRfc = new Map<string, Record<string, unknown>>();
     for (const c of customers) {
       const rfc = (odoo.normalizeOdooValue(c.vat) || '').toUpperCase();
@@ -467,7 +534,7 @@ export async function syncOdoo(companyId: string, config: OdooConfig): Promise<S
     }
     const customerRows = [...customerByRfc.values()];
     if (customerRows.length > 0) {
-      const r = await batchUpsert(admin, 'customers', customerRows, 'company_id,rfc', errors, 'customers');
+      const r = await smartPartnerUpsert(admin, 'customers', customerRows, Number(companyId), errors);
       recordsSynced += r.synced; recordsFailed += r.failed; details.customers = r.synced;
     }
 
@@ -588,6 +655,7 @@ export async function syncOdooPartners(companyId: string): Promise<{ vendors: nu
         phone: odoo.normalizeOdooValue(v.phone),
         odoo_id: String(v.id),
         synced_at: new Date().toISOString(),
+        source: 'odoo',
       });
     }
     vendorRows.push(...vendorByRfc.values());
@@ -603,18 +671,19 @@ export async function syncOdooPartners(companyId: string): Promise<{ vendors: nu
         email: odoo.normalizeOdooValue(c.email),
         phone: odoo.normalizeOdooValue(c.phone),
         odoo_id: String(c.id),
+        source: 'odoo',
       });
     }
     customerRows.push(...customerByRfc.values());
 
     const syncErrors: SyncError[] = [];
     if (vendorRows.length > 0) {
-      const r = await batchUpsert(admin, 'vendors', vendorRows, 'company_id,rfc', syncErrors, 'vendors');
+      const r = await smartPartnerUpsert(admin, 'vendors', vendorRows, cid, syncErrors);
       vendorsSynced = r.synced;
       if (r.failed > 0) errors.push(...syncErrors.map((e) => e.message));
     }
     if (customerRows.length > 0) {
-      const r = await batchUpsert(admin, 'customers', customerRows, 'company_id,rfc', syncErrors, 'customers');
+      const r = await smartPartnerUpsert(admin, 'customers', customerRows, cid, syncErrors);
       customersSynced = r.synced;
       if (r.failed > 0) errors.push(...syncErrors.map((e) => e.message));
     }

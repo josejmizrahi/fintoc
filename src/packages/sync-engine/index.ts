@@ -39,6 +39,8 @@ export interface SyncDiff {
     rows: Record<string, unknown>[];
     onConflict: string;
     table: string;
+    /** If true, the engine skips upsert for this entity (provider handles it in afterTransform). */
+    skipUpsert?: boolean;
   };
 }
 
@@ -75,6 +77,20 @@ export abstract class BaseSyncProvider<TConfig = unknown> {
   abstract transform(remote: SyncData, companyId: string): SyncDiff;
 
   /**
+   * Hook called after transform. Providers can override to handle custom upsert
+   * logic (e.g. smart linking of vendors/customers by RFC without overwriting).
+   * Return the number of records synced/failed for entities marked with skipUpsert.
+   */
+  async afterTransform(
+    _admin: ReturnType<typeof getAdminClient>,
+    _companyId: string,
+    _diff: SyncDiff,
+    _errors: SyncError[],
+  ): Promise<{ synced: number; failed: number; details: Record<string, number> }> {
+    return { synced: 0, failed: 0, details: {} };
+  }
+
+  /**
    * Run the full sync pipeline: lock → fetch → transform → upsert → finalize.
    */
   async run(companyId: string): Promise<SyncResult> {
@@ -103,14 +119,20 @@ export abstract class BaseSyncProvider<TConfig = unknown> {
       // Transform to DB rows
       const diff = this.transform(remote, companyId);
 
-      // Upsert each entity
-      for (const [entity, { rows, onConflict, table }] of Object.entries(diff)) {
-        if (rows.length === 0) continue;
+      // Upsert each entity (skip those marked for custom handling)
+      for (const [entity, { rows, onConflict, table, skipUpsert }] of Object.entries(diff)) {
+        if (rows.length === 0 || skipUpsert) continue;
         const result = await batchUpsert(admin, table, rows, onConflict, errors, entity);
         recordsSynced += result.synced;
         recordsFailed += result.failed;
         details[entity] = result.synced;
       }
+
+      // Run custom upsert logic for entities with skipUpsert
+      const custom = await this.afterTransform(admin, companyId, diff, errors);
+      recordsSynced += custom.synced;
+      recordsFailed += custom.failed;
+      Object.assign(details, custom.details);
 
       const status = computeStatus(errors, recordsSynced);
       await finalizeSyncEntry(admin, syncId, companyId, this.dbProviderName, status, recordsSynced, errors);
