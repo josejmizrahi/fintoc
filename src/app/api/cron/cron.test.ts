@@ -500,13 +500,37 @@ describe('GET /api/cron/check-overdue', () => {
       error: null,
     });
 
-    // user_companies for company-A → one admin
+    // user_companies for company-A notifications → one admin
     pushTableResult('user_companies', {
       data: [{ user_id: 'user-admin-1' }],
       error: null,
     });
 
-    // user_companies for company-B → one admin
+    // companies for company-A (email alert)
+    pushTableResult('companies', {
+      data: [{ name: 'Company A' }],
+      error: null,
+    });
+
+    // user_companies for company-A email lookup
+    pushTableResult('user_companies', {
+      data: [{ user_id: 'user-admin-1' }],
+      error: null,
+    });
+
+    // user_companies for company-B notifications → one admin
+    pushTableResult('user_companies', {
+      data: [{ user_id: 'user-admin-2' }],
+      error: null,
+    });
+
+    // companies for company-B (email alert)
+    pushTableResult('companies', {
+      data: [{ name: 'Company B' }],
+      error: null,
+    });
+
+    // user_companies for company-B email lookup
     pushTableResult('user_companies', {
       data: [{ user_id: 'user-admin-2' }],
       error: null,

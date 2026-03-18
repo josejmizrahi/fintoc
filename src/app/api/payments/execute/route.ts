@@ -7,6 +7,7 @@ import { getAdminClient } from '@/lib/supabase/admin';
 import { writeAuditLog } from '@/lib/middleware/audit';
 import { createTransfer } from '@/lib/integrations/fintoc';
 import { decrypt } from '@/lib/utils/crypto';
+import { sendPaymentConfirmation } from '@/lib/email';
 
 export const POST = createHandler(async (req) => {
   return withAuth(withRbac('payments.execute', async (_req, ctx) => {
@@ -117,6 +118,19 @@ export const POST = createHandler(async (req) => {
         entity_id: payment_id,
         metadata: { fintoc_transfer_id: transfer.id },
       });
+
+      // Send email notification (non-blocking)
+      if (ctx.email) {
+        const { data: company } = await admin.from('companies').select('name').eq('id', ctx.company_id).single();
+        sendPaymentConfirmation({
+          to: ctx.email,
+          vendorName: payment.vendors?.name || payment.partner_name || 'Proveedor',
+          amount: payment.amount,
+          reference: payment.reference || transfer.id,
+          concept: payment.concept || '',
+          companyName: company?.name || 'Quimibond',
+        }).catch(() => { /* non-blocking */ });
+      }
 
       return Response.json({ data: updated });
     } catch (err) {
