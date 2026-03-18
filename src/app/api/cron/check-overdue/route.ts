@@ -19,8 +19,8 @@ export async function GET(req: Request): Promise<Response> {
       .in('type', ['payable', 'receivable']);
 
     let updated = 0;
-    // Group by company for batch notifications
-    const byCompany = new Map<number, typeof newlyOverdue>();
+    type OverdueInvoice = { id: string; company_id: number; invoice_number: string; amount_residual: number; due_date: string; type: string };
+    const byCompany = new Map<number, OverdueInvoice[]>();
 
     for (const invoice of (newlyOverdue || [])) {
       await admin.from('invoices').update({ payment_status: 'overdue' }).eq('id', invoice.id);
