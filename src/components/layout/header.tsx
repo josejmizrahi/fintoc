@@ -163,7 +163,7 @@ export function Header() {
         <Search className="size-4" />
         <span className="flex-1 text-left">Buscar...</span>
         <kbd className="pointer-events-none text-[10px] font-mono bg-muted px-1.5 py-0.5 rounded">
-          Ctrl+K
+          {typeof navigator !== 'undefined' && /Mac/i.test(navigator.userAgent) ? '⌘K' : 'Ctrl+K'}
         </kbd>
       </Button>
 
@@ -194,7 +194,24 @@ export function Header() {
         </Button>
 
         {/* Notification bell */}
-        <Button variant="ghost" size="icon" className="relative">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="relative"
+          onClick={async () => {
+            if ((unreadCount?.count ?? 0) > 0) {
+              try {
+                await api.notifications.markRead([]);
+                queryClient.invalidateQueries({ queryKey: ['unread-count'] });
+                toast.success('Notificaciones marcadas como leidas');
+              } catch {
+                toast.error('Error al marcar notificaciones');
+              }
+            } else {
+              toast('No hay notificaciones nuevas');
+            }
+          }}
+        >
           <Bell className="size-4" />
           {(unreadCount?.count ?? 0) > 0 && (
             <Badge

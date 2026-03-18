@@ -76,9 +76,9 @@ export default function SatPage() {
         <h1 className="text-2xl font-bold">SAT via Syntage</h1>
         <EmptyState
           icon={ScrollText}
-          title="Syntage no configurado"
-          description="Conecta tu API Key de Syntage en Configuracion > Integraciones para acceder a los datos del SAT."
-          action={{ label: "Ir a Configuracion", onClick: () => window.location.href = "/configuracion" }}
+          title="SAT no configurado"
+          description="Para acceder a tus facturas CFDI, declaraciones y situacion fiscal necesitas una cuenta de Syntage (syntage.com). Configura tu API Key y sube tu FIEL (.cer y .key) en la seccion de integraciones."
+          action={{ label: "Configurar integracion SAT", onClick: () => window.location.href = "/configuracion" }}
         />
       </div>
       </PermissionGate>
@@ -135,8 +135,8 @@ export default function SatPage() {
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList>
           <TabsTrigger value="facturas">Facturas CFDI</TabsTrigger>
-          <TabsTrigger value="extractions">Extractions</TabsTrigger>
-          <TabsTrigger value="status">Status Fiscal</TabsTrigger>
+          <TabsTrigger value="extractions">Extracciones</TabsTrigger>
+          <TabsTrigger value="status">Situacion Fiscal</TabsTrigger>
           <TabsTrigger value="retenciones">Retenciones</TabsTrigger>
           <TabsTrigger value="declaraciones">Declaraciones</TabsTrigger>
         </TabsList>

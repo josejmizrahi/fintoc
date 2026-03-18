@@ -49,11 +49,12 @@ export default function DashboardPage() {
   const [period, setPeriod] = useState<'7d' | '30d' | '90d' | '12m'>('30d');
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
 
-  const { data: dashboard, isLoading } = useQuery({
+  const { data: dashboard, isLoading, isError, refetch } = useQuery({
     queryKey: ['dashboard'],
     queryFn: () => api.dashboard(),
     staleTime: 30_000,
     enabled: isAuthenticated,
+    retry: 2,
   });
 
   const { data: cashFlow, isLoading: cashFlowLoading } = useQuery({
@@ -89,6 +90,20 @@ export default function DashboardPage() {
           ))}
         </div>
         <Skeleton className="h-64 w-full" />
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="space-y-6">
+        <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
+        <Card className="p-8 text-center">
+          <AlertTriangle className="mx-auto size-10 text-destructive mb-4" />
+          <p className="text-lg font-medium mb-2">Error al cargar el dashboard</p>
+          <p className="text-muted-foreground mb-4">No se pudieron obtener los datos. Verifica tu conexion e intenta de nuevo.</p>
+          <Button onClick={() => refetch()}>Reintentar</Button>
+        </Card>
       </div>
     );
   }
