@@ -14,12 +14,19 @@ export interface ReconciliationRecord {
   monto?: number;
   monto_sat?: number;
   monto_odoo?: number;
+  monto_app?: number;
+  monto_banco?: number;
   odoo_ref?: string;
   partner?: string;
   invoice_ref?: string;
   bank_ref?: string;
   app_ref?: string;
   descripcion?: string;
+  counterpart_name?: string;
+  reference_id?: string;
+  match_type?: string;
+  moneda?: string;
+  sat_status?: string;
   type?: string;
   reconciliation_type?: string;
   period?: string;
@@ -42,6 +49,7 @@ export interface SatAppResult {
   matched: ReconciliationRecord[];
   in_sat_only: ReconciliationRecord[];
   in_app_only: ReconciliationRecord[];
+  amount_differences?: ReconciliationRecord[];
   last_run?: string;
 }
 
