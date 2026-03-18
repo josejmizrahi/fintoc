@@ -1,9 +1,8 @@
 /**
  * Unified Sync Engine
  *
- * One abstract SyncProvider replaces both:
- *   - src/app/api/sync/route.ts   (~1000 lines of inline sync logic)
- *   - src/lib/integrations/sync-engine.ts (~500 lines)
+ * Abstract SyncProvider for periodic sync (Fintoc, Odoo).
+ * Config helpers and orchestration functions live in src/lib/integrations/config.ts.
  *
  * Each integration implements the abstract interface. The engine handles:
  *   - Concurrency locking (one sync per provider per company)

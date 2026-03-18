@@ -2,7 +2,7 @@ import { createHandler } from '@/lib/middleware/route-handler';
 import { withAuth } from '@/lib/middleware/auth';
 import { withRbac } from '@/lib/middleware/rbac';
 import { getAdminClient } from '@/lib/supabase/admin';
-import { getFintocConfigForCompany } from '@/lib/integrations/sync-engine';
+import { getFintocConfigForCompany } from '@/lib/integrations/config';
 import { getMovements, centavosToPesos } from '@/lib/integrations/fintoc';
 import { parsePaginationParams } from '@/lib/utils/response';
 

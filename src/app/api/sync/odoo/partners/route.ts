@@ -1,7 +1,7 @@
 import { createHandler } from '@/lib/middleware/route-handler';
 import { withAuth } from '@/lib/middleware/auth';
 import { withRbac } from '@/lib/middleware/rbac';
-import { syncOdooPartners } from '@/lib/integrations/sync-engine';
+import { syncOdooPartners } from '@/lib/integrations/config';
 
 /** POST /api/sync/odoo/partners — sync vendors and customers from Odoo to cache (for lists). */
 export const POST = createHandler(async (req) => {

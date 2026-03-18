@@ -1,5 +1,5 @@
 import { getAdminClient } from '@/lib/supabase/admin';
-import { syncSat } from '@/lib/integrations/sync-engine';
+import { syncSat } from '@/lib/integrations/config';
 import { verifyCronSecret } from '@/lib/middleware/cron-auth';
 
 interface CronResult {
