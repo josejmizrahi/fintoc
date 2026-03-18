@@ -5,6 +5,7 @@ import { sendReminderSchema } from '@/lib/validations/schemas';
 import { ApiError } from '@/lib/utils/errors';
 import { getAdminClient } from '@/lib/supabase/admin';
 import { writeAuditLog } from '@/lib/middleware/audit';
+import { sendCollectionReminder } from '@/lib/email';
 
 export const POST = createHandler(async (req) => {
   return withAuth(withRbac('collections.write', async (_req, ctx) => {
@@ -19,24 +20,31 @@ export const POST = createHandler(async (req) => {
 
     const { data: invoice } = await admin
       .from('invoices')
-      .select('id')
+      .select('id, invoice_number, amount_residual, due_date, partner_name')
       .eq('id', invoice_id)
       .eq('company_id', ctx.company_id)
       .single();
 
     if (!invoice) throw new ApiError('NOT_FOUND', 'Factura no encontrada', 404);
 
-    // Send email via Resend
-    const resendKey = process.env.RESEND_API_KEY;
-    if (resendKey) {
-      const { Resend } = await import('resend');
-      const resend = new Resend(resendKey);
-      await resend.emails.send({
-        from: 'cobros@fintoc.app',
-        to: to_email,
-        subject,
-        text: emailBody,
-      });
+    const { data: company } = await admin
+      .from('companies')
+      .select('name')
+      .eq('id', ctx.company_id)
+      .single();
+
+    const sent = await sendCollectionReminder({
+      to: to_email,
+      customerName: invoice.partner_name || to_email,
+      invoiceNumber: invoice.invoice_number || `#${invoice.id}`,
+      amount: invoice.amount_residual || 0,
+      dueDate: invoice.due_date || 'Sin fecha',
+      companyName: company?.name || 'Quimibond',
+      customMessage: emailBody !== subject ? emailBody : undefined,
+    });
+
+    if (!sent) {
+      throw new ApiError('EMAIL_ERROR', 'Error al enviar email. Verifica que RESEND_API_KEY este configurada.', 502);
     }
 
     await writeAuditLog({
@@ -48,6 +56,6 @@ export const POST = createHandler(async (req) => {
       metadata: { to_email, subject },
     });
 
-    return Response.json({ data: { message: 'Recordatorio enviado' } });
+    return Response.json({ data: { message: `Recordatorio enviado a ${to_email}` } });
   }))(req, { params: Promise.resolve({}) });
 }, { rateLimit: 'write' });
