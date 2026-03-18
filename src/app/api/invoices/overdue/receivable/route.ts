@@ -15,16 +15,16 @@ export const GET = createHandler(async (req) => {
       .select('*, customers:customer_id(id, name, rfc)')
       .eq('company_id', ctx.company_id)
       .eq('type', 'receivable')
-      .lt('date_due', today)
+      .lt('due_date', today)
       .gt('amount_residual', 0);
 
     if (days > 0) {
       const cutoff = new Date();
       cutoff.setDate(cutoff.getDate() - days);
-      query = query.gte('date_due', cutoff.toISOString().slice(0, 10));
+      query = query.gte('due_date', cutoff.toISOString().slice(0, 10));
     }
 
-    query = query.order('date_due', { ascending: true });
+    query = query.order('due_date', { ascending: true });
     const { data } = await query;
 
     return Response.json(data || []);

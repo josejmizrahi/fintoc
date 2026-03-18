@@ -13,7 +13,7 @@ export const GET = createHandler(async (req, params) => {
       .select('*')
       .eq('company_id', ctx.company_id)
       .eq('customer_id', id)
-      .order('date_invoice', { ascending: false });
+      .order('invoice_date', { ascending: false });
 
     return Response.json(data || []);
   }))(req, { params: Promise.resolve(params) });

@@ -525,7 +525,7 @@ describe('E2E Flow: Register → Login → Me → Dashboard → Onboarding → C
         company_id: TEST_COMPANY_ID,
         type: 'receivable',
         amount_residual: 10000,
-        date_due: '2025-01-01',
+        due_date: '2025-01-01',
         status: 'open',
       });
       mockPayments.push({

@@ -9,7 +9,6 @@ export const GET = createHandler(async (req) => {
     const admin = getAdminClient();
     const today = new Date().toISOString().split('T')[0];
 
-    // Run all queries in parallel
     const [
       balanceResult,
       receivableResult,
@@ -18,45 +17,33 @@ export const GET = createHandler(async (req) => {
       recentPaymentsResult,
       overdueInvoicesResult,
     ] = await Promise.all([
-      // Total bank balance
       admin.from('bank_accounts').select('balance').eq('company_id', ctx.company_id),
-      // Accounts receivable (open invoices)
       admin.from('invoices').select('amount_residual')
         .eq('company_id', ctx.company_id).eq('type', 'receivable').gt('amount_residual', 0),
-      // Accounts payable (open bills)
       admin.from('invoices').select('amount_residual')
         .eq('company_id', ctx.company_id).eq('type', 'payable').gt('amount_residual', 0),
-      // Overdue invoices — use COALESCE(due_date, date_due) via or filter
-      // Query both date columns and deduplicate
+      // Overdue invoices (unified due_date column)
       admin.from('invoices').select('id, amount_residual')
         .eq('company_id', ctx.company_id).gt('amount_residual', 0)
-        .or(`due_date.lt.${today},date_due.lt.${today}`),
-      // Recent payments (last 5)
+        .lt('due_date', today),
       admin.from('payments')
         .select('id, partner_name, reference_id, amount, status, direction, created_at, executed_at')
         .eq('company_id', ctx.company_id)
         .order('created_at', { ascending: false })
         .limit(5),
-      // Overdue invoice list (last 5) — prefer due_date, fall back to date_due
       admin.from('invoices')
-        .select('id, partner_name, name, amount_total, amount_residual, date_due, due_date, type, status')
+        .select('id, partner_name, name, amount_total, amount_residual, due_date, type, status')
         .eq('company_id', ctx.company_id)
         .gt('amount_residual', 0)
-        .or(`due_date.lt.${today},date_due.lt.${today}`)
-        .order('due_date', { ascending: true, nullsFirst: false })
+        .lt('due_date', today)
+        .order('due_date', { ascending: true })
         .limit(5),
     ]);
 
     const totalBalance = (balanceResult.data || []).reduce((s, a) => s + (a.balance || 0), 0);
     const receivable = receivableResult.data || [];
     const payable = payableResult.data || [];
-
-    // Deduplicate overdue invoices by id (or filter may return same row twice if both dates are set)
-    const overdueMap = new Map<number, { amount_residual: number }>();
-    for (const inv of (overdueResult.data || [])) {
-      if (!overdueMap.has(inv.id)) overdueMap.set(inv.id, inv);
-    }
-    const overdue = [...overdueMap.values()];
+    const overdue = overdueResult.data || [];
 
     return Response.json({
       total_balance: totalBalance,

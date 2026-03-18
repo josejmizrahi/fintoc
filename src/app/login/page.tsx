@@ -9,7 +9,7 @@ import { Loader2, Eye, EyeOff, CreditCard, Shield, BarChart3, GitCompare } from 
 import { z } from 'zod';
 import { api } from '@/lib/api';
 import { useAuthStore } from '@/lib/store';
-import { loginSchema, registerSchema, resetPasswordSchema } from '@/lib/utils/validation';
+import { loginSchema, registerSchema, resetPasswordSchema, newPasswordSchema } from '@/lib/utils/validation';
 import {
   Card,
   CardHeader,
@@ -38,6 +38,7 @@ import {
 type LoginValues = z.infer<typeof loginSchema>;
 type RegisterValues = z.infer<typeof registerSchema>;
 type ResetValues = z.infer<typeof resetPasswordSchema>;
+type NewPasswordValues = z.infer<typeof newPasswordSchema>;
 
 type View = 'auth' | 'reset' | 'new-password';
 
@@ -103,6 +104,12 @@ function LoginPageInner() {
   const resetForm = useForm<ResetValues>({
     resolver: zodResolver(resetPasswordSchema),
     defaultValues: { email: '' },
+  });
+
+  // New password form (after clicking recovery link)
+  const newPasswordForm = useForm<NewPasswordValues>({
+    resolver: zodResolver(newPasswordSchema),
+    defaultValues: { password: '', confirm_password: '' },
   });
 
   async function onLogin(data: LoginValues) {
@@ -175,6 +182,96 @@ function LoginPageInner() {
       toast.success('Si el email existe, recibiras un link de recuperacion');
       setView('auth');
     }
+  }
+
+  async function onNewPassword(data: NewPasswordValues) {
+    try {
+      await api.auth.updatePassword({ password: data.password });
+      toast.success('Contrasena actualizada correctamente');
+      setView('auth');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Error al actualizar contrasena');
+    }
+  }
+
+  if (view === 'new-password') {
+    return (
+      <div className="flex min-h-screen">
+        <BrandingPanel />
+        <div className="flex flex-1 items-center justify-center px-4 py-12">
+          <Card className="w-full max-w-md">
+            <CardHeader>
+              <CardTitle>Nueva contrasena</CardTitle>
+              <CardDescription>
+                Ingresa tu nueva contrasena para completar la recuperacion.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Form {...newPasswordForm}>
+                <form onSubmit={newPasswordForm.handleSubmit(onNewPassword)} className="space-y-4">
+                  <FormField
+                    control={newPasswordForm.control}
+                    name="password"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Nueva contrasena</FormLabel>
+                        <FormControl>
+                          <div className="relative">
+                            <Input
+                              type={showPassword ? 'text' : 'password'}
+                              placeholder="Min 8 chars, 1 mayuscula, 1 numero"
+                              autoComplete="new-password"
+                              {...field}
+                            />
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="absolute right-0 top-0 h-full px-3"
+                              onClick={() => setShowPassword(!showPassword)}
+                            >
+                              {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                            </Button>
+                          </div>
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={newPasswordForm.control}
+                    name="confirm_password"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Confirmar contrasena</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="password"
+                            placeholder="Repite tu contrasena"
+                            autoComplete="new-password"
+                            {...field}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <Button type="submit" className="w-full" disabled={newPasswordForm.formState.isSubmitting}>
+                    {newPasswordForm.formState.isSubmitting && <Loader2 className="mr-2 size-4 animate-spin" />}
+                    Actualizar contrasena
+                  </Button>
+                </form>
+              </Form>
+            </CardContent>
+            <CardFooter>
+              <Button variant="link" className="w-full" onClick={() => setView('auth')}>
+                Volver a iniciar sesion
+              </Button>
+            </CardFooter>
+          </Card>
+        </div>
+      </div>
+    );
   }
 
   if (view === 'reset') {

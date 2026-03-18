@@ -62,11 +62,11 @@ export function InvoiceDetailContent({ invoice }: { invoice: Invoice }) {
           </div>
           <div>
             <span className="text-muted-foreground">Fecha Factura:</span>
-            <div>{invoice.date_invoice ? formatDate(invoice.date_invoice) : "-"}</div>
+            <div>{invoice.invoice_date ? formatDate(invoice.invoice_date) : "-"}</div>
           </div>
           <div>
             <span className="text-muted-foreground">Vencimiento:</span>
-            <div>{invoice.date_due ? formatDate(invoice.date_due) : "-"}</div>
+            <div>{invoice.due_date ? formatDate(invoice.due_date) : "-"}</div>
           </div>
           <div>
             <span className="text-muted-foreground">Metodo Pago:</span>

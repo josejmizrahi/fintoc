@@ -259,9 +259,9 @@ export default function DashboardPage() {
                       <div className="font-mono text-sm">
                         {formatMoney(inv.amount_residual ?? inv.amount_total ?? 0)}
                       </div>
-                      {inv.date_due && (
+                      {inv.due_date && (
                         <Badge variant="destructive" className="text-[10px]">
-                          {Math.max(0, Math.ceil((PAGE_LOAD_TIME - new Date(inv.date_due).getTime()) / 86400000))} dias
+                          {Math.max(0, Math.ceil((PAGE_LOAD_TIME - new Date(inv.due_date).getTime()) / 86400000))} dias
                         </Badge>
                       )}
                     </div>

@@ -338,7 +338,7 @@ function VendorDetailContent({ vendorId }: { vendorId: string }) {
                 <div>
                   <p className="font-medium">{bill.name}</p>
                   <p className="text-xs text-muted-foreground">
-                    Vence: {bill.date_due ? formatDate(bill.date_due) : "-"}
+                    Vence: {bill.due_date ? formatDate(bill.due_date) : "-"}
                   </p>
                 </div>
                 <div className="text-right">

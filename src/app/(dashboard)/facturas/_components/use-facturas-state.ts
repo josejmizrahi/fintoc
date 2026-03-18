@@ -94,14 +94,14 @@ export function useFacturasState() {
 
     if (filterBarValues.date_from) {
       data = data.filter((inv) => {
-        const d = inv.date_invoice || inv.date_due;
+        const d = inv.invoice_date || inv.due_date;
         return d && d >= filterBarValues.date_from;
       });
     }
 
     if (filterBarValues.date_to) {
       data = data.filter((inv) => {
-        const d = inv.date_invoice || inv.date_due;
+        const d = inv.invoice_date || inv.due_date;
         return d && d <= filterBarValues.date_to;
       });
     }

@@ -104,11 +104,11 @@ export async function seedDB(companyId: number) {
       { company_id: companyId, direction: "outbound", status: "scheduled", amount: 230000, currency: "MXN", partner_name: "Distribuidora Nacional SA", partner_rfc: "DNA050505EEE", reference_id: "PAY-005" },
     ]),
     sb.from("invoices").insert([
-      { company_id: companyId, type: "receivable", partner_name: "Acme SA de CV", partner_rfc: "ACM010101AAA", amount_total: 125000, amount_residual: 125000, date_invoice: "2026-03-01", date_due: "2026-03-15", status: "open", cfdi_uuid: "ABC12345-0001" },
-      { company_id: companyId, type: "receivable", partner_name: "TechCorp SA", partner_rfc: "TCS020202BBB", amount_total: 89000, amount_residual: 0, date_invoice: "2026-03-01", date_due: "2026-03-20", status: "paid", cfdi_uuid: "DEF67890-0002" },
-      { company_id: companyId, type: "receivable", partner_name: "Global Trade MX", partner_rfc: "GTM030303CCC", amount_total: 340000, amount_residual: 340000, date_invoice: "2026-01-28", date_due: "2026-02-28", status: "overdue", cfdi_uuid: "GHI11111-0003" },
-      { company_id: companyId, type: "payable", partner_name: "Materiales MX SA", partner_rfc: "MMX010101AAA", amount_total: 45000, amount_residual: 45000, date_invoice: "2026-03-01", date_due: "2026-03-10", status: "open", cfdi_uuid: "JKL22222-0004" },
-      { company_id: companyId, type: "payable", partner_name: "Logística Express", partner_rfc: "LEX020202BBB", amount_total: 125000, amount_residual: 125000, date_invoice: "2026-03-01", date_due: "2026-03-18", status: "open", cfdi_uuid: "MNO33333-0005" },
+      { company_id: companyId, type: "receivable", partner_name: "Acme SA de CV", partner_rfc: "ACM010101AAA", amount_total: 125000, amount_residual: 125000, invoice_date: "2026-03-01", due_date: "2026-03-15", status: "open", cfdi_uuid: "ABC12345-0001" },
+      { company_id: companyId, type: "receivable", partner_name: "TechCorp SA", partner_rfc: "TCS020202BBB", amount_total: 89000, amount_residual: 0, invoice_date: "2026-03-01", due_date: "2026-03-20", status: "paid", cfdi_uuid: "DEF67890-0002" },
+      { company_id: companyId, type: "receivable", partner_name: "Global Trade MX", partner_rfc: "GTM030303CCC", amount_total: 340000, amount_residual: 340000, invoice_date: "2026-01-28", due_date: "2026-02-28", status: "overdue", cfdi_uuid: "GHI11111-0003" },
+      { company_id: companyId, type: "payable", partner_name: "Materiales MX SA", partner_rfc: "MMX010101AAA", amount_total: 45000, amount_residual: 45000, invoice_date: "2026-03-01", due_date: "2026-03-10", status: "open", cfdi_uuid: "JKL22222-0004" },
+      { company_id: companyId, type: "payable", partner_name: "Logística Express", partner_rfc: "LEX020202BBB", amount_total: 125000, amount_residual: 125000, invoice_date: "2026-03-01", due_date: "2026-03-18", status: "open", cfdi_uuid: "MNO33333-0005" },
     ]),
     sb.from("vendors").insert([
       { company_id: companyId, name: "Materiales MX SA de CV", rfc: "MMX010101AAA", email: "pagos@materiales.mx", clabe: "012180015678901234" },

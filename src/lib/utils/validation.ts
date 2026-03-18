@@ -49,6 +49,16 @@ export const resetPasswordSchema = z.object({
   email: z.string().email('Email invalido'),
 });
 
+export const newPasswordSchema = z
+  .object({
+    password: passwordSchema,
+    confirm_password: z.string(),
+  })
+  .refine((d) => d.password === d.confirm_password, {
+    message: 'Las contrasenas no coinciden',
+    path: ['confirm_password'],
+  });
+
 // --- Payments (frontend form: includes display fields) ---
 export const createPaymentSchema = z.object({
   vendor_id: z.string().min(1, 'Proveedor requerido'),

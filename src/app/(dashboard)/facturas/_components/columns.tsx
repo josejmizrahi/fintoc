@@ -138,7 +138,7 @@ export function useInvoiceColumns(
         cell: ({ row }) => {
           const inv = row.original;
           const residual = inv.amount_residual ?? 0;
-          const overdue = inv.date_due && daysOverdue(inv.date_due) > 0 && residual > 0;
+          const overdue = inv.due_date && daysOverdue(inv.due_date) > 0 && residual > 0;
           return (
             <span
               className={`font-mono text-sm whitespace-nowrap ${
@@ -152,25 +152,25 @@ export function useInvoiceColumns(
         size: 130,
       },
       {
-        accessorKey: "date_invoice",
+        accessorKey: "invoice_date",
         header: "Fecha",
         cell: ({ row }) => (
           <span className="text-sm text-muted-foreground whitespace-nowrap">
-            {row.original.date_invoice ? formatDate(row.original.date_invoice) : "-"}
+            {row.original.invoice_date ? formatDate(row.original.invoice_date) : "-"}
           </span>
         ),
         size: 100,
       },
       {
-        accessorKey: "date_due",
+        accessorKey: "due_date",
         header: "Vencimiento",
         cell: ({ row }) => {
           const inv = row.original;
-          if (!inv.date_due) return <span className="text-sm text-muted-foreground">-</span>;
-          const days = daysOverdue(inv.date_due);
+          if (!inv.due_date) return <span className="text-sm text-muted-foreground">-</span>;
+          const days = daysOverdue(inv.due_date);
           return (
             <div className="flex items-center gap-1.5 whitespace-nowrap">
-              <span className="text-sm">{formatDate(inv.date_due)}</span>
+              <span className="text-sm">{formatDate(inv.due_date)}</span>
               {days > 0 && (inv.amount_residual ?? 0) > 0 && (
                 <Badge variant="destructive" className="text-[10px] px-1.5 py-0">
                   {days}d
