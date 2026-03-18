@@ -35,7 +35,9 @@ export async function GET(req: Request): Promise<Response> {
     }
 
     // Send grouped notifications per company
-    for (const [companyId, invoices] of byCompany) {
+    for (const [companyId, companyInvoices] of byCompany) {
+      if (!companyInvoices) continue;
+      const invoices = companyInvoices;
       const totalAmount = invoices.reduce((s, i) => s + (i.amount_residual || 0), 0);
 
       // In-app notifications
