@@ -92,7 +92,7 @@ vi.mock('@/lib/integrations/fintoc', () => ({
 
 const mockGetFintocConfigForCompany = vi.fn();
 
-vi.mock('@/lib/integrations/sync-engine', () => ({
+vi.mock('@/lib/integrations/config', () => ({
   getFintocConfigForCompany: (...args: unknown[]) => mockGetFintocConfigForCompany(...args),
 }));
 

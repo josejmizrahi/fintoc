@@ -37,8 +37,9 @@ export const POST = createHandler(async (req) => {
   });
 
   // Always return success to prevent email enumeration
+  // Supabase sends email with link → /auth/callback?code=...&type=recovery
   await admin.auth.resetPasswordForEmail(email, {
-    redirectTo: `${process.env.NEXT_PUBLIC_APP_URL || ''}/login?reset=true`,
+    redirectTo: `${process.env.NEXT_PUBLIC_APP_URL || ''}/auth/callback?type=recovery`,
   });
 
   return Response.json({

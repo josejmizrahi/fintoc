@@ -67,8 +67,8 @@ export interface Invoice {
   amount_total?: number;
   amount_residual?: number;
   amount_tax?: number;
-  date_invoice?: string;
-  date_due?: string;
+  invoice_date?: string;
+  due_date?: string;
   status?: string;
   payment_state?: string; // not_paid, in_payment, paid, partial, reversed
   cfdi_uuid?: string;

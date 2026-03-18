@@ -227,7 +227,7 @@ function CustomerDetailContent({ customerId }: { customerId: string }) {
     const buckets = { "0-30d": 0, "31-60d": 0, "61-90d": 0, "90+d": 0 };
     invoices.forEach((inv) => {
       if ((inv.amount_residual ?? 0) <= 0) return;
-      const days = daysOverdue(inv.date_due);
+      const days = daysOverdue(inv.due_date);
       if (days <= 30) buckets["0-30d"] += inv.amount_residual ?? 0;
       else if (days <= 60) buckets["31-60d"] += inv.amount_residual ?? 0;
       else if (days <= 90) buckets["61-90d"] += inv.amount_residual ?? 0;
@@ -260,7 +260,7 @@ function CustomerDetailContent({ customerId }: { customerId: string }) {
               <div>
                 <p className="font-medium">{inv.name}</p>
                 <p className="text-xs text-muted-foreground">
-                  Vence: {inv.date_due ? formatDate(inv.date_due) : "-"}
+                  Vence: {inv.due_date ? formatDate(inv.due_date) : "-"}
                 </p>
                 {inv.payment_state && (
                   <StatusBadge status={inv.payment_state} />
@@ -305,7 +305,7 @@ function CustomerAgingContent({ customerId }: { customerId: string }) {
     };
     invoices.forEach((inv) => {
       if ((inv.amount_residual ?? 0) <= 0) return;
-      const days = daysOverdue(inv.date_due);
+      const days = daysOverdue(inv.due_date);
       if (days <= 30) buckets["0-30 dias"] += inv.amount_residual ?? 0;
       else if (days <= 60) buckets["31-60 dias"] += inv.amount_residual ?? 0;
       else if (days <= 90) buckets["61-90 dias"] += inv.amount_residual ?? 0;

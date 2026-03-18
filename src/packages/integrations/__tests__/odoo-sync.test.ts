@@ -79,7 +79,8 @@ describe('OdooSyncProvider', () => {
       const invoice = diff.invoices.rows[0] as Record<string, unknown>;
       expect(invoice.company_id).toBe(1);
       expect(invoice.invoice_number).toBe('INV/2026/001');
-      expect(invoice.type).toBe('out_invoice');
+      expect(invoice.type).toBe('receivable');
+      expect(invoice.move_type).toBe('out_invoice');
       expect(invoice.amount_total).toBe(125000);
       expect(invoice.amount_residual).toBe(50000);
       expect(invoice.amount_paid).toBe(75000); // 125000 - 50000

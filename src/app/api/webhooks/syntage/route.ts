@@ -219,55 +219,31 @@ async function handleInvoiceEvent(
     invoiceFields.efos_status = efos.isBlocked ? 'definitivo' : efos.isRisky ? 'presunto' : null;
   }
 
-  // Use upsert-style: try update first, then insert if not found.
-  // This avoids the race condition of check-then-insert.
-  const { data: existing } = await admin.from('invoices')
-    .select('id')
-    .eq('uuid', uuid)
-    .eq('company_id', companyId)
-    .limit(1)
-    .single();
+  // Upsert the invoice — atomic operation avoids race conditions from concurrent webhooks
+  const invoiceRow = {
+    company_id: companyId,
+    uuid,
+    source: 'sat',
+    type: invoiceType,
+    amount_total: (data.total as number) || 0,
+    amount_tax: (data.tax as number) || 0,
+    amount_paid: 0,
+    amount_residual: (data.total as number) || 0,
+    invoice_date: (data.issued_at as string)?.split('T')[0] || new Date().toISOString().split('T')[0],
+    issuer_rfc: (issuer?.rfc as string) || null,
+    issuer_name: (issuer?.name as string) || null,
+    receiver_rfc: (receiver?.rfc as string) || null,
+    receiver_name: (receiver?.name as string) || null,
+    payment_method: (data.payment_method as string) || null,
+    currency: (data.currency as string) || 'MXN',
+    ...invoiceFields,
+  };
 
-  if (existing) {
-    await admin.from('invoices').update(invoiceFields).eq('id', existing.id);
-  } else {
-    // Insert new invoice — use a unique constraint-safe approach
-    const newInvoice = {
-      company_id: companyId,
-      uuid,
-      source: 'sat',
-      type: invoiceType,
-      amount_total: (data.total as number) || 0,
-      amount_tax: (data.tax as number) || 0,
-      amount_paid: 0,
-      amount_residual: (data.total as number) || 0,
-      invoice_date: (data.issued_at as string)?.split('T')[0] || new Date().toISOString().split('T')[0],
-      issuer_rfc: (issuer?.rfc as string) || null,
-      issuer_name: (issuer?.name as string) || null,
-      receiver_rfc: (receiver?.rfc as string) || null,
-      receiver_name: (receiver?.name as string) || null,
-      payment_method: (data.payment_method as string) || null,
-      currency: (data.currency as string) || 'MXN',
-      ...invoiceFields,
-    };
+  const { error: upsertError } = await admin.from('invoices')
+    .upsert(invoiceRow, { onConflict: 'company_id,uuid', ignoreDuplicates: false });
 
-    const { error: insertError } = await admin.from('invoices').insert(newInvoice);
-
-    // If insert fails due to duplicate (concurrent webhook), fall back to update
-    if (insertError?.code === '23505') {
-      const { data: retryExisting } = await admin.from('invoices')
-        .select('id')
-        .eq('uuid', uuid)
-        .eq('company_id', companyId)
-        .limit(1)
-        .single();
-
-      if (retryExisting) {
-        await admin.from('invoices').update(invoiceFields).eq('id', retryExisting.id);
-      }
-    } else if (insertError) {
-      throw new Error(`Failed to insert invoice: ${insertError.message}`);
-    }
+  if (upsertError) {
+    throw new Error(`Failed to upsert invoice: ${upsertError.message}`);
   }
 
   // Handle EFOS detection: update vendor and invoice atomically

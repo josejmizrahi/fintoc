@@ -22,7 +22,7 @@ export const GET = createHandler(async (req) => {
     const satStatus = url.searchParams.get('sat_status');
     if (satStatus) query = query.eq('sat_status', satStatus);
 
-    query = query.order('date_invoice', { ascending: false }).range(offset, offset + limit - 1);
+    query = query.order('invoice_date', { ascending: false }).range(offset, offset + limit - 1);
     const { data, count } = await query;
 
     return Response.json({ data: data || [], meta: { total: count || 0, page, limit } });

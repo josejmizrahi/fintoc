@@ -368,7 +368,7 @@ export default function CobranzaPage() {
       "90+ dias": { bucket: "90+ dias", count: 0, total: 0 },
     };
     overdue.forEach((inv) => {
-      const days = daysOverdue(inv.date_due);
+      const days = daysOverdue(inv.due_date);
       const key = agingBucket(days) + " dias";
       const b = bucketMap[key];
       if (b) {
@@ -474,22 +474,22 @@ export default function CobranzaPage() {
         ),
       },
       {
-        accessorKey: "date_invoice",
+        accessorKey: "invoice_date",
         header: "Fecha Emision",
         cell: ({ row }) => (
           <span className="text-muted-foreground">
-            {row.original.date_invoice
-              ? formatDate(row.original.date_invoice)
+            {row.original.invoice_date
+              ? formatDate(row.original.invoice_date)
               : "-"}
           </span>
         ),
       },
       {
-        accessorKey: "date_due",
+        accessorKey: "due_date",
         header: "Vencimiento",
         cell: ({ row }) => (
           <span className="text-muted-foreground">
-            {row.original.date_due ? formatDate(row.original.date_due) : "-"}
+            {row.original.due_date ? formatDate(row.original.due_date) : "-"}
           </span>
         ),
       },
@@ -558,22 +558,22 @@ export default function CobranzaPage() {
         ),
       },
       {
-        accessorKey: "date_invoice",
+        accessorKey: "invoice_date",
         header: "Fecha Emision",
         cell: ({ row }) => (
           <span className="text-muted-foreground">
-            {row.original.date_invoice
-              ? formatDate(row.original.date_invoice)
+            {row.original.invoice_date
+              ? formatDate(row.original.invoice_date)
               : "-"}
           </span>
         ),
       },
       {
-        accessorKey: "date_due",
+        accessorKey: "due_date",
         header: "Vencimiento",
         cell: ({ row }) => (
           <span className="text-muted-foreground">
-            {row.original.date_due ? formatDate(row.original.date_due) : "-"}
+            {row.original.due_date ? formatDate(row.original.due_date) : "-"}
           </span>
         ),
       },
@@ -581,7 +581,7 @@ export default function CobranzaPage() {
         id: "dias_vencido",
         header: "Dias Vencido",
         cell: ({ row }) => {
-          const days = daysOverdue(row.original.date_due);
+          const days = daysOverdue(row.original.due_date);
           return (
             <Badge
               variant="destructive"

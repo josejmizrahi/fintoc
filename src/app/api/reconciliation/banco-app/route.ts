@@ -4,7 +4,7 @@ import { withRbac } from '@/lib/middleware/rbac';
 import { reconciliationPeriodSchema } from '@/lib/validations/schemas';
 import { ApiError } from '@/lib/utils/errors';
 import { getAdminClient } from '@/lib/supabase/admin';
-import { getFintocConfigForCompany } from '@/lib/integrations/sync-engine';
+import { getFintocConfigForCompany } from '@/lib/integrations/config';
 import { getMovements, centavosToPesos } from '@/lib/integrations/fintoc';
 import { writeAuditLog } from '@/lib/middleware/audit';
 

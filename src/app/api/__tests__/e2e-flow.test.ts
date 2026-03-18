@@ -65,6 +65,7 @@ function buildMockAdmin() {
 
   const admin = {
     from: fromMock,
+    rpc: vi.fn().mockResolvedValue({ error: null }),
     auth: {
       admin: {
         createUser: vi.fn().mockImplementation(async ({ email }: { email: string; password: string }) => {
@@ -76,6 +77,7 @@ function buildMockAdmin() {
           };
         }),
         deleteUser: vi.fn().mockResolvedValue({ error: null }),
+        signOut: vi.fn().mockResolvedValue({ error: null }),
         generateLink: vi.fn().mockResolvedValue({ data: { properties: {} }, error: null }),
         getUserById: vi.fn().mockImplementation(async (id: string) => {
           if (id === TEST_USER_ID) {
@@ -221,6 +223,12 @@ function createQueryChain(table: string) {
   chain.lt = vi.fn().mockReturnValue(chain);
   chain.neq = vi.fn().mockReturnValue(chain);
   chain.in = vi.fn().mockReturnValue(chain);
+  chain.or = vi.fn().mockReturnValue(chain);
+  chain.not = vi.fn().mockReturnValue(chain);
+  chain.gte = vi.fn().mockReturnValue(chain);
+  chain.lte = vi.fn().mockReturnValue(chain);
+  chain.is = vi.fn().mockReturnValue(chain);
+  chain.upsert = vi.fn().mockResolvedValue({ data: null, error: null });
   chain.order = vi.fn().mockImplementation((field: string, opts?: { ascending?: boolean }) => {
     _orderField = field;
     _orderAsc = opts?.ascending ?? true;
@@ -517,7 +525,7 @@ describe('E2E Flow: Register → Login → Me → Dashboard → Onboarding → C
         company_id: TEST_COMPANY_ID,
         type: 'receivable',
         amount_residual: 10000,
-        date_due: '2025-01-01',
+        due_date: '2025-01-01',
         status: 'open',
       });
       mockPayments.push({

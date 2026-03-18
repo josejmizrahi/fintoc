@@ -36,28 +36,14 @@ export const POST = createHandler(async (req) => {
       throw new ApiError('NOT_MEMBER', 'No eres miembro de esta empresa', 403);
     }
 
-    // Deactivate current active company
-    const { error: deactivateError } = await admin
-      .from('user_companies')
-      .update({ is_active: false })
-      .eq('user_id', ctx.user_id)
-      .eq('is_active', true);
+    // Atomic switch — prevents race condition where user ends up with 0 or 2 active companies
+    const { error: switchError } = await admin.rpc('switch_active_company', {
+      p_user_id: ctx.user_id,
+      p_company_id: company_id,
+    });
 
-    if (deactivateError) {
-      throw new ApiError('INTERNAL_ERROR', 'Error al desactivar empresa actual', 500);
-    }
-
-    // Activate new company
-    const { error: activateError } = await admin
-      .from('user_companies')
-      .update({ is_active: true })
-      .eq('user_id', ctx.user_id)
-      .eq('company_id', company_id);
-
-    if (activateError) {
-      await admin.from('user_companies').update({ is_active: true })
-        .eq('user_id', ctx.user_id).eq('company_id', ctx.company_id);
-      throw new ApiError('INTERNAL_ERROR', 'Error al activar nueva empresa', 500);
+    if (switchError) {
+      throw new ApiError('INTERNAL_ERROR', 'Error al cambiar empresa activa', 500);
     }
 
     // Get company details

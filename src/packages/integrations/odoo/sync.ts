@@ -88,36 +88,46 @@ export class OdooSyncProvider extends BaseSyncProvider<OdooConfig> {
     const cid = Number(companyId);
     const seenUuids = new Set<string>();
 
-    const invoices = (remote.invoices as OdooInvoice[]).map((inv) => {
-      let uuid = normalizeOdooValue(inv.l10n_mx_edi_cfdi_uuid);
-      if (uuid) {
-        const lower = uuid.toLowerCase();
-        if (seenUuids.has(lower)) {
-          uuid = null;
-        } else {
-          seenUuids.add(lower);
+    const moveTypeToAppType: Record<string, 'payable' | 'receivable'> = {
+      in_invoice: 'payable',
+      in_refund: 'payable',
+      out_invoice: 'receivable',
+      out_refund: 'receivable',
+    };
+
+    const invoices = (remote.invoices as OdooInvoice[])
+      .filter((inv) => inv.move_type !== 'entry') // Skip journal entries
+      .map((inv) => {
+        let uuid = normalizeOdooValue(inv.l10n_mx_edi_cfdi_uuid);
+        if (uuid) {
+          const lower = uuid.toLowerCase();
+          if (seenUuids.has(lower)) {
+            uuid = null;
+          } else {
+            seenUuids.add(lower);
+          }
         }
-      }
-      return {
-        company_id: cid,
-        type: inv.move_type,
-        invoice_number: inv.name,
-        uuid,
-        invoice_date: normalizeOdooValue(inv.invoice_date),
-        due_date: normalizeOdooValue(inv.invoice_date_due),
-        amount_total: inv.amount_total,
-        amount_residual: inv.amount_residual,
-        amount_paid: inv.amount_total - inv.amount_residual,
-        amount_tax: inv.amount_tax,
-        payment_state: inv.payment_state,
-        payment_method: normalizeOdooValue(inv.l10n_mx_edi_payment_policy),
-        partner_name: extractM2oName(inv.partner_id),
-        odoo_id: inv.id,
-        odoo_move_id: String(inv.id),
-        source: 'odoo',
-        sat_status: 'no_validado',
-      };
-    });
+        return {
+          company_id: cid,
+          type: moveTypeToAppType[inv.move_type] ?? 'payable',
+          move_type: inv.move_type,
+          invoice_number: inv.name,
+          uuid,
+          invoice_date: normalizeOdooValue(inv.invoice_date),
+          due_date: normalizeOdooValue(inv.invoice_date_due),
+          amount_total: inv.amount_total,
+          amount_residual: inv.amount_residual,
+          amount_paid: inv.amount_total - inv.amount_residual,
+          amount_tax: inv.amount_tax,
+          payment_state: inv.payment_state,
+          payment_method: normalizeOdooValue(inv.l10n_mx_edi_payment_policy),
+          partner_name: extractM2oName(inv.partner_id),
+          odoo_id: inv.id,
+          odoo_move_id: String(inv.id),
+          source: 'odoo',
+          sat_status: 'no_validado',
+        };
+      });
 
     return {
       invoices: { rows: invoices, onConflict: 'company_id,odoo_id', table: 'invoices' },

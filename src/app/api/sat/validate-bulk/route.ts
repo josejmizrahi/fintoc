@@ -58,9 +58,10 @@ export const POST = createHandler(async (req) => {
 
         if (invoiceResults?.data && invoiceResults.data.length > 0) {
           const cfdi = invoiceResults.data[0];
-          const newStatus = (cfdi.status as string) === 'active' ? 'vigente' :
-                           (cfdi.status as string) === 'cancelled' ? 'cancelado' :
-                           (cfdi.status as string) || 'no_validado';
+          const rawStatus = (cfdi.status as string) || '';
+          const newStatus = rawStatus === 'Vigente' ? 'vigente' :
+                           rawStatus === 'Cancelado' ? 'cancelado' :
+                           rawStatus.toLowerCase() || 'no_validado';
 
           if (newStatus !== invoice.sat_status) {
             changed.push({

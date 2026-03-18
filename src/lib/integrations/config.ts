@@ -3,7 +3,6 @@ import { decrypt } from '@/lib/utils/crypto';
 import { ApiError } from '@/lib/utils/errors';
 import { withRetry, isRetryableError } from '@/lib/retry';
 import * as odoo from './odoo';
-import * as _fintoc from './fintoc';
 import * as syntage from './syntage';
 import type { OdooConfig, OdooPartner, OdooInvoice } from './odoo';
 
@@ -32,30 +31,204 @@ export interface SyncError {
   retryable: boolean;
 }
 
+export interface SatSyncResult extends SyncResult {
+  extractions: Array<{
+    extractor: syntage.Extractor;
+    extractionId: string;
+    status: syntage.ExtractionStatus;
+  }>;
+}
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
 const BATCH_SIZE = 50;
 const LOCK_TIMEOUT_MINUTES = 30;
+const CACHE_TTL_MS = 60 * 60 * 1000;
 const RETRY_OPTS = {
   maxRetries: 2,
   baseDelay: 2000,
   maxDelay: 15_000,
   retryOn: (err: unknown) => isRetryableError(err),
   onRetry: (err: unknown, attempt: number, delay: number) => {
-    console.warn(`[sync-engine] Retry #${attempt} in ${delay}ms:`, err instanceof Error ? err.message : err);
+    console.warn(`[sync] Retry #${attempt} in ${delay}ms:`, err instanceof Error ? err.message : err);
   },
 };
+
+// ---------------------------------------------------------------------------
+// Config Helpers
+// ---------------------------------------------------------------------------
+
+export async function getOdooConfigForCompany(companyId: string): Promise<OdooConfig> {
+  const admin = getAdminClient();
+  const { data: integration } = await admin.from('integrations')
+    .select('config_encrypted, config')
+    .eq('company_id', companyId)
+    .eq('provider', 'odoo')
+    .single();
+
+  if (!integration) {
+    throw new ApiError('INTEGRATION_NOT_CONFIGURED', 'Odoo no configurado', 422);
+  }
+
+  let creds: Record<string, string> | null = null;
+
+  if (integration.config_encrypted) {
+    try {
+      creds = decrypt(integration.config_encrypted) as Record<string, string>;
+    } catch { /* fall back to plaintext */ }
+  }
+
+  if (!creds) {
+    creds = integration.config as Record<string, string> | null;
+  }
+
+  if (!creds?.url) {
+    throw new ApiError('INTEGRATION_NOT_CONFIGURED', 'Odoo no configurado', 422);
+  }
+
+  const uid = await odoo.odooAuthenticate(creds.url, creds.database, creds.user, creds.password);
+
+  return { url: creds.url, db: creds.database, uid, apiKey: creds.password };
+}
+
+export async function getFintocConfigForCompany(companyId: string): Promise<{ secretKey: string; linkToken?: string }> {
+  const admin = getAdminClient();
+  let secretKey = process.env.FINTOC_SECRET_KEY;
+  let linkToken: string | undefined;
+
+  const { data: integration } = await admin.from('integrations')
+    .select('config_encrypted, config')
+    .eq('company_id', companyId)
+    .eq('provider', 'fintoc')
+    .single();
+
+  if (integration?.config_encrypted) {
+    try {
+      const dec = decrypt(integration.config_encrypted) as Record<string, string>;
+      secretKey = dec.secret_key ?? secretKey;
+      linkToken = dec.linkToken ?? dec.link_token;
+    } catch { /* fallback */ }
+  }
+  if (!secretKey && integration?.config) {
+    const cfg = integration.config as Record<string, string>;
+    secretKey = cfg.secretKey ?? secretKey;
+    linkToken = cfg.linkToken ?? cfg.link_token ?? linkToken;
+  }
+
+  if (!secretKey) {
+    throw new ApiError('INTEGRATION_NOT_CONFIGURED', 'Fintoc no configurado', 422);
+  }
+
+  return { secretKey, linkToken };
+}
+
+export async function getFintocKeyForCompany(companyId: string): Promise<string> {
+  const cfg = await getFintocConfigForCompany(companyId);
+  return cfg.secretKey;
+}
+
+export async function getSyntageTaxpayerForCompany(companyId: string): Promise<string> {
+  const admin = getAdminClient();
+  const { data: integration } = await admin.from('integrations')
+    .select('syntage_taxpayer_id')
+    .eq('company_id', companyId)
+    .eq('provider', 'sat')
+    .single();
+
+  if (!integration?.syntage_taxpayer_id) {
+    throw new ApiError('INTEGRATION_NOT_CONFIGURED', 'Syntage no configurado', 422);
+  }
+
+  return integration.syntage_taxpayer_id;
+}
+
+// ---------------------------------------------------------------------------
+// Vendor / Customer Cache (TTL refresh from Odoo)
+// ---------------------------------------------------------------------------
+
+export async function getVendor(companyId: string, vendorId: string): Promise<Record<string, unknown> | null> {
+  const admin = getAdminClient();
+  const { data: row } = await admin.from('vendors')
+    .select('*')
+    .eq('company_id', companyId)
+    .eq('id', vendorId)
+    .single();
+
+  if (!row) return null;
+
+  const syncedAt = row.synced_at ? new Date(row.synced_at).getTime() : 0;
+  if (Date.now() - syncedAt < CACHE_TTL_MS) return row as Record<string, unknown>;
+
+  const odooId = row.odoo_id != null ? Number(row.odoo_id) : NaN;
+  if (Number.isNaN(odooId)) return row as Record<string, unknown>;
+
+  try {
+    const config = await getOdooConfigForCompany(companyId);
+    const partner = await odoo.fetchOdooPartnerById(config, odooId);
+    if (!partner) return row as Record<string, unknown>;
+
+    const rfc = (odoo.normalizeOdooValue(partner.vat) || '').toUpperCase();
+    if (!rfc) return row as Record<string, unknown>;
+
+    const update = {
+      name: partner.name,
+      email: odoo.normalizeOdooValue(partner.email),
+      phone: odoo.normalizeOdooValue(partner.phone),
+      odoo_id: String(partner.id),
+      synced_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    await admin.from('vendors').update(update).eq('id', vendorId);
+    return { ...row, ...update } as Record<string, unknown>;
+  } catch {
+    return row as Record<string, unknown>;
+  }
+}
+
+export async function getCustomer(companyId: string, customerId: string): Promise<Record<string, unknown> | null> {
+  const admin = getAdminClient();
+  const { data: row } = await admin.from('customers')
+    .select('*')
+    .eq('company_id', companyId)
+    .eq('id', customerId)
+    .single();
+
+  if (!row) return null;
+
+  const updatedAt = row.updated_at ? new Date(row.updated_at).getTime() : 0;
+  if (Date.now() - updatedAt < CACHE_TTL_MS) return row as Record<string, unknown>;
+
+  const odooId = row.odoo_id != null ? Number(row.odoo_id) : NaN;
+  if (Number.isNaN(odooId)) return row as Record<string, unknown>;
+
+  try {
+    const config = await getOdooConfigForCompany(companyId);
+    const partner = await odoo.fetchOdooPartnerById(config, odooId);
+    if (!partner) return row as Record<string, unknown>;
+
+    const rfc = (odoo.normalizeOdooValue(partner.vat) || '').toUpperCase();
+    if (!rfc) return row as Record<string, unknown>;
+
+    const update = {
+      name: partner.name,
+      email: odoo.normalizeOdooValue(partner.email),
+      phone: odoo.normalizeOdooValue(partner.phone),
+      odoo_id: String(partner.id),
+      updated_at: new Date().toISOString(),
+    };
+    await admin.from('customers').update(update).eq('id', customerId);
+    return { ...row, ...update } as Record<string, unknown>;
+  } catch {
+    return row as Record<string, unknown>;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Concurrency Guard
 // ---------------------------------------------------------------------------
 
-/**
- * Acquire a sync lock by checking for any "running" sync_history entry.
- * If a recent one exists, reject. If stale (>LOCK_TIMEOUT_MINUTES), clear it.
- */
 async function acquireSyncLock(
   admin: ReturnType<typeof getAdminClient>,
   companyId: string,
@@ -82,7 +255,7 @@ async function acquireSyncLock(
       );
     }
 
-    console.warn(`[sync-engine] Stale lock detected for ${provider}/${companyId}, clearing`);
+    console.warn(`[sync] Stale lock detected for ${provider}/${companyId}, clearing`);
     await admin.from('sync_history').update({
       status: 'failed',
       error_message: 'Sync timed out (stale lock cleared)',
@@ -101,10 +274,6 @@ async function acquireSyncLock(
   return entry.id;
 }
 
-/**
- * Finalize sync: update sync_history and integrations.last_sync.
- * Never throws — swallows DB errors so it doesn't mask the real result.
- */
 async function finalizeSyncEntry(
   admin: ReturnType<typeof getAdminClient>,
   syncId: string,
@@ -130,13 +299,10 @@ async function finalizeSyncEntry(
         .eq('company_id', companyId).eq('provider', provider);
     }
   } catch (err) {
-    console.error(`[sync-engine] Failed to finalize sync entry ${syncId}:`, err);
+    console.error(`[sync] Failed to finalize sync entry ${syncId}:`, err);
   }
 }
 
-/**
- * Batch upsert with per-chunk retry.
- */
 async function batchUpsert(
   admin: ReturnType<typeof getAdminClient>,
   table: string,
@@ -204,7 +370,6 @@ export async function syncOdoo(companyId: string, config: OdooConfig): Promise<S
 
     const lastSyncAt = lastSync?.completed_at || undefined;
 
-    // --- Invoices only (vendors/customers are cache with TTL via getVendor/getCustomer) ---
     try {
       const invoices = await withRetry(() => odoo.fetchOdooInvoices(config, lastSyncAt), RETRY_OPTS);
       const moveTypeToAppType: Record<string, 'payable' | 'receivable'> = {
@@ -213,7 +378,9 @@ export async function syncOdoo(companyId: string, config: OdooConfig): Promise<S
         out_invoice: 'receivable',
         out_refund: 'receivable',
       };
-      const invoiceRows = invoices.map((inv: OdooInvoice) => {
+      const invoiceRows = invoices
+        .filter((inv: OdooInvoice) => inv.move_type !== 'entry')
+        .map((inv: OdooInvoice) => {
         const appType = moveTypeToAppType[inv.move_type] ?? 'payable';
         return {
           company_id: companyId,
@@ -223,8 +390,6 @@ export async function syncOdoo(companyId: string, config: OdooConfig): Promise<S
           uuid: odoo.normalizeOdooValue(inv.l10n_mx_edi_cfdi_uuid),
           invoice_date: odoo.normalizeOdooValue(inv.invoice_date),
           due_date: odoo.normalizeOdooValue(inv.invoice_date_due),
-          date_invoice: odoo.normalizeOdooValue(inv.invoice_date),
-          date_due: odoo.normalizeOdooValue(inv.invoice_date_due),
           amount_total: inv.amount_total,
           amount_residual: inv.amount_residual,
           amount_paid: inv.amount_total - inv.amount_residual,
@@ -261,11 +426,6 @@ export async function syncOdoo(companyId: string, config: OdooConfig): Promise<S
   }
 }
 
-/**
- * Sync Odoo partners (vendors + customers) to Supabase cache.
- * Does not use sync_history lock; safe to call alongside invoice sync.
- * Use after deploy so vendor/customer lists have data.
- */
 export async function syncOdooPartners(companyId: string): Promise<{ vendors: number; customers: number; errors: string[] }> {
   const admin = getAdminClient();
   const errors: string[] = [];
@@ -340,16 +500,8 @@ export async function syncOdooPartners(companyId: string): Promise<{ vendors: nu
 }
 
 // ---------------------------------------------------------------------------
-// Syntage SAT Sync
+// SAT Sync
 // ---------------------------------------------------------------------------
-
-export interface SatSyncResult extends SyncResult {
-  extractions: Array<{
-    extractor: syntage.Extractor;
-    extractionId: string;
-    status: syntage.ExtractionStatus;
-  }>;
-}
 
 export async function syncSat(
   companyId: string,
@@ -408,195 +560,5 @@ export async function syncSat(
       { entity: 'sync', message: err instanceof Error ? err.message : 'Unknown error', retryable: true },
     ]);
     throw err;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Config helpers
-// ---------------------------------------------------------------------------
-
-export async function getOdooConfigForCompany(companyId: string): Promise<OdooConfig> {
-  const admin = getAdminClient();
-  const { data: integration } = await admin.from('integrations')
-    .select('config_encrypted, config')
-    .eq('company_id', companyId)
-    .eq('provider', 'odoo')
-    .single();
-
-  if (!integration) {
-    throw new ApiError('INTEGRATION_NOT_CONFIGURED', 'Odoo no configurado', 422);
-  }
-
-  // Get raw connection credentials (prefer encrypted, fall back to plaintext)
-  let creds: Record<string, string> | null = null;
-
-  if (integration.config_encrypted) {
-    try {
-      creds = decrypt(integration.config_encrypted) as Record<string, string>;
-    } catch {
-      // fall back to plaintext
-    }
-  }
-
-  if (!creds) {
-    creds = integration.config as Record<string, string> | null;
-  }
-
-  if (!creds?.url) {
-    throw new ApiError('INTEGRATION_NOT_CONFIGURED', 'Odoo no configurado', 422);
-  }
-
-  // Authenticate to get uid — OdooConfig requires { url, db, uid, apiKey }
-  const uid = await odoo.odooAuthenticate(creds.url, creds.database, creds.user, creds.password);
-
-  return {
-    url: creds.url,
-    db: creds.database,
-    uid,
-    apiKey: creds.password,
-  };
-}
-
-export async function getFintocKeyForCompany(companyId: string): Promise<string> {
-  const cfg = await getFintocConfigForCompany(companyId);
-  return cfg.secretKey;
-}
-
-/** Returns Fintoc secretKey and optional linkToken for API calls (e.g. movements). */
-export async function getFintocConfigForCompany(companyId: string): Promise<{ secretKey: string; linkToken?: string }> {
-  const admin = getAdminClient();
-  let secretKey = process.env.FINTOC_SECRET_KEY;
-  let linkToken: string | undefined;
-
-  const { data: integration } = await admin.from('integrations')
-    .select('config_encrypted, config')
-    .eq('company_id', companyId)
-    .eq('provider', 'fintoc')
-    .single();
-
-  if (integration?.config_encrypted) {
-    try {
-      const dec = decrypt(integration.config_encrypted) as Record<string, string>;
-      secretKey = dec.secret_key ?? secretKey;
-      linkToken = dec.linkToken ?? dec.link_token;
-    } catch { /* fallback */ }
-  }
-  if (!secretKey && integration?.config) {
-    const cfg = integration.config as Record<string, string>;
-    secretKey = cfg.secretKey ?? secretKey;
-    linkToken = cfg.linkToken ?? cfg.link_token ?? linkToken;
-  }
-
-  if (!secretKey) {
-    throw new ApiError('INTEGRATION_NOT_CONFIGURED', 'Fintoc no configurado', 422);
-  }
-
-  return { secretKey, linkToken };
-}
-
-export async function getSyntageTaxpayerForCompany(companyId: string): Promise<string> {
-  const admin = getAdminClient();
-  const { data: integration } = await admin.from('integrations')
-    .select('syntage_taxpayer_id')
-    .eq('company_id', companyId)
-    .eq('provider', 'sat')
-    .single();
-
-  if (!integration?.syntage_taxpayer_id) {
-    throw new ApiError('INTEGRATION_NOT_CONFIGURED', 'Syntage no configurado', 422);
-  }
-
-  return integration.syntage_taxpayer_id;
-}
-
-/** TTL for vendor/customer cache (1 hour). */
-const CACHE_TTL_MS = 60 * 60 * 1000;
-
-/**
- * Get vendor by internal id; refresh from Odoo if cache is stale (synced_at older than TTL).
- * Returns null if not found. Enrichments (efos_status, clabe_verified, etc.) stay in DB.
- */
-export async function getVendor(companyId: string, vendorId: string): Promise<Record<string, unknown> | null> {
-  const admin = getAdminClient();
-  const { data: row } = await admin.from('vendors')
-    .select('*')
-    .eq('company_id', companyId)
-    .eq('id', vendorId)
-    .single();
-
-  if (!row) return null;
-
-  const syncedAt = row.synced_at ? new Date(row.synced_at).getTime() : 0;
-  if (Date.now() - syncedAt < CACHE_TTL_MS) {
-    return row as Record<string, unknown>;
-  }
-
-  const odooId = row.odoo_id != null ? Number(row.odoo_id) : NaN;
-  if (Number.isNaN(odooId)) return row as Record<string, unknown>;
-
-  try {
-    const config = await getOdooConfigForCompany(companyId);
-    const partner = await odoo.fetchOdooPartnerById(config, odooId);
-    if (!partner) return row as Record<string, unknown>;
-
-    const rfc = (odoo.normalizeOdooValue(partner.vat) || '').toUpperCase();
-    if (!rfc) return row as Record<string, unknown>;
-
-    const update = {
-      name: partner.name,
-      email: odoo.normalizeOdooValue(partner.email),
-      phone: odoo.normalizeOdooValue(partner.phone),
-      odoo_id: String(partner.id),
-      synced_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-    await admin.from('vendors').update(update).eq('id', vendorId);
-    return { ...row, ...update } as Record<string, unknown>;
-  } catch {
-    return row as Record<string, unknown>;
-  }
-}
-
-/**
- * Get customer by internal id; refresh from Odoo if cache is stale (updated_at older than TTL).
- * Returns null if not found.
- */
-export async function getCustomer(companyId: string, customerId: string): Promise<Record<string, unknown> | null> {
-  const admin = getAdminClient();
-  const { data: row } = await admin.from('customers')
-    .select('*')
-    .eq('company_id', companyId)
-    .eq('id', customerId)
-    .single();
-
-  if (!row) return null;
-
-  const updatedAt = row.updated_at ? new Date(row.updated_at).getTime() : 0;
-  if (Date.now() - updatedAt < CACHE_TTL_MS) {
-    return row as Record<string, unknown>;
-  }
-
-  const odooId = row.odoo_id != null ? Number(row.odoo_id) : NaN;
-  if (Number.isNaN(odooId)) return row as Record<string, unknown>;
-
-  try {
-    const config = await getOdooConfigForCompany(companyId);
-    const partner = await odoo.fetchOdooPartnerById(config, odooId);
-    if (!partner) return row as Record<string, unknown>;
-
-    const rfc = (odoo.normalizeOdooValue(partner.vat) || '').toUpperCase();
-    if (!rfc) return row as Record<string, unknown>;
-
-    const update = {
-      name: partner.name,
-      email: odoo.normalizeOdooValue(partner.email),
-      phone: odoo.normalizeOdooValue(partner.phone),
-      odoo_id: String(partner.id),
-      updated_at: new Date().toISOString(),
-    };
-    await admin.from('customers').update(update).eq('id', customerId);
-    return { ...row, ...update } as Record<string, unknown>;
-  } catch {
-    return row as Record<string, unknown>;
   }
 }

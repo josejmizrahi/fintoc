@@ -62,9 +62,22 @@ export const POST = createHandler(async (req) => {
     .single();
 
   if (companyError) {
-    // Cleanup: delete the auth user
     await admin.auth.admin.deleteUser(userId);
     throw new ApiError('INTERNAL_ERROR', 'Error al crear empresa', 500);
+  }
+
+  // Create entry in users table (needed for RLS auth_company_id() function)
+  const { error: userError } = await admin.from('users').insert({
+    auth_uid: userId,
+    email,
+    name: full_name || email.split('@')[0],
+    role: 'admin',
+    company_id: company.id,
+  });
+
+  if (userError) {
+    console.error('users table insert failed:', JSON.stringify(userError));
+    // Non-blocking — user_companies is the primary membership table
   }
 
   // Create user_companies membership
@@ -79,6 +92,7 @@ export const POST = createHandler(async (req) => {
   if (memberError) {
     console.error('user_companies insert failed:', JSON.stringify(memberError));
     await admin.auth.admin.deleteUser(userId);
+    await admin.from('users').delete().eq('auth_uid', userId);
     await admin.from('companies').delete().eq('id', company.id);
     throw new ApiError('INTERNAL_ERROR', `Error al crear membresia: ${memberError.message}`, 500);
   }

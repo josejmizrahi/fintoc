@@ -31,7 +31,7 @@ vi.mock('@/packages/integrations', () => ({}));
 
 const mockSyncSat = vi.fn();
 
-vi.mock('@/lib/integrations/sync-engine', () => ({
+vi.mock('@/lib/integrations/config', () => ({
   syncSat: (...args: unknown[]) => mockSyncSat(...args),
   getFintocConfigForCompany: vi.fn(),
 }));

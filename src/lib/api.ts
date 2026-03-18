@@ -173,6 +173,8 @@ export const api = {
     me: () => get<any>('/api/auth/me'),
     resetPassword: (data: { email: string }) =>
       authRequest<any>('/api/auth/reset-password', data),
+    updatePassword: (data: { password: string }) =>
+      authRequest<{ message: string }>('/api/auth/update-password', data),
     switchCompany: async (data: { company_id: string | number }) => {
       // Tokens are handled via httpOnly cookies automatically
       const res = await request<any>('/api/auth/switch-company', {

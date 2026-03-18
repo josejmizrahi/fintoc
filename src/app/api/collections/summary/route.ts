@@ -15,7 +15,7 @@ export const GET = createHandler(async (req) => {
       .eq('company_id', ctx.company_id)
       .eq('type', 'receivable')
       .gt('amount_residual', 0)
-      .gte('date_due', today);
+      .gte('due_date', today);
 
     // Overdue
     const { data: overdue } = await admin
@@ -24,7 +24,7 @@ export const GET = createHandler(async (req) => {
       .eq('company_id', ctx.company_id)
       .eq('type', 'receivable')
       .gt('amount_residual', 0)
-      .lt('date_due', today);
+      .lt('due_date', today);
 
     const pendingTotal = (pending || []).reduce((sum, i) => sum + (i.amount_residual || 0), 0);
     const overdueTotal = (overdue || []).reduce((sum, i) => sum + (i.amount_residual || 0), 0);

@@ -1,6 +1,6 @@
 import { getAdminClient } from '@/lib/supabase/admin';
 import { decrypt } from '@/lib/utils/crypto';
-import { syncOdoo } from '@/lib/integrations/sync-engine';
+import { syncOdoo } from '@/lib/integrations/config';
 import { verifyCronSecret } from '@/lib/middleware/cron-auth';
 import type { OdooConfig } from '@/lib/integrations/odoo';
 
