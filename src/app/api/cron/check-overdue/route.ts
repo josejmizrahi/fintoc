@@ -25,9 +25,12 @@ export async function GET(req: Request): Promise<Response> {
     for (const invoice of (newlyOverdue || [])) {
       await admin.from('invoices').update({ payment_status: 'overdue' }).eq('id', invoice.id);
 
-      const companyInvoices = byCompany.get(invoice.company_id) || [];
-      companyInvoices.push(invoice);
-      byCompany.set(invoice.company_id, companyInvoices);
+      const existing = byCompany.get(invoice.company_id);
+      if (existing) {
+        existing.push(invoice);
+      } else {
+        byCompany.set(invoice.company_id, [invoice]);
+      }
       updated++;
     }
 
