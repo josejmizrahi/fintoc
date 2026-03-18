@@ -209,52 +209,91 @@ async function handleInvoiceEvent(
   const receiver = data.receiver as Record<string, unknown> | undefined;
   const efos = parseEfosStatus(data.efos_validation as string | undefined);
 
-  const invoiceFields: Record<string, unknown> = {
+  // SAT enrichment fields — always update regardless of source
+  const satFields: Record<string, unknown> = {
     sat_status: satStatus,
+    sat_validated: true,
+    sat_last_check: new Date().toISOString(),
     syntage_invoice_id: data.id as string,
     validated_at: new Date().toISOString(),
-  };
-
-  if (efos.status !== null) {
-    invoiceFields.efos_status = efos.isBlocked ? 'definitivo' : efos.isRisky ? 'presunto' : null;
-  }
-
-  // Upsert the invoice — atomic operation avoids race conditions from concurrent webhooks
-  const invoiceRow = {
-    company_id: companyId,
-    uuid,
-    source: 'sat',
-    type: invoiceType,
-    amount_total: (data.total as number) || 0,
-    amount_tax: (data.tax as number) || 0,
-    amount_paid: 0,
-    amount_residual: (data.total as number) || 0,
-    invoice_date: (data.issued_at as string)?.split('T')[0] || new Date().toISOString().split('T')[0],
+    // CFDI 4.0 fields from Syntage
+    tipo_comprobante: (data.voucher_effect as string) || (data.type as string) || null,
+    metodo_pago: (data.payment_method as string) || null,
+    forma_pago: (data.payment_form as string) || null,
+    uso_cfdi: (data.cfdi_usage as string) || null,
+    moneda: (data.currency as string) || 'MXN',
+    tipo_cambio: (data.exchange_rate as number) || null,
+    descuento: (data.discount as number) || 0,
+    lugar_expedicion: (data.place_of_issue as string) || null,
+    emisor_nombre: (issuer?.name as string) || null,
+    receptor_nombre: (receiver?.name as string) || null,
+    emisor_regimen: (issuer?.tax_regime as string) || null,
+    receptor_regimen: (receiver?.tax_regime as string) || null,
     issuer_rfc: (issuer?.rfc as string) || null,
     issuer_name: (issuer?.name as string) || null,
     receiver_rfc: (receiver?.rfc as string) || null,
     receiver_name: (receiver?.name as string) || null,
-    payment_method: (data.payment_method as string) || null,
-    currency: (data.currency as string) || 'MXN',
-    ...invoiceFields,
+    es_cancelable: (data.is_cancellable as string) || null,
+    estatus_cancelacion: (data.cancellation_status as string) || null,
   };
 
-  const { error: upsertError } = await admin.from('invoices')
-    .upsert(invoiceRow, { onConflict: 'company_id,uuid', ignoreDuplicates: false });
-
-  if (upsertError) {
-    throw new Error(`Failed to upsert invoice: ${upsertError.message}`);
+  if (efos.status !== null) {
+    satFields.efos_status = efos.isBlocked ? 'definitivo' : efos.isRisky ? 'presunto' : null;
   }
 
-  // Handle EFOS detection: update vendor and invoice atomically
+  // Check if invoice already exists (from manual or Odoo source)
+  const { data: existing } = await admin.from('invoices')
+    .select('id, source')
+    .eq('company_id', companyId)
+    .eq('uuid', uuid)
+    .single();
+
+  if (existing) {
+    // Invoice exists — only ENRICH with SAT data, preserve source and amounts
+    const { error: updateError } = await admin.from('invoices')
+      .update(satFields)
+      .eq('id', existing.id);
+
+    if (updateError) {
+      throw new Error(`Failed to update invoice with SAT data: ${updateError.message}`);
+    }
+  } else {
+    // Invoice is new from SAT — create full record
+    const invoiceRow = {
+      company_id: companyId,
+      uuid,
+      source: 'sat',
+      type: invoiceType,
+      amount_total: (data.total as number) || 0,
+      amount_tax: (data.tax as number) || 0,
+      amount_paid: 0,
+      amount_residual: (data.total as number) || 0,
+      invoice_date: (data.issued_at as string)?.split('T')[0] || new Date().toISOString().split('T')[0],
+      payment_method: (data.payment_method as string) || null,
+      currency: (data.currency as string) || 'MXN',
+      ...satFields,
+    };
+
+    const { error: insertError } = await admin.from('invoices')
+      .insert(invoiceRow);
+
+    if (insertError) {
+      throw new Error(`Failed to insert SAT invoice: ${insertError.message}`);
+    }
+  }
+
+  // Handle EFOS detection: update vendor with timestamp tracking
   if (efos.isBlocked || efos.isRisky) {
     const issuerRfc = ((issuer?.rfc as string) || '').toUpperCase();
     if (issuerRfc) {
       const efosStatus = efos.isBlocked ? 'definitivo' : 'presunto';
 
-      // Update vendor EFOS status
+      // Update vendor EFOS status with timestamp
       const { error: vendorError } = await admin.from('vendors')
-        .update({ efos_status: efosStatus })
+        .update({
+          efos_status: efosStatus,
+          efos_checked_at: new Date().toISOString(),
+        })
         .eq('company_id', companyId)
         .eq('rfc', issuerRfc);
 
