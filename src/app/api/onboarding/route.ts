@@ -210,33 +210,75 @@ async function testFintoc(companyId: number, config: Record<string, string>) {
 
 // ── SAT: Test ──
 async function testSat(companyId: number, config: Record<string, string>) {
-  const { rfcEmisor } = config;
-  if (!rfcEmisor) return Response.json({ success: false, message: 'Falta el RFC del emisor' });
-
-  const rfcRegex = /^[A-Z&Ñ]{3,4}\d{6}[A-Z0-9]{3}$/;
-  if (!rfcRegex.test(rfcEmisor)) return Response.json({ success: false, message: 'Formato de RFC invalido' });
-
   const { data: existing } = await query('integrations', { match: { company_id: companyId, provider: 'sat' }, single: true });
   const cfg = (existing?.config as Record<string, string>) || {};
+
+  // Resolve the API key: prefer what the user sent, fall back to encrypted, then plaintext
+  let syntageApiKey = config.syntageApiKey;
+  if (!syntageApiKey || syntageApiKey === '••••••••') {
+    // Try decrypting stored key
+    if (existing?.config_encrypted) {
+      try {
+        const { decrypt } = await import('@/lib/utils/crypto');
+        const decrypted = decrypt(existing.config_encrypted as Buffer | string) as Record<string, string>;
+        syntageApiKey = decrypted.syntageApiKey || cfg.syntageApiKey || '';
+      } catch {
+        syntageApiKey = cfg.syntageApiKey || '';
+      }
+    } else {
+      syntageApiKey = cfg.syntageApiKey || '';
+    }
+  }
+
+  const rfcEmisor = config.rfcEmisor || cfg.rfcEmisor || '';
   const hasCert = !!cfg.certBase64;
   const hasKey = !!cfg.keyBase64;
-  const hasSyntage = !!cfg.syntageApiKey;
+  const hasSyntage = !!syntageApiKey;
   const certInfo = hasCert && hasKey ? ' | Certificados: cargados' : hasCert ? ' | Solo .cer cargado' : hasKey ? ' | Solo .key cargado' : ' | Sin certificados';
 
-  await update('integrations', {
-    is_connected: true,
-    last_sync_status: hasSyntage ? 'configured' : 'warning',
-    last_sync_message: hasSyntage
-      ? `RFC: ${rfcEmisor} — Syntage configurado${certInfo}`
-      : `RFC: ${rfcEmisor} — Configura Syntage para validación SAT${certInfo}`,
-    updated_at: new Date().toISOString(),
-  }, { company_id: companyId, provider: 'sat' }).catch(() => {});
+  // If we have a Syntage API key, actually test the connection
+  if (hasSyntage) {
+    try {
+      const { createSyntageClient } = await import('@/lib/integrations/syntage');
+      const client = createSyntageClient({ ...cfg, syntageApiKey });
+      const status = await client.testConnection();
 
-  return Response.json({
-    success: true,
-    message: hasSyntage
-      ? `RFC ${rfcEmisor} configurado — Syntage para validación SAT${certInfo}`
-      : `RFC ${rfcEmisor} configurado — Conecta Syntage para validar CFDIs${certInfo}`,
-    certificates: { cer: hasCert, key: hasKey },
-  });
+      const msg = (status as Record<string, unknown>).ok
+        ? `Syntage conectado — ${(status as Record<string, unknown>).taxpayers || 0} contribuyentes${certInfo}`
+        : `Error de conexion: ${(status as Record<string, unknown>).error || 'Verifica tu API Key'}`;
+      const success = !!(status as Record<string, unknown>).ok;
+
+      await update('integrations', {
+        is_connected: success,
+        last_sync_status: success ? 'configured' : 'error',
+        last_sync_message: msg,
+        updated_at: new Date().toISOString(),
+      }, { company_id: companyId, provider: 'sat' }).catch(() => {});
+
+      return Response.json({ success, message: msg });
+    } catch (e) {
+      const errMsg = e instanceof Error ? e.message : 'Error desconocido';
+      return Response.json({ success: false, message: `Error de conexion: ${errMsg}` });
+    }
+  }
+
+  // No API key — just validate RFC if provided
+  if (rfcEmisor) {
+    const rfcRegex = /^[A-Z&Ñ]{3,4}\d{6}[A-Z0-9]{3}$/;
+    if (!rfcRegex.test(rfcEmisor)) return Response.json({ success: false, message: 'Formato de RFC invalido' });
+
+    await update('integrations', {
+      is_connected: false,
+      last_sync_status: 'warning',
+      last_sync_message: `RFC: ${rfcEmisor} — Configura Syntage para validacion SAT${certInfo}`,
+      updated_at: new Date().toISOString(),
+    }, { company_id: companyId, provider: 'sat' }).catch(() => {});
+
+    return Response.json({
+      success: false,
+      message: `RFC ${rfcEmisor} configurado — Falta API Key de Syntage${certInfo}`,
+    });
+  }
+
+  return Response.json({ success: false, message: 'Ingresa tu API Key de Syntage y RFC para probar la conexion' });
 }

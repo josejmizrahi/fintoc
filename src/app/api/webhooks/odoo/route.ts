@@ -183,6 +183,7 @@ async function handleInvoiceEvent(
       odoo_id: inv.id,
       odoo_move_id: String(inv.id),
       source: 'odoo',
+      sat_status: 'no_validado',
     };
 
     // Upsert by company_id + odoo_id
@@ -214,17 +215,17 @@ async function handlePaymentEvent(
       config,
       'account.move',
       [['id', '=', invoiceMoveId]],
-      ['amount_residual', 'payment_state'],
+      ['amount_total', 'amount_residual', 'payment_state'],
       1,
     );
 
     if (!invoices.length) return;
-    const inv = invoices[0] as { amount_residual: number; payment_state: string };
+    const inv = invoices[0] as { amount_total: number; amount_residual: number; payment_state: string };
 
     await admin.from('invoices')
       .update({
         amount_residual: inv.amount_residual,
-        amount_paid: (data.amount as number) || 0,
+        amount_paid: inv.amount_total - inv.amount_residual,
         payment_state: inv.payment_state,
       })
       .eq('company_id', companyId)

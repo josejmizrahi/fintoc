@@ -1,8 +1,7 @@
 import { getAdminClient } from '@/lib/supabase/admin';
-import { decrypt } from '@/lib/utils/crypto';
-import { syncOdoo } from '@/lib/integrations/config';
 import { verifyCronSecret } from '@/lib/middleware/cron-auth';
-import type { OdooConfig } from '@/lib/integrations/odoo';
+import { getProvider } from '@/packages/sync-engine';
+import '@/packages/integrations'; // registers providers
 
 interface CronResult {
   company_id: string;
@@ -37,8 +36,8 @@ export async function GET(req: Request): Promise<Response> {
       }
 
       try {
-        const config = decrypt(integration.config_encrypted) as unknown as OdooConfig;
-        const result = await syncOdoo(integration.company_id, config);
+        const engine = getProvider('odoo');
+        const result = await engine.run(String(integration.company_id));
         results.push({
           company_id: integration.company_id,
           status: result.status,

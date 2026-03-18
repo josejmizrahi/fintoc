@@ -4,6 +4,7 @@ import { ApiError } from '@/lib/utils/errors';
 import { hasDB, query } from '@/lib/db';
 import { createSyntageClient } from '@/lib/integrations/syntage';
 import { getAdminClient } from '@/lib/supabase/admin';
+import { encrypt, decrypt } from '@/lib/utils/crypto';
 
 function normalizeRfc(rfc: string | null | undefined): string {
   if (!rfc || typeof rfc !== 'string') return '';
@@ -61,7 +62,22 @@ async function getSyntageClient(companyId: number) {
     match: { company_id: companyId, provider: 'sat' },
     single: true,
   });
-  const config = (integration?.config || {}) as Record<string, string>;
+
+  if (!integration) {
+    throw new ApiError('INTEGRATION_NOT_CONFIGURED', 'SAT/Syntage no configurado. Configura la integracion en Configuracion.', 422);
+  }
+
+  // Try encrypted config first, fall back to plaintext
+  let config = (integration.config || {}) as Record<string, string>;
+  if (integration.config_encrypted) {
+    try {
+      const decrypted = decrypt(integration.config_encrypted as Buffer | string) as Record<string, string>;
+      config = { ...config, ...decrypted };
+    } catch {
+      // Fall back to plaintext config
+    }
+  }
+
   if (!config.syntageApiKey) {
     throw new ApiError('INTEGRATION_NOT_CONFIGURED', 'Syntage no configurado. Agrega tu API Key en Configuracion > SAT.', 422);
   }
@@ -363,25 +379,43 @@ async function saveConfig(companyId: number, params: Record<string, unknown>) {
   });
 
   const existingConfig = (existing?.config as Record<string, string>) || {};
-  const mergedConfig = {
+  const fullConfig = {
     ...existingConfig,
     syntageApiKey,
     syntageEnvironment: syntageEnvironment || 'production',
     ...(rfcEmisor ? { rfcEmisor } : {}),
   };
 
+  // Encrypt sensitive credentials
+  let configEncrypted: Buffer | null = null;
+  try {
+    configEncrypted = encrypt({
+      syntageApiKey: fullConfig.syntageApiKey,
+      rfcEmisor: fullConfig.rfcEmisor || '',
+    });
+  } catch (err) {
+    console.error('[sat/syntage] Encryption failed:', err);
+  }
+
+  // Store non-sensitive fields in plaintext config (omit API key)
+  const { syntageApiKey: _key, ...safeConfig } = fullConfig;
+
   const admin = getAdminClient();
   const updatePayload: Record<string, unknown> = {
-    config: mergedConfig,
+    config: safeConfig,
     is_connected: true,
+    status: 'valid',
     updated_at: new Date().toISOString(),
   };
+  if (configEncrypted) {
+    updatePayload.config_encrypted = configEncrypted;
+  }
 
   const companyRfc = await getCompanyRfc(companyId);
   const rfcToMatch = companyRfc || (rfcEmisor ? normalizeRfc(rfcEmisor) : null);
   if (rfcToMatch) {
     try {
-      const client = createSyntageClient(mergedConfig as Record<string, string>);
+      const client = createSyntageClient(fullConfig as Record<string, string>);
       const data = await client.listTaxpayers();
       const members = (data['hydra:member'] || []) as Array<{ id: string; rfc?: string }>;
       const match = members.find((tp) => normalizeRfc(tp.rfc) === rfcToMatch || normalizeRfc(tp.id) === rfcToMatch);
@@ -399,15 +433,12 @@ async function saveConfig(companyId: number, params: Record<string, unknown>) {
     await admin.from('integrations').insert({
       company_id: companyId,
       provider: 'sat',
-      config: mergedConfig,
-      is_connected: true,
-      updated_at: updatePayload.updated_at,
-      ...(updatePayload.syntage_taxpayer_id ? { syntage_taxpayer_id: updatePayload.syntage_taxpayer_id } : {}),
+      ...updatePayload,
     });
   }
 
   try {
-    const client = createSyntageClient(mergedConfig as Record<string, string>);
+    const client = createSyntageClient(fullConfig as Record<string, string>);
     const status = await client.testConnection();
     return Response.json({
       success: true,

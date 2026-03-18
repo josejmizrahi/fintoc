@@ -50,6 +50,7 @@ export async function getUserRole(req: NextRequest): Promise<string | null> {
 const SENSITIVE_KEYS = new Set([
   "password",
   "secretKey",
+  "syntageApiKey",
   "webhookSecret",
   "keyPassword",
   "smtpPassword",
