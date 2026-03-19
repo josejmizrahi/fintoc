@@ -70,7 +70,16 @@ export async function getIntegrationCredentials(
     );
   }
 
-  return decrypt(data.config_encrypted);
+  const decrypted = decrypt(data.config_encrypted as string | Buffer);
+  if (!decrypted) {
+    throw new ApiError(
+      'INTEGRATION_ERROR',
+      `No se pudo descifrar la configuracion de ${provider}. Reconfigura la integracion.`,
+      500,
+    );
+  }
+
+  return decrypted;
 }
 
 /**
@@ -86,17 +95,18 @@ export async function saveIntegrationConfig(
   const admin = getAdminClient();
   const encryptedCredentials = encrypt(credentials);
 
+  const payload: Record<string, unknown> = {
+    company_id: companyId,
+    provider,
+    config: encryptedCredentials ? settings : { ...settings, ...credentials },
+    status: 'connected',
+    is_connected: true,
+  };
+  if (encryptedCredentials) {
+    payload.config_encrypted = encryptedCredentials;
+  }
+
   await admin
     .from('integrations')
-    .upsert(
-      {
-        company_id: companyId,
-        provider,
-        config: settings,
-        config_encrypted: encryptedCredentials,
-        status: 'connected',
-        is_connected: true,
-      },
-      { onConflict: 'company_id,provider' },
-    );
+    .upsert(payload, { onConflict: 'company_id,provider' });
 }

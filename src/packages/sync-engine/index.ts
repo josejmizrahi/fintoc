@@ -77,6 +77,14 @@ export abstract class BaseSyncProvider<TConfig = unknown> {
   abstract transform(remote: SyncData, companyId: string): SyncDiff;
 
   /**
+   * Return errors collected during the fetch phase.
+   * Override in providers that catch per-entity fetch errors.
+   */
+  getFetchErrors(): SyncError[] {
+    return [];
+  }
+
+  /**
    * Hook called after transform. Providers can override to handle custom upsert
    * logic (e.g. smart linking of vendors/customers by RFC without overwriting).
    * Return the number of records synced/failed for entities marked with skipUpsert.
@@ -115,6 +123,12 @@ export abstract class BaseSyncProvider<TConfig = unknown> {
         () => this.fetch(config, { companyId, lastSyncAt }),
         { maxRetries: 2, baseDelay: 2000, retryOn: (err) => isRetryableError(err) },
       );
+
+      // Collect any fetch-phase errors (providers can override getFetchErrors)
+      const fetchErrors = this.getFetchErrors();
+      if (fetchErrors.length > 0) {
+        errors.push(...fetchErrors);
+      }
 
       // Transform to DB rows
       const diff = this.transform(remote, companyId);

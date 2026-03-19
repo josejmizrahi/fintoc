@@ -58,10 +58,11 @@ export class OdooSyncProvider extends BaseSyncProvider<OdooConfig> {
     let creds: OdooConnectionCreds | null = null;
 
     if (integration.config_encrypted) {
-      try {
-        creds = decrypt(integration.config_encrypted) as unknown as OdooConnectionCreds;
-      } catch (err) {
-        console.error('[odoo-sync] Failed to decrypt config, falling back to plaintext:', err);
+      const decrypted = decrypt(integration.config_encrypted as string | Buffer);
+      if (decrypted) {
+        creds = decrypted as unknown as OdooConnectionCreds;
+      } else {
+        console.warn('[odoo-sync] Encrypted config exists but decryption failed, trying plaintext');
       }
     }
 
@@ -91,33 +92,27 @@ export class OdooSyncProvider extends BaseSyncProvider<OdooConfig> {
     };
   }
 
+  /** Track errors that occurred during fetch so they appear in sync results */
+  private _fetchErrors: SyncError[] = [];
+
   async fetch(config: OdooConfig, opts: SyncProviderConfig): Promise<SyncData> {
+    this._fetchErrors = [];
+
+    const catchFetchError = (entity: string) => (err: unknown) => {
+      const message = err instanceof Error ? err.message : `Error al obtener ${entity} de Odoo`;
+      console.error(`[odoo-sync] Error fetching ${entity}:`, err);
+      this._fetchErrors.push({ entity, message, retryable: true });
+      return [];
+    };
+
     // Fetch all entities in parallel for speed
     const [invoices, vendors, customers, payments, expenses, purchaseOrders] = await Promise.all([
-      fetchOdooInvoices(config, opts.lastSyncAt).catch((err) => {
-        console.error('[odoo-sync] Error fetching invoices:', err);
-        return [];
-      }),
-      fetchOdooVendors(config, opts.lastSyncAt).catch((err) => {
-        console.error('[odoo-sync] Error fetching vendors:', err);
-        return [];
-      }),
-      fetchOdooCustomers(config, opts.lastSyncAt).catch((err) => {
-        console.error('[odoo-sync] Error fetching customers:', err);
-        return [];
-      }),
-      fetchOdooPayments(config, opts.lastSyncAt).catch((err) => {
-        console.error('[odoo-sync] Error fetching payments:', err);
-        return [];
-      }),
-      fetchOdooExpenses(config, opts.lastSyncAt).catch((err) => {
-        console.error('[odoo-sync] Error fetching expenses:', err);
-        return [];
-      }),
-      fetchOdooPurchaseOrders(config, opts.lastSyncAt).catch((err) => {
-        console.error('[odoo-sync] Error fetching purchase orders:', err);
-        return [];
-      }),
+      fetchOdooInvoices(config, opts.lastSyncAt).catch(catchFetchError('invoices')),
+      fetchOdooVendors(config, opts.lastSyncAt).catch(catchFetchError('vendors')),
+      fetchOdooCustomers(config, opts.lastSyncAt).catch(catchFetchError('customers')),
+      fetchOdooPayments(config, opts.lastSyncAt).catch(catchFetchError('payments')),
+      fetchOdooExpenses(config, opts.lastSyncAt).catch(catchFetchError('expenses')),
+      fetchOdooPurchaseOrders(config, opts.lastSyncAt).catch(catchFetchError('purchaseOrders')),
     ]);
 
     return {
@@ -128,6 +123,11 @@ export class OdooSyncProvider extends BaseSyncProvider<OdooConfig> {
       expenses: expenses || [],
       purchaseOrders: purchaseOrders || [],
     };
+  }
+
+  /** Return fetch-phase errors so the sync engine includes them in the final result */
+  getFetchErrors(): SyncError[] {
+    return this._fetchErrors;
   }
 
   transform(remote: SyncData, companyId: string): SyncDiff {

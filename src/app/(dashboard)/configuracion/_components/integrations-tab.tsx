@@ -11,6 +11,7 @@ import {
   RefreshCw,
   Unplug,
   ExternalLink,
+  AlertTriangle,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -48,6 +49,8 @@ function IntegrationCard({
   description,
   isConnected,
   lastSync,
+  lastSyncStatus,
+  lastSyncMessage,
   onEdit,
   onTest,
   onSync,
@@ -61,6 +64,8 @@ function IntegrationCard({
   description: string;
   isConnected: boolean;
   lastSync?: string;
+  lastSyncStatus?: string;
+  lastSyncMessage?: string;
   onEdit: () => void;
   onTest: () => void;
   onSync: () => void;
@@ -70,6 +75,11 @@ function IntegrationCard({
   isSyncing: boolean;
   isSyncingPartners?: boolean;
 }) {
+  const statusColor = lastSyncStatus === 'error' ? 'text-destructive' :
+    lastSyncStatus === 'warning' ? 'text-yellow-600' :
+    lastSyncStatus === 'connected' || lastSyncStatus === 'configured' ? 'text-green-600' :
+    'text-muted-foreground';
+
   return (
     <Card>
       <CardHeader className="pb-3">
@@ -94,6 +104,17 @@ function IntegrationCard({
           <p className="text-xs text-muted-foreground mt-1">
             Ultima sincronizacion: {lastSync}
           </p>
+        )}
+        {lastSyncMessage && (
+          <div className={`flex items-start gap-1.5 mt-1.5 text-xs ${statusColor}`}>
+            {(lastSyncStatus === 'error' || lastSyncStatus === 'warning') && (
+              <AlertTriangle className="size-3.5 shrink-0 mt-0.5" />
+            )}
+            {lastSyncStatus === 'connected' || lastSyncStatus === 'configured' ? (
+              <CheckCircle2 className="size-3.5 shrink-0 mt-0.5" />
+            ) : null}
+            <span className="line-clamp-2">{lastSyncMessage}</span>
+          </div>
         )}
       </CardHeader>
       <CardContent>
@@ -680,6 +701,8 @@ export function IntegrationsTab() {
                   ? formatRelative(info.last_sync_at)
                   : undefined
               }
+              lastSyncStatus={info?.last_sync_status as string | undefined}
+              lastSyncMessage={info?.last_sync_message as string | undefined}
               onEdit={() => setEditingProvider(key)}
               onTest={() => {
                 setActiveAction({ provider: key, action: "test" });

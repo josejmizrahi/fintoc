@@ -55,12 +55,8 @@ export const POST = createHandler(async (req) => {
       .single();
 
     if (integration?.config_encrypted) {
-      try {
-        const config = decrypt(integration.config_encrypted);
-        fintocSecretKey = config.secret_key as string;
-      } catch {
-        // Fall back to env variable
-      }
+      const config = decrypt(integration.config_encrypted as string | Buffer) as Record<string, string> | null;
+      if (config?.secret_key) fintocSecretKey = config.secret_key;
     }
 
     if (!fintocSecretKey) {

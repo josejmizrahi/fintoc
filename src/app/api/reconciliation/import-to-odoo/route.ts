@@ -47,12 +47,11 @@ export const POST = createHandler(async (req) => {
     if (!cfdi) throw new ApiError('NOT_FOUND', 'CFDI no encontrado en SAT', 404);
 
     // Decrypt Odoo config
-    let odooConfig: odoo.OdooConfig;
-    try {
-      odooConfig = decrypt(odooInt.config_encrypted) as unknown as odoo.OdooConfig;
-    } catch {
-      throw new ApiError('INTEGRATION_ERROR', 'Error al descifrar configuración de Odoo', 500);
+    const decryptedConfig = decrypt(odooInt.config_encrypted as string | Buffer);
+    if (!decryptedConfig) {
+      throw new ApiError('INTEGRATION_ERROR', 'Error al descifrar configuración de Odoo. Reconfigura la integracion.', 500);
     }
+    const odooConfig = decryptedConfig as unknown as odoo.OdooConfig;
 
     // Determine move_type from CFDI type
     const moveType = cfdi.type === 'I' ? 'out_invoice' :

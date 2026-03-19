@@ -93,33 +93,33 @@ export const POST = createHandler(async (req) => {
       const mergedConfig = resolveConfig(config, existing?.config as Record<string, string>);
 
       let configEncrypted: Buffer | null = null;
-      try {
-        if (provider === 'odoo') {
-          configEncrypted = encrypt({
-            url: mergedConfig.url || '',
-            database: mergedConfig.database || '',
-            user: mergedConfig.user || '',
-            password: mergedConfig.password || '',
-          });
-        } else if (provider === 'fintoc') {
-          configEncrypted = encrypt({
-            secret_key: mergedConfig.secretKey || '',
-          });
-        } else if (provider === 'sat') {
-          configEncrypted = encrypt({
-            syntageApiKey: mergedConfig.syntageApiKey || '',
-            rfcEmisor: mergedConfig.rfcEmisor || '',
-          });
-        }
-      } catch (err) {
-        console.error('[onboarding] Encryption failed:', err);
-        throw new ApiError('INTERNAL_ERROR', 'Error al encriptar configuración. Verifica que ENCRYPTION_KEY esté configurado correctamente.', 500);
+      if (provider === 'odoo') {
+        configEncrypted = encrypt({
+          url: mergedConfig.url || '',
+          database: mergedConfig.database || '',
+          user: mergedConfig.user || '',
+          password: mergedConfig.password || '',
+        });
+      } else if (provider === 'fintoc') {
+        configEncrypted = encrypt({
+          secret_key: mergedConfig.secretKey || '',
+        });
+      } else if (provider === 'sat') {
+        configEncrypted = encrypt({
+          syntageApiKey: mergedConfig.syntageApiKey || '',
+          rfcEmisor: mergedConfig.rfcEmisor || '',
+        });
       }
 
+      // Build safe config: if encryption worked, strip secrets; otherwise keep them in plaintext
       const safeConfig = { ...mergedConfig };
-      delete safeConfig.password;
-      delete safeConfig.secretKey;
-      delete safeConfig.syntageApiKey;
+      if (configEncrypted) {
+        delete safeConfig.password;
+        delete safeConfig.secretKey;
+        delete safeConfig.syntageApiKey;
+      } else {
+        console.warn(`[onboarding] ENCRYPTION_KEY not configured — storing ${provider} credentials in plaintext`);
+      }
 
       const saveData: Record<string, unknown> = {
         config: safeConfig,
@@ -218,13 +218,9 @@ async function testSat(companyId: number, config: Record<string, string>) {
   if (!syntageApiKey || syntageApiKey === '••••••••') {
     // Try decrypting stored key
     if (existing?.config_encrypted) {
-      try {
-        const { decrypt } = await import('@/lib/utils/crypto');
-        const decrypted = decrypt(existing.config_encrypted as Buffer | string) as Record<string, string>;
-        syntageApiKey = decrypted.syntageApiKey || cfg.syntageApiKey || '';
-      } catch {
-        syntageApiKey = cfg.syntageApiKey || '';
-      }
+      const { decrypt } = await import('@/lib/utils/crypto');
+      const decrypted = decrypt(existing.config_encrypted as Buffer | string) as Record<string, string> | null;
+      syntageApiKey = decrypted?.syntageApiKey || cfg.syntageApiKey || '';
     } else {
       syntageApiKey = cfg.syntageApiKey || '';
     }

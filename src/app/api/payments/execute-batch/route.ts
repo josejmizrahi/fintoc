@@ -55,10 +55,10 @@ export const POST = createHandler(async (req) => {
       .single();
 
     if (integration?.config_encrypted) {
-      try {
-        const config = decrypt(integration.config_encrypted);
+      const config = decrypt(integration.config_encrypted as string | Buffer);
+      if (config) {
         fintocSecretKey = config.secret_key as string;
-      } catch { /* use env */ }
+      }
     }
 
     if (!fintocSecretKey) throw new ApiError('INTEGRATION_NOT_CONFIGURED', 'Fintoc no configurado', 422);

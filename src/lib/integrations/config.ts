@@ -69,15 +69,19 @@ export async function getOdooConfigForCompany(companyId: string): Promise<OdooCo
     .single();
 
   if (!integration) {
-    throw new ApiError('INTEGRATION_NOT_CONFIGURED', 'Odoo no configurado', 422);
+    throw new ApiError('INTEGRATION_NOT_CONFIGURED', 'Odoo no configurado. Configura la integracion en Configuracion.', 422);
   }
 
+  // Try encrypted config first, then fall back to plaintext
   let creds: Record<string, string> | null = null;
 
   if (integration.config_encrypted) {
-    try {
-      creds = decrypt(integration.config_encrypted) as Record<string, string>;
-    } catch { /* fall back to plaintext */ }
+    const decrypted = decrypt(integration.config_encrypted as string | Buffer);
+    if (decrypted) {
+      creds = decrypted as Record<string, string>;
+    } else {
+      console.warn('[config] Odoo: encrypted config exists but decryption failed, trying plaintext');
+    }
   }
 
   if (!creds) {
@@ -85,7 +89,7 @@ export async function getOdooConfigForCompany(companyId: string): Promise<OdooCo
   }
 
   if (!creds?.url) {
-    throw new ApiError('INTEGRATION_NOT_CONFIGURED', 'Odoo no configurado', 422);
+    throw new ApiError('INTEGRATION_NOT_CONFIGURED', 'Odoo no configurado — faltan credenciales. Reconfigura la integracion.', 422);
   }
 
   const uid = await odoo.odooAuthenticate(creds.url, creds.database, creds.user, creds.password);
@@ -105,11 +109,13 @@ export async function getFintocConfigForCompany(companyId: string): Promise<{ se
     .single();
 
   if (integration?.config_encrypted) {
-    try {
-      const dec = decrypt(integration.config_encrypted) as Record<string, string>;
+    const dec = decrypt(integration.config_encrypted as string | Buffer) as Record<string, string> | null;
+    if (dec) {
       secretKey = dec.secret_key ?? secretKey;
       linkToken = dec.linkToken ?? dec.link_token;
-    } catch { /* fallback */ }
+    } else {
+      console.warn('[config] Fintoc: encrypted config exists but decryption failed, trying plaintext');
+    }
   }
   if (!secretKey && integration?.config) {
     const cfg = integration.config as Record<string, string>;
@@ -118,7 +124,7 @@ export async function getFintocConfigForCompany(companyId: string): Promise<{ se
   }
 
   if (!secretKey) {
-    throw new ApiError('INTEGRATION_NOT_CONFIGURED', 'Fintoc no configurado', 422);
+    throw new ApiError('INTEGRATION_NOT_CONFIGURED', 'Fintoc no configurado — falta Secret Key. Reconfigura la integracion.', 422);
   }
 
   return { secretKey, linkToken };

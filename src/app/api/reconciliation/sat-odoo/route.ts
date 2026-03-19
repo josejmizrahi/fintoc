@@ -133,12 +133,11 @@ export const POST = createHandler(async (req) => {
     // Fetch Odoo invoices — include refunds for complete reconciliation
     let odooInvoices: Record<string, unknown>[] = [];
     try {
-      let config: odoo.OdooConfig;
-      try {
-        config = decrypt(odooInt.config_encrypted) as unknown as odoo.OdooConfig;
-      } catch {
-        throw new ApiError('INTEGRATION_ERROR', 'Error al descifrar configuracion de Odoo', 500);
+      const decryptedOdoo = decrypt(odooInt.config_encrypted as string | Buffer);
+      if (!decryptedOdoo) {
+        throw new ApiError('INTEGRATION_ERROR', 'Error al descifrar configuracion de Odoo. Reconfigura la integracion.', 500);
       }
+      const config = decryptedOdoo as unknown as odoo.OdooConfig;
 
       odooInvoices = await odoo.odooSearchRead(
         config,

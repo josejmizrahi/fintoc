@@ -67,19 +67,23 @@ async function getSyntageClient(companyId: number) {
     throw new ApiError('INTEGRATION_NOT_CONFIGURED', 'SAT/Syntage no configurado. Configura la integracion en Configuracion.', 422);
   }
 
-  // Try encrypted config first, fall back to plaintext
+  // Merge plaintext config with decrypted secrets
   let config = (integration.config || {}) as Record<string, string>;
   if (integration.config_encrypted) {
-    try {
-      const decrypted = decrypt(integration.config_encrypted as Buffer | string) as Record<string, string>;
+    const decrypted = decrypt(integration.config_encrypted as Buffer | string) as Record<string, string> | null;
+    if (decrypted) {
       config = { ...config, ...decrypted };
-    } catch {
-      // Fall back to plaintext config
+    } else {
+      console.warn('[syntage] Encrypted config exists but decryption failed for company', companyId, '— trying plaintext');
     }
   }
 
   if (!config.syntageApiKey) {
-    throw new ApiError('INTEGRATION_NOT_CONFIGURED', 'Syntage no configurado. Agrega tu API Key en Configuracion > SAT.', 422);
+    throw new ApiError(
+      'INTEGRATION_NOT_CONFIGURED',
+      'Falta la API Key de Syntage. Ve a Configuracion > SAT y guarda tu API Key nuevamente.',
+      422,
+    );
   }
   return { client: createSyntageClient(config), config, integration };
 }
@@ -387,18 +391,14 @@ async function saveConfig(companyId: number, params: Record<string, unknown>) {
   };
 
   // Encrypt sensitive credentials
-  let configEncrypted: Buffer | null = null;
-  try {
-    configEncrypted = encrypt({
-      syntageApiKey: fullConfig.syntageApiKey,
-      rfcEmisor: fullConfig.rfcEmisor || '',
-    });
-  } catch (err) {
-    console.error('[sat/syntage] Encryption failed:', err);
-  }
+  const configEncrypted = encrypt({
+    syntageApiKey: fullConfig.syntageApiKey,
+    rfcEmisor: fullConfig.rfcEmisor || '',
+  });
 
-  // Store non-sensitive fields in plaintext config (omit API key)
-  const { syntageApiKey: _key, ...safeConfig } = fullConfig;
+  // If encryption works, strip secrets from plaintext config; otherwise keep them
+  const { syntageApiKey: _key, ...safeConfigWithoutKey } = fullConfig;
+  const safeConfig = configEncrypted ? safeConfigWithoutKey : fullConfig;
 
   const admin = getAdminClient();
   const updatePayload: Record<string, unknown> = {

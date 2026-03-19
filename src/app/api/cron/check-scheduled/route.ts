@@ -32,7 +32,8 @@ export async function GET(req: Request): Promise<Response> {
 
         let secretKey = process.env.FINTOC_SECRET_KEY;
         if (integration?.config_encrypted) {
-          try { secretKey = (decrypt(integration.config_encrypted) as Record<string, string>).secret_key; } catch { /* use env */ }
+          const dec = decrypt(integration.config_encrypted as string | Buffer) as Record<string, string> | null;
+          if (dec?.secret_key) secretKey = dec.secret_key;
         }
         if (!secretKey) {
           failed++;

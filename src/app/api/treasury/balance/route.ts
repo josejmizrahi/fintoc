@@ -20,7 +20,8 @@ export const GET = createHandler(async (req) => {
       .eq('company_id', ctx.company_id).eq('provider', 'fintoc').single();
 
     if (integration?.config_encrypted) {
-      try { secretKey = (decrypt(integration.config_encrypted) as Record<string, string>).secret_key; } catch { /* use env */ }
+      const dec = decrypt(integration.config_encrypted as string | Buffer) as Record<string, string> | null;
+      if (dec?.secret_key) secretKey = dec.secret_key;
     }
 
     // Refresh each account
