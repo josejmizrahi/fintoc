@@ -26,7 +26,7 @@ const TABS = [
 export default function ConfiguracionPage() {
   return (
     <PermissionGate
-      permission="config:read"
+      permission="config.read"
       fallback={
         <EmptyState
           icon={Settings}

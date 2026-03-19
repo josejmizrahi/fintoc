@@ -71,7 +71,7 @@ export default function SatPage() {
   // Not connected? Show setup prompt
   if (statusQuery.isSuccess && !statusQuery.data?.ok) {
     return (
-      <PermissionGate permission="invoices:read" fallback={permFallback}>
+      <PermissionGate permission="invoices.read" fallback={permFallback}>
       <div className="space-y-6 p-6">
         <h1 className="text-2xl font-bold">SAT via Syntage</h1>
         <EmptyState
@@ -89,7 +89,7 @@ export default function SatPage() {
   const noMatchingEntity = statusQuery.data?.ok && taxpayers.length === 0 && taxpayersQuery.isSuccess;
 
   return (
-    <PermissionGate permission="invoices:read" fallback={permFallback}>
+    <PermissionGate permission="invoices.read" fallback={permFallback}>
     <div className="space-y-6 p-6">
       {/* Header */}
       <div className="flex items-center justify-between">

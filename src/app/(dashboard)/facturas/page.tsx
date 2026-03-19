@@ -205,7 +205,7 @@ export default function FacturasPage() {
       />
 
       {/* Cancellation Dialog */}
-      <PermissionGate permission="invoices:cancel-cfdi">
+      <PermissionGate permission="invoices.cancel">
         <CancellationDialog
           open={state.cancelDialogOpen}
           onOpenChange={state.setCancelDialogOpen}

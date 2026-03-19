@@ -32,7 +32,7 @@ export function PaymentToolbar({
   return (
     <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
       <div className="flex items-center gap-2">
-        <PermissionGate permission="payments:create">
+        <PermissionGate permission="payments.create">
           <Button onClick={onNewPayment}>
             <Plus className="mr-2 size-4" />
             Nuevo Pago

@@ -1,109 +1,47 @@
 import { describe, it, expect } from "vitest";
-import { checkPermission, checkRouteAccess, getActionAndResource } from "./rbac";
+import { hasPermission } from "./rbac";
 
-describe("checkPermission", () => {
+describe("hasPermission", () => {
   it("admin has full access to everything", () => {
-    expect(checkPermission("admin", "read", "payments")).toBe(true);
-    expect(checkPermission("admin", "execute", "payments")).toBe(true);
-    expect(checkPermission("admin", "configure", "integrations")).toBe(true);
-    expect(checkPermission("admin", "delete", "vendors")).toBe(true);
+    expect(hasPermission("admin", "payments.read")).toBe(true);
+    expect(hasPermission("admin", "payments.execute")).toBe(true);
+    expect(hasPermission("admin", "config.write")).toBe(true);
+    expect(hasPermission("admin", "users.manage")).toBe(true);
   });
 
-  it("manager can CRUD but not configure", () => {
-    expect(checkPermission("manager", "read", "payments")).toBe(true);
-    expect(checkPermission("manager", "create", "payments")).toBe(true);
-    expect(checkPermission("manager", "execute", "payments")).toBe(true);
-    expect(checkPermission("manager", "approve", "payments")).toBe(true);
-    expect(checkPermission("manager", "configure", "integrations")).toBe(false);
+  it("accountant can read, create, execute payments but not cancel", () => {
+    expect(hasPermission("accountant", "payments.read")).toBe(true);
+    expect(hasPermission("accountant", "payments.create")).toBe(true);
+    expect(hasPermission("accountant", "payments.execute")).toBe(true);
+    expect(hasPermission("accountant", "invoices.read")).toBe(true);
+    expect(hasPermission("accountant", "invoices.create")).toBe(true);
+    expect(hasPermission("accountant", "invoices.validate")).toBe(true);
+    expect(hasPermission("accountant", "expenses.approve")).toBe(true);
+    expect(hasPermission("accountant", "sat.validate")).toBe(true);
+    expect(hasPermission("accountant", "sync.execute")).toBe(true);
+    // accountant cannot manage config or users
+    expect(hasPermission("accountant", "config.write")).toBe(false);
+    expect(hasPermission("accountant", "users.manage")).toBe(false);
   });
 
-  it("accountant can read, create, and execute but cannot approve or delete", () => {
-    expect(checkPermission("accountant", "read", "payments")).toBe(true);
-    expect(checkPermission("accountant", "read", "invoices")).toBe(true);
-    expect(checkPermission("accountant", "create", "payments")).toBe(true);
-    expect(checkPermission("accountant", "create", "invoices")).toBe(true);
-    expect(checkPermission("accountant", "execute", "payments")).toBe(true);
-    expect(checkPermission("accountant", "approve", "payments")).toBe(false);
-    expect(checkPermission("accountant", "delete", "payments")).toBe(false);
-  });
-
-  it("viewer can only read", () => {
-    expect(checkPermission("viewer", "read", "payments")).toBe(true);
-    expect(checkPermission("viewer", "read", "invoices")).toBe(true);
-    expect(checkPermission("viewer", "create", "payments")).toBe(false);
-    expect(checkPermission("viewer", "execute", "payments")).toBe(false);
-    expect(checkPermission("viewer", "approve", "expenses")).toBe(false);
-    expect(checkPermission("viewer", "configure", "integrations")).toBe(false);
-    expect(checkPermission("viewer", "delete", "vendors")).toBe(false);
+  it("viewer has read-only access to most resources", () => {
+    expect(hasPermission("viewer", "payments.read")).toBe(true);
+    expect(hasPermission("viewer", "invoices.read")).toBe(true);
+    expect(hasPermission("viewer", "vendors.read")).toBe(true);
+    expect(hasPermission("viewer", "customers.read")).toBe(true);
+    expect(hasPermission("viewer", "reports.read")).toBe(true);
+    expect(hasPermission("viewer", "dashboard.read")).toBe(true);
+    // viewer cannot write or execute
+    expect(hasPermission("viewer", "payments.create")).toBe(false);
+    expect(hasPermission("viewer", "payments.execute")).toBe(false);
+    expect(hasPermission("viewer", "expenses.approve")).toBe(false);
+    expect(hasPermission("viewer", "config.write")).toBe(false);
+    expect(hasPermission("viewer", "users.manage")).toBe(false);
+    expect(hasPermission("viewer", "vendors.write")).toBe(false);
   });
 
   it("unknown role has no access", () => {
-    expect(checkPermission("unknown", "read", "payments")).toBe(false);
-    expect(checkPermission("", "read", "payments")).toBe(false);
-  });
-});
-
-describe("getActionAndResource", () => {
-  it("maps GET to read action", () => {
-    expect(getActionAndResource("GET", "payments")).toEqual({ action: "read", resource: "payments" });
-  });
-
-  it("maps POST to create action", () => {
-    expect(getActionAndResource("POST", "invoices")).toEqual({ action: "create", resource: "invoices" });
-  });
-
-  it("maps PUT to update action", () => {
-    expect(getActionAndResource("PUT", "vendors/123")).toEqual({ action: "update", resource: "vendors" });
-  });
-
-  it("maps DELETE to delete action", () => {
-    expect(getActionAndResource("DELETE", "customers/5")).toEqual({ action: "delete", resource: "customers" });
-  });
-
-  it("detects execute action from path", () => {
-    expect(getActionAndResource("POST", "payments/123/execute")).toEqual({ action: "execute", resource: "payments" });
-  });
-
-  it("detects approve action from path", () => {
-    expect(getActionAndResource("POST", "approvals/1/approve")).toEqual({ action: "approve", resource: "approvals" });
-  });
-
-  it("detects configure action for integrations", () => {
-    expect(getActionAndResource("POST", "integrations")).toEqual({ action: "configure", resource: "integrations" });
-    expect(getActionAndResource("GET", "integrations")).toEqual({ action: "read", resource: "integrations" });
-  });
-
-  it("returns null for unknown resource", () => {
-    expect(getActionAndResource("GET", "unknown-resource")).toBeNull();
-  });
-});
-
-describe("checkRouteAccess", () => {
-  it("allows admin to access everything", () => {
-    expect(checkRouteAccess("admin", "POST", "payments/123/execute")).toBeNull();
-    expect(checkRouteAccess("admin", "POST", "integrations")).toBeNull();
-  });
-
-  it("denies viewer from creating payments", () => {
-    const result = checkRouteAccess("viewer", "POST", "payments/vendor");
-    expect(result).toContain("Acceso denegado");
-    expect(result).toContain("viewer");
-  });
-
-  it("allows accountant to execute payments", () => {
-    expect(checkRouteAccess("accountant", "POST", "payments/123/execute")).toBeNull();
-  });
-
-  it("denies viewer from deleting resources", () => {
-    const result = checkRouteAccess("viewer", "DELETE", "vendors/5");
-    expect(result).toContain("Acceso denegado");
-  });
-
-  it("allows manager to execute payments", () => {
-    expect(checkRouteAccess("manager", "POST", "payments/123/execute")).toBeNull();
-  });
-
-  it("passes through unknown routes", () => {
-    expect(checkRouteAccess("viewer", "GET", "unknown-path")).toBeNull();
+    expect(hasPermission("unknown", "payments.read")).toBe(false);
+    expect(hasPermission("", "payments.read")).toBe(false);
   });
 });

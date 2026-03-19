@@ -86,9 +86,9 @@ export function useInvoiceColumns(
   tab: "payable" | "receivable",
   onAction: (action: string, invoice: Invoice) => void
 ): ColumnDef<Invoice, unknown>[] {
-  const canValidate = usePermission("invoices:validate");
-  const canCancelCfdi = usePermission("invoices:cancel-cfdi");
-  const canCreatePayment = usePermission("payments:create");
+  const canValidate = usePermission("invoices.validate");
+  const canCancelCfdi = usePermission("invoices.cancel");
+  const canCreatePayment = usePermission("payments.create");
 
   return useMemo(
     () => [

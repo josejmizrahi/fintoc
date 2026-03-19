@@ -18,7 +18,7 @@ export default function ConciliacionPage() {
 
   return (
     <PermissionGate
-      permission="reconciliation:read"
+      permission="reconciliation.read"
       fallback={
         <div className="flex flex-col items-center justify-center gap-4 py-24 text-muted-foreground">
           <ShieldAlert className="size-12" />

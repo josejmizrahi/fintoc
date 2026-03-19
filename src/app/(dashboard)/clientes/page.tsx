@@ -472,7 +472,7 @@ export default function ClientesPage() {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <PermissionGate permission="customers:write">
+                <PermissionGate permission="customers.write">
                   <DropdownMenuItem
                     onClick={() => handleAssignClabe(customer)}
                     disabled={
@@ -518,7 +518,7 @@ export default function ClientesPage() {
         placeholder="Buscar por nombre, RFC o email..."
         className="w-full max-w-sm"
       />
-      <PermissionGate permission="customers:write">
+      <PermissionGate permission="customers.write">
         <Button onClick={() => setCreateOpen(true)}>
           <Plus className="mr-2 size-4" />
           Nuevo Cliente

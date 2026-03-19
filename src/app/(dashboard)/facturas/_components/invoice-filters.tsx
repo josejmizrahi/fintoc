@@ -91,7 +91,7 @@ export function InvoiceToolbar({
           placeholder="Buscar por numero, proveedor, RFC, UUID..."
           className="w-full sm:w-80"
         />
-        <PermissionGate permission="invoices:validate">
+        <PermissionGate permission="invoices.validate">
           <Button variant="outline" onClick={onBulkValidation} disabled={bulkRunning}>
             {bulkRunning ? (
               <Loader2 className="mr-1.5 size-4 animate-spin" />

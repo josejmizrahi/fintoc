@@ -48,7 +48,7 @@ export function BatchExecutionBar({
           </span>
         </div>
       ) : (
-        <PermissionGate permission="payments:execute">
+        <PermissionGate permission="payments.execute">
           <Button size="sm" className="ml-auto" onClick={onExecute}>
             <Play className="mr-2 size-4" />
             Ejecutar Seleccionados

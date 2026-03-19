@@ -412,7 +412,7 @@ export default function CobranzaPage() {
             <Mail className="mr-2 size-4" />
             Enviar Recordatorio
           </DropdownMenuItem>
-          <PermissionGate permission="payments:create">
+          <PermissionGate permission="payments.create">
             <DropdownMenuItem onClick={() => handleManualPayment(invoice)}>
               <CreditCard className="mr-2 size-4" />
               Registrar Pago Manual
@@ -686,7 +686,7 @@ export default function CobranzaPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <PermissionGate permission="payments:create">
+          <PermissionGate permission="payments.create">
             <Button
               variant="outline"
               onClick={() => {

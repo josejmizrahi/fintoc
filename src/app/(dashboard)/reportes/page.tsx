@@ -318,7 +318,7 @@ function ReportDetailDialog({
             </SelectContent>
           </Select>
 
-          <PermissionGate permission="reports:export">
+          <PermissionGate permission="reports.export">
             <div className="flex gap-2">
               <Button
                 variant="outline"
@@ -817,7 +817,7 @@ export default function ReportesPage() {
 
   return (
     <PermissionGate
-      permission="reports:read"
+      permission="reports.read"
       fallback={
         <EmptyState
           icon={BarChart3}

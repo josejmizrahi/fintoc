@@ -400,7 +400,7 @@ export default function PresupuestosPage() {
 
   return (
     <PermissionGate
-      permission="budgets:read"
+      permission="budgets.read"
       fallback={
         <EmptyState
           icon={Wallet}

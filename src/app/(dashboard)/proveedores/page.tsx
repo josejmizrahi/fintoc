@@ -622,7 +622,7 @@ export default function ProveedoresPage() {
         placeholder="Buscar por nombre, RFC o email..."
         className="w-full max-w-sm"
       />
-      <PermissionGate permission="vendors:write">
+      <PermissionGate permission="vendors.write">
         <Button onClick={() => setCreateOpen(true)}>
           <Plus className="mr-2 size-4" />
           Nuevo Proveedor

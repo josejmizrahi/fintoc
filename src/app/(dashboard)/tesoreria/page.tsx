@@ -210,7 +210,7 @@ export default function TesoreriaPage() {
 
   return (
     <PermissionGate
-      permission="treasury:read"
+      permission="treasury.read"
       fallback={
         <EmptyState
           icon={Landmark}

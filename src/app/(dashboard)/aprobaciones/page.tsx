@@ -462,7 +462,7 @@ export default function AprobacionesPage() {
         {/* ---- Tab: Reglas (admin only) ---- */}
         <TabsContent value="reglas">
           <PermissionGate
-            permission="approvals:manage"
+            permission="approvals.manage"
             fallback={
               <EmptyState
                 icon={ShieldCheck}

@@ -15,7 +15,7 @@ export function PageHeader({ onNewPayment }: { onNewPayment: () => void }) {
           Gestiona pagos a proveedores y transferencias SPEI.
         </p>
       </div>
-      <PermissionGate permission="payments:create">
+      <PermissionGate permission="payments.create">
         <Button onClick={onNewPayment} className="sm:hidden">
           <Plus className="mr-2 size-4" />
           Nuevo Pago

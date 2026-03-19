@@ -61,9 +61,9 @@ export default function PagosPage() {
   const [batchTotal, setBatchTotal] = useState(0);
 
   // Permissions
-  const canCreate = usePermission("payments:create");
-  const canExecute = usePermission("payments:execute");
-  const canCancel = usePermission("payments:cancel");
+  const canCreate = usePermission("payments.create");
+  const canExecute = usePermission("payments.execute");
+  const canCancel = usePermission("payments.cancel");
 
   // Build query filters
   const queryFilters = useMemo(() => {

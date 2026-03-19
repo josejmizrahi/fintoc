@@ -15,7 +15,7 @@ import type { BulkValidationResult } from "./invoice-dialogs";
 export function useFacturasState() {
   const queryClient = useQueryClient();
   const [filters, setFilters] = useInvoiceFilters();
-  const canValidate = usePermission("invoices:validate");
+  const canValidate = usePermission("invoices.validate");
 
   // Tab state
   const [activeTab, setActiveTab] = useState<"payable" | "receivable">("payable");

@@ -257,7 +257,7 @@ export function InvoiceCfdiContent({
           <Eye className="mr-1.5 size-3.5" />
           Ver XML
         </Button>
-        <PermissionGate permission="invoices:validate">
+        <PermissionGate permission="invoices.validate">
           <Button
             variant="outline"
             size="sm"
