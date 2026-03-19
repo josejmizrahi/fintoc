@@ -9,6 +9,81 @@ import * as odoo from '@/lib/integrations/odoo';
 import { decrypt } from '@/lib/utils/crypto';
 import { writeAuditLog } from '@/lib/middleware/audit';
 
+interface NormalizedRecord {
+  uuid: string;
+  rfc_emisor: string;
+  rfc_receptor: string;
+  fecha: string;
+  monto: number;
+  monto_sat?: number;
+  monto_odoo?: number;
+  odoo_ref?: string;
+  partner?: string;
+  match_type?: string;
+  moneda?: string;
+  sat_status?: string;
+}
+
+function normalizeSat(inv: syntage.SyntageInvoice): NormalizedRecord {
+  return {
+    uuid: (inv.uuid || '').toLowerCase(),
+    rfc_emisor: (inv.issuer?.rfc || '').toUpperCase(),
+    rfc_receptor: (inv.receiver?.rfc || '').toUpperCase(),
+    fecha: (inv.issued_at || '').split('T')[0],
+    monto: Number(inv.total || 0),
+    moneda: inv.currency || 'MXN',
+    sat_status: inv.status,
+  };
+}
+
+function normalizeOdoo(inv: Record<string, unknown>): NormalizedRecord {
+  return {
+    uuid: ((inv.l10n_mx_edi_cfdi_uuid as string) || '').toLowerCase(),
+    rfc_emisor: '',
+    rfc_receptor: '',
+    fecha: ((inv.invoice_date as string) || '').split('T')[0],
+    monto: Number(inv.amount_total || 0),
+    odoo_ref: (inv.name as string) || undefined,
+    partner: odoo.extractM2oName(inv.partner_id as [number, string] | false) || undefined,
+  };
+}
+
+function mergeRecords(
+  sat: NormalizedRecord,
+  odooRec: NormalizedRecord,
+  matchType: string,
+): NormalizedRecord {
+  return {
+    uuid: sat.uuid || odooRec.uuid,
+    rfc_emisor: sat.rfc_emisor,
+    rfc_receptor: sat.rfc_receptor,
+    fecha: sat.fecha || odooRec.fecha,
+    monto: sat.monto,
+    odoo_ref: odooRec.odoo_ref,
+    partner: odooRec.partner,
+    match_type: matchType,
+    moneda: sat.moneda,
+    sat_status: sat.sat_status,
+  };
+}
+
+function mergeWithDiff(
+  sat: NormalizedRecord,
+  odooRec: NormalizedRecord,
+  matchType: string,
+): NormalizedRecord {
+  return {
+    ...mergeRecords(sat, odooRec, matchType),
+    monto_sat: sat.monto,
+    monto_odoo: odooRec.monto,
+  };
+}
+
+function getOdooVat(inv: Record<string, unknown>): string {
+  const ref = (inv.ref as string) || '';
+  return ref.toUpperCase();
+}
+
 export const POST = createHandler(async (req) => {
   return withAuth(withRbac('reconciliation.execute', async (_req, ctx) => {
     let body: unknown;
@@ -62,7 +137,7 @@ export const POST = createHandler(async (req) => {
       try {
         config = decrypt(odooInt.config_encrypted) as unknown as odoo.OdooConfig;
       } catch {
-        throw new ApiError('INTEGRATION_ERROR', 'Error al descifrar configuración de Odoo', 500);
+        throw new ApiError('INTEGRATION_ERROR', 'Error al descifrar configuracion de Odoo', 500);
       }
 
       odooInvoices = await odoo.odooSearchRead(
@@ -74,99 +149,110 @@ export const POST = createHandler(async (req) => {
           ['invoice_date', '<=', period_end],
           ['state', '=', 'posted'],
         ],
-        ['name', 'l10n_mx_edi_cfdi_uuid', 'amount_total', 'partner_id', 'invoice_date', 'move_type']
+        ['name', 'l10n_mx_edi_cfdi_uuid', 'amount_total', 'amount_tax', 'amount_untaxed', 'currency_id', 'partner_id', 'invoice_date', 'move_type', 'ref']
       ) as Record<string, unknown>[];
     } catch (err) {
       if (err instanceof ApiError) throw err;
       throw new ApiError('ODOO_ERROR', 'Error al obtener facturas de Odoo', 502);
     }
 
-    // Build UUID maps
-    const satMap = new Map<string, syntage.SyntageInvoice>();
+    // Build UUID maps with normalized records
+    const satMap = new Map<string, { raw: syntage.SyntageInvoice; norm: NormalizedRecord }>();
     for (const inv of satInvoices) {
-      const uuid = (inv.uuid || '').toLowerCase();
-      if (uuid) satMap.set(uuid, inv);
+      const norm = normalizeSat(inv);
+      if (norm.uuid) satMap.set(norm.uuid, { raw: inv, norm });
     }
 
-    const odooMap = new Map<string, Record<string, unknown>>();
+    const odooMap = new Map<string, { raw: Record<string, unknown>; norm: NormalizedRecord }>();
     for (const inv of odooInvoices) {
-      const uuid = ((inv.l10n_mx_edi_cfdi_uuid as string) || '').toLowerCase();
-      if (uuid) odooMap.set(uuid, inv);
+      const norm = normalizeOdoo(inv);
+      if (norm.uuid) odooMap.set(norm.uuid, { raw: inv, norm });
     }
 
-    // Cross-reference by UUID (primary match)
-    const matched: Record<string, unknown>[] = [];
-    const amountDiff: Record<string, unknown>[] = [];
+    // Results
+    const matched: NormalizedRecord[] = [];
+    const amountDiff: NormalizedRecord[] = [];
     const matchedSatUuids = new Set<string>();
     const matchedOdooUuids = new Set<string>();
+    const usedOdooIds = new Set<number>();
 
-    for (const [uuid, satInv] of satMap) {
-      const odooInv = odooMap.get(uuid);
-      if (odooInv) {
+    // PRIMARY: UUID match (case-insensitive)
+    for (const [uuid, satEntry] of satMap) {
+      const odooEntry = odooMap.get(uuid);
+      if (odooEntry) {
         matchedSatUuids.add(uuid);
         matchedOdooUuids.add(uuid);
-        const satAmount = Number(satInv.total || 0);
-        const odooAmount = Number(odooInv.amount_total || 0);
-        if (Math.abs(satAmount - odooAmount) < 0.01) {
-          matched.push({ uuid, sat: satInv, odoo: odooInv, match_type: 'uuid' });
+        usedOdooIds.add(odooEntry.raw.id as number);
+        if (Math.abs(satEntry.norm.monto - odooEntry.norm.monto) < 0.01) {
+          matched.push(mergeRecords(satEntry.norm, odooEntry.norm, 'uuid'));
         } else {
-          amountDiff.push({ uuid, sat: satInv, odoo: odooInv, difference: satAmount - odooAmount, match_type: 'uuid' });
+          amountDiff.push(mergeWithDiff(satEntry.norm, odooEntry.norm, 'amount_diff'));
         }
       }
     }
 
-    // Fallback: match unmatched invoices by RFC + date + amount
-    const unmatchedSat = [...satMap.entries()].filter(([uuid]) => !matchedSatUuids.has(uuid));
-    const unmatchedOdoo = [...odooMap.entries()].filter(([uuid]) => !matchedOdooUuids.has(uuid));
-    // Also include Odoo invoices without UUID
-    const odooNoUuid = odooInvoices.filter((inv) => !inv.l10n_mx_edi_cfdi_uuid);
+    // Collect all unmatched Odoo invoices (with and without UUID)
+    const allUnmatchedOdoo: { raw: Record<string, unknown>; norm: NormalizedRecord }[] = [];
+    for (const [uuid, entry] of odooMap) {
+      if (!matchedOdooUuids.has(uuid)) {
+        allUnmatchedOdoo.push(entry);
+      }
+    }
+    for (const inv of odooInvoices) {
+      if (!inv.l10n_mx_edi_cfdi_uuid) {
+        allUnmatchedOdoo.push({ raw: inv, norm: normalizeOdoo(inv) });
+      }
+    }
 
-    const usedOdooIds = new Set<number>();
+    // FALLBACK 1: RFC + date + amount
+    const unmatchedSatEntries = [...satMap.entries()].filter(([uuid]) => !matchedSatUuids.has(uuid));
 
-    for (const [_satUuid, satInv] of unmatchedSat) {
-      const _satRfc = satInv.issuer?.rfc?.toUpperCase() || '';
-      const satDate = (satInv.issued_at || '').split('T')[0];
-      const satAmount = Number(satInv.total || 0);
+    for (const [satUuid, satEntry] of unmatchedSatEntries) {
+      const satRfc = satEntry.norm.rfc_emisor;
+      const satDate = satEntry.norm.fecha;
+      const satAmount = satEntry.norm.monto;
 
-      // Search in unmatched Odoo invoices (with UUID)
       let found = false;
-      for (const [odooUuid, odooInv] of unmatchedOdoo) {
-        if (matchedOdooUuids.has(odooUuid)) continue;
-        const odooId = odooInv.id as number;
+      for (const odooEntry of allUnmatchedOdoo) {
+        const odooId = odooEntry.raw.id as number;
         if (usedOdooIds.has(odooId)) continue;
 
-        const odooPartner = odoo.extractM2oName(odooInv.partner_id as [number, string] | false) || '';
-        const odooDate = (odooInv.invoice_date as string || '').split('T')[0];
-        const odooAmount = Number(odooInv.amount_total || 0);
+        const odooVat = getOdooVat(odooEntry.raw);
+        const odooDate = odooEntry.norm.fecha;
+        const odooAmount = odooEntry.norm.monto;
 
-        const dateMatch = satDate && odooDate && satDate === odooDate;
-        const amountMatch = Math.abs(satAmount - odooAmount) < 0.01;
-
-        if (dateMatch && amountMatch) {
-          matched.push({ uuid: _satUuid, sat: satInv, odoo: odooInv, match_type: 'date_amount', partner: odooPartner });
-          matchedSatUuids.add(_satUuid);
-          matchedOdooUuids.add(odooUuid);
+        if (
+          satRfc && odooVat && satRfc === odooVat &&
+          satDate && odooDate && satDate === odooDate &&
+          Math.abs(satAmount - odooAmount) < 0.01
+        ) {
+          matched.push(mergeRecords(satEntry.norm, odooEntry.norm, 'rfc_date_amount'));
+          matchedSatUuids.add(satUuid);
+          const odooUuid = odooEntry.norm.uuid;
+          if (odooUuid) matchedOdooUuids.add(odooUuid);
           usedOdooIds.add(odooId);
           found = true;
           break;
         }
       }
 
-      // Also search in Odoo invoices without UUID
+      // FALLBACK 2: date + amount only (no RFC)
       if (!found) {
-        for (const odooInv of odooNoUuid) {
-          const odooId = odooInv.id as number;
+        for (const odooEntry of allUnmatchedOdoo) {
+          const odooId = odooEntry.raw.id as number;
           if (usedOdooIds.has(odooId)) continue;
 
-          const odooDate = (odooInv.invoice_date as string || '').split('T')[0];
-          const odooAmount = Number(odooInv.amount_total || 0);
+          const odooDate = odooEntry.norm.fecha;
+          const odooAmount = odooEntry.norm.monto;
 
-          const dateMatch = satDate && odooDate && satDate === odooDate;
-          const amountMatch = Math.abs(satAmount - odooAmount) < 0.01;
-
-          if (dateMatch && amountMatch) {
-            matched.push({ uuid: _satUuid, sat: satInv, odoo: odooInv, match_type: 'date_amount_no_uuid' });
-            matchedSatUuids.add(_satUuid);
+          if (
+            satDate && odooDate && satDate === odooDate &&
+            Math.abs(satAmount - odooAmount) < 0.01
+          ) {
+            matched.push(mergeRecords(satEntry.norm, odooEntry.norm, 'date_amount'));
+            matchedSatUuids.add(satUuid);
+            const odooUuid = odooEntry.norm.uuid;
+            if (odooUuid) matchedOdooUuids.add(odooUuid);
             usedOdooIds.add(odooId);
             break;
           }
@@ -174,17 +260,46 @@ export const POST = createHandler(async (req) => {
       }
     }
 
-    const onlySat = satInvoices.filter((inv) => {
-      const uuid = (inv.uuid || '').toLowerCase();
-      return uuid ? !matchedSatUuids.has(uuid) : true;
-    });
+    // Build only-SAT list (normalized)
+    const onlySat: NormalizedRecord[] = satInvoices
+      .filter((inv) => {
+        const uuid = (inv.uuid || '').toLowerCase();
+        return uuid ? !matchedSatUuids.has(uuid) : true;
+      })
+      .map(normalizeSat);
 
-    const onlyOdoo = odooInvoices.filter((inv) => {
-      const uuid = ((inv.l10n_mx_edi_cfdi_uuid as string) || '').toLowerCase();
-      const odooId = inv.id as number;
-      if (uuid && matchedOdooUuids.has(uuid)) return false;
-      if (usedOdooIds.has(odooId)) return false;
-      return true;
+    // Build only-Odoo list (normalized)
+    const onlyOdoo: NormalizedRecord[] = odooInvoices
+      .filter((inv) => {
+        const uuid = ((inv.l10n_mx_edi_cfdi_uuid as string) || '').toLowerCase();
+        const odooId = inv.id as number;
+        if (uuid && matchedOdooUuids.has(uuid)) return false;
+        if (usedOdooIds.has(odooId)) return false;
+        return true;
+      })
+      .map(normalizeOdoo);
+
+    const summary = {
+      matched: matched.length,
+      only_sat: onlySat.length,
+      only_odoo: onlyOdoo.length,
+      amount_diff: amountDiff.length,
+      total_sat: satInvoices.length,
+      total_odoo: odooInvoices.length,
+    };
+
+    const lastRun = new Date().toISOString();
+
+    // Persist results to reconciliations table
+    await admin.from('reconciliations').insert({
+      company_id: ctx.company_id,
+      type: 'sat_odoo',
+      period_start,
+      period_end,
+      matched_count: matched.length,
+      unmatched_count: onlySat.length + onlyOdoo.length,
+      discrepancy_count: amountDiff.length,
+      result_summary: summary,
     });
 
     writeAuditLog({
@@ -204,13 +319,12 @@ export const POST = createHandler(async (req) => {
 
     return Response.json({
       data: {
-        summary: {
-          matched: matched.length,
-          only_sat: onlySat.length,
-          only_odoo: onlyOdoo.length,
-          amount_diff: amountDiff.length,
-        },
-        details: { matched, only_sat: onlySat, only_odoo: onlyOdoo, amount_diff: amountDiff },
+        summary,
+        matched,
+        in_sat_not_odoo: onlySat,
+        in_odoo_not_sat: onlyOdoo,
+        amount_differences: amountDiff,
+        last_run: lastRun,
       },
     });
   }))(req, { params: Promise.resolve({}) });

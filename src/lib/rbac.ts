@@ -47,6 +47,7 @@ export const SIDEBAR_VISIBILITY: Record<string, Role[]> = {
   '/presupuestos': ['admin', 'accountant'],
   '/aprobaciones': ['admin', 'accountant'],
   '/sat': ['admin', 'accountant'],
+  '/sincronizacion': ['admin', 'accountant'],
   '/conciliacion': ['admin', 'accountant'],
   '/reportes': ['admin', 'accountant', 'viewer'],
   '/configuracion': ['admin'],

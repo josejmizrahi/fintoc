@@ -37,7 +37,13 @@ export const POST = createHandler(
     withRbac(
       'sync.execute',
       withValidation(SyncRequestSchema, async (req, ctx) => {
-        const provider = PROVIDER_ALIASES[ctx.body.provider] || ctx.body.provider;
+        const provider = PROVIDER_ALIASES[ctx.body.provider];
+        if (!provider) {
+          return Response.json(
+            { error: { message: `Proveedor desconocido: ${ctx.body.provider}`, code: 'VALIDATION_ERROR' } },
+            { status: 400 },
+          );
+        }
         const companyId = String(ctx.company_id);
 
         // SAT (Syntage): no periodic sync; data via webhooks. Use POST /api/sync/sat for on-demand extractions.

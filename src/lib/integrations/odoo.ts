@@ -70,6 +70,66 @@ export interface OdooPaymentValues {
   payment_method_line_id?: number;
 }
 
+export interface OdooPaymentRecord {
+  id: number;
+  name: string;
+  payment_type: 'outbound' | 'inbound';
+  partner_type: 'supplier' | 'customer';
+  partner_id: [number, string] | false;
+  amount: number;
+  currency_id: [number, string];
+  journal_id: [number, string] | false;
+  date: string;
+  ref: string | false;
+  state: 'draft' | 'posted' | 'sent' | 'reconciled' | 'cancelled';
+  reconciled_invoice_ids: number[];
+  move_id: [number, string] | false;
+  write_date: string;
+}
+
+export interface OdooExpense {
+  id: number;
+  name: string;
+  employee_id: [number, string];
+  product_id: [number, string] | false;
+  total_amount: number;
+  currency_id: [number, string];
+  date: string;
+  description: string | false;
+  reference: string | false;
+  state: 'draft' | 'reported' | 'approved' | 'done' | 'refused';
+  payment_mode: 'own_account' | 'company_account';
+  sheet_id: [number, string] | false;
+  write_date: string;
+}
+
+export interface OdooPurchaseOrder {
+  id: number;
+  name: string;
+  partner_id: [number, string] | false;
+  state: 'draft' | 'sent' | 'purchase' | 'done' | 'cancel';
+  amount_total: number;
+  amount_tax: number;
+  currency_id: [number, string];
+  date_order: string | false;
+  date_planned: string | false;
+  invoice_status: 'no' | 'to invoice' | 'invoiced';
+  invoice_count: number;
+  notes: string | false;
+  write_date: string;
+}
+
+export interface OdooAccount {
+  id: number;
+  code: string;
+  name: string;
+  account_type: string;
+  reconcile: boolean;
+  deprecated: boolean;
+  currency_id: [number, string] | false;
+  write_date: string;
+}
+
 export interface OdooPaginationParams {
   batchSize?: number;
   offset?: number;
@@ -465,6 +525,93 @@ export async function fetchOdooInvoices(
     INVOICE_FIELDS,
     lastSyncAt
   ) as Promise<OdooInvoice[]>;
+}
+
+// ---------------------------------------------------------------------------
+// Payment sync (inbound from Odoo)
+// ---------------------------------------------------------------------------
+const PAYMENT_FIELDS = [
+  'name', 'payment_type', 'partner_type', 'partner_id', 'amount',
+  'currency_id', 'journal_id', 'date', 'ref', 'state',
+  'reconciled_invoice_ids', 'move_id', 'write_date',
+];
+
+export async function fetchOdooPayments(
+  config: OdooConfig,
+  lastSyncAt?: string
+): Promise<OdooPaymentRecord[]> {
+  return odooFetchIncremental(
+    config,
+    'account.payment',
+    [['state', 'in', ['posted', 'sent', 'reconciled']]],
+    PAYMENT_FIELDS,
+    lastSyncAt
+  ) as Promise<OdooPaymentRecord[]>;
+}
+
+// ---------------------------------------------------------------------------
+// Expense sync
+// ---------------------------------------------------------------------------
+const EXPENSE_FIELDS = [
+  'name', 'employee_id', 'product_id', 'total_amount', 'currency_id',
+  'date', 'description', 'reference', 'state', 'payment_mode',
+  'sheet_id', 'write_date',
+];
+
+export async function fetchOdooExpenses(
+  config: OdooConfig,
+  lastSyncAt?: string
+): Promise<OdooExpense[]> {
+  return odooFetchIncremental(
+    config,
+    'hr.expense',
+    [['state', 'in', ['reported', 'approved', 'done']]],
+    EXPENSE_FIELDS,
+    lastSyncAt
+  ) as Promise<OdooExpense[]>;
+}
+
+// ---------------------------------------------------------------------------
+// Purchase Order sync
+// ---------------------------------------------------------------------------
+const PURCHASE_ORDER_FIELDS = [
+  'name', 'partner_id', 'state', 'amount_total', 'amount_tax',
+  'currency_id', 'date_order', 'date_planned', 'invoice_status',
+  'invoice_count', 'notes', 'write_date',
+];
+
+export async function fetchOdooPurchaseOrders(
+  config: OdooConfig,
+  lastSyncAt?: string
+): Promise<OdooPurchaseOrder[]> {
+  return odooFetchIncremental(
+    config,
+    'purchase.order',
+    [['state', 'in', ['purchase', 'done']]],
+    PURCHASE_ORDER_FIELDS,
+    lastSyncAt
+  ) as Promise<OdooPurchaseOrder[]>;
+}
+
+// ---------------------------------------------------------------------------
+// Chart of Accounts sync
+// ---------------------------------------------------------------------------
+const ACCOUNT_FIELDS = [
+  'code', 'name', 'account_type', 'reconcile', 'deprecated',
+  'currency_id', 'write_date',
+];
+
+export async function fetchOdooAccounts(
+  config: OdooConfig,
+  lastSyncAt?: string
+): Promise<OdooAccount[]> {
+  return odooFetchIncremental(
+    config,
+    'account.account',
+    [['deprecated', '=', false]],
+    ACCOUNT_FIELDS,
+    lastSyncAt
+  ) as Promise<OdooAccount[]>;
 }
 
 // ---------------------------------------------------------------------------

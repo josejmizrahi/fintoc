@@ -227,7 +227,7 @@ describe("POST /api/onboarding", () => {
     expect(data.message).toContain("Faltan campos");
   });
 
-  it("tests SAT configuration with valid RFC", async () => {
+  it("tests SAT configuration with valid RFC but no API key returns warning", async () => {
     mockQuery.mockResolvedValue({
       data: { id: 1, config: { certBase64: "abc", keyBase64: "def" } },
       error: null,
@@ -241,11 +241,8 @@ describe("POST /api/onboarding", () => {
     }), ctx);
 
     const data = await res.json();
-    expect(data.success).toBe(true);
+    expect(data.success).toBe(false);
     expect(data.message).toContain("ABC010101AAA");
-    expect(data.certificates).toBeDefined();
-    expect(data.certificates.cer).toBe(true);
-    expect(data.certificates.key).toBe(true);
   });
 
   it("rejects invalid RFC format", async () => {

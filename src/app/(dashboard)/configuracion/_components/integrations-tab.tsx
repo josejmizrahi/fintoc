@@ -420,10 +420,11 @@ function SatEditDialog({
 
   const saveMutation = useMutation({
     mutationFn: async (data: Record<string, string>) => {
+      // Single save path: saveConfig handles encryption + taxpayer linking
       await api.sat.syntage.saveConfig({
         syntageApiKey: data.syntageApiKey,
+        rfcEmisor: data.rfcEmisor,
       });
-      await api.onboarding.save("sat", data);
     },
     onSuccess: () => {
       toast.success("Configuracion SAT/Syntage guardada");
@@ -434,13 +435,11 @@ function SatEditDialog({
   });
 
   const testMutation = useMutation({
-    mutationFn: () => api.sat.syntage.status(),
-    onSuccess: (data: Record<string, unknown>) => {
-      if (data.ok)
-        toast.success(
-          `Syntage conectado — ${data.taxpayers} contribuyentes, ${data.credentials} credenciales`
-        );
-      else toast.error((data.error as string) || "Error de conexion con Syntage");
+    mutationFn: (data: Record<string, string>) =>
+      api.onboarding.test("sat", data),
+    onSuccess: (data) => {
+      if (data.success) toast.success(data.message || "Conexion exitosa");
+      else toast.error(data.message || "Error de conexion con Syntage");
     },
     onError: () => toast.error("Error de conexion con Syntage"),
   });
@@ -498,10 +497,10 @@ function SatEditDialog({
             onClick={() => {
               const v = form.getValues();
               if (v.syntageApiKey) {
-                api.sat.syntage
-                  .saveConfig({ syntageApiKey: v.syntageApiKey })
-                  .then(() => testMutation.mutate())
-                  .catch(() => testMutation.mutate());
+                testMutation.mutate({
+                  syntageApiKey: v.syntageApiKey,
+                  rfcEmisor: v.rfcEmisor,
+                });
               } else {
                 toast.error("Ingresa una API Key primero");
               }

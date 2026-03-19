@@ -165,8 +165,8 @@ async function handleInvoiceEvent(
     const appType = moveTypeToAppType[inv.move_type] ?? 'payable';
     const uuid = odoo.normalizeOdooValue(inv.l10n_mx_edi_cfdi_uuid);
 
-    const invoiceData: Record<string, unknown> = {
-      company_id: companyId,
+    // Odoo enrichment fields — don't overwrite SAT validation data
+    const odooFields: Record<string, unknown> = {
       type: appType,
       move_type: inv.move_type,
       invoice_number: inv.name,
@@ -179,15 +179,37 @@ async function handleInvoiceEvent(
       amount_tax: inv.amount_tax,
       payment_state: inv.payment_state,
       payment_method: odoo.normalizeOdooValue(inv.l10n_mx_edi_payment_policy),
+      odoo_cfdi_uuid: odoo.normalizeOdooValue(inv.l10n_mx_edi_cfdi_uuid),
+      odoo_payment_method: odoo.normalizeOdooValue(inv.l10n_mx_edi_payment_policy),
+      odoo_usage: odoo.normalizeOdooValue(inv.l10n_mx_edi_usage),
       partner_name: odoo.extractM2oName(inv.partner_id),
       odoo_id: inv.id,
       odoo_move_id: String(inv.id),
-      source: 'odoo',
     };
 
-    // Upsert by company_id + odoo_id
-    await admin.from('invoices')
-      .upsert(invoiceData, { onConflict: 'company_id,odoo_id', ignoreDuplicates: false });
+    // Check if invoice already exists (from SAT or manual)
+    const { data: existingInv } = await admin.from('invoices')
+      .select('id, source, sat_status')
+      .eq('company_id', companyId)
+      .or(`odoo_id.eq.${inv.id},uuid.eq.${uuid}`)
+      .limit(1)
+      .single();
+
+    if (existingInv) {
+      // Invoice exists — only update Odoo fields, preserve SAT data and source
+      await admin.from('invoices')
+        .update(odooFields)
+        .eq('id', existingInv.id);
+    } else {
+      // New invoice from Odoo
+      await admin.from('invoices')
+        .insert({
+          company_id: companyId,
+          ...odooFields,
+          source: 'odoo',
+          sat_status: 'no_validado',
+        });
+    }
   } catch {
     // Log but don't throw — webhook should still succeed
   }
@@ -214,17 +236,17 @@ async function handlePaymentEvent(
       config,
       'account.move',
       [['id', '=', invoiceMoveId]],
-      ['amount_residual', 'payment_state'],
+      ['amount_total', 'amount_residual', 'payment_state'],
       1,
     );
 
     if (!invoices.length) return;
-    const inv = invoices[0] as { amount_residual: number; payment_state: string };
+    const inv = invoices[0] as { amount_total: number; amount_residual: number; payment_state: string };
 
     await admin.from('invoices')
       .update({
         amount_residual: inv.amount_residual,
-        amount_paid: (data.amount as number) || 0,
+        amount_paid: inv.amount_total - inv.amount_residual,
         payment_state: inv.payment_state,
       })
       .eq('company_id', companyId)
